@@ -111,6 +111,79 @@ local names = {
 		"I'm your huckleberry",
 		"The Crocketeer",
 }
+local public_usernames = {
+	"steamRunner",
+	"sodaCrate",
+	"aimlessWizard",
+	"pixelStinger",
+	"rocketMailbox",
+	"crispyToaster",
+	"fragNoodle",
+	"rustyPistol",
+	"cupcakeReactor",
+	"boltSnacker",
+	"turboBanana",
+	"silentMoose",
+	"nightValve",
+	"glitchCrab",
+	"snackLauncher",
+	"mangoSector",
+	"purpleGnome",
+	"zeroPingMaybe",
+	"pocketMedic99",
+	"lootGoblinTV",
+	"unusualHatGuy",
+	"foggyDuelist",
+	"cableNinja",
+	"soapGrenade",
+	"retroJugger",
+	"jellyScout",
+	"teacupSpy",
+	"cardboardSniper",
+	"altoRobot",
+	"graphiteHeavy",
+	"luckyDispenser",
+	"tinyWrenchKid",
+	"donutEngineer",
+	"melonPyro",
+	"echoDemoman",
+	"sideQuestOnly",
+	"clutchOrCry",
+	"casualLegend",
+	"metalSandwich",
+	"barrelWizard",
+	"zippyMerc",
+	"bleedingPixels",
+	"stickyTapper",
+	"scopeDreams",
+	"alphaSentry",
+	"mapControl",
+	"airblastEnjoyer",
+	"payloadCourier",
+	"smokeAndDagger",
+	"bonkPowered",
+	"tinCanTitan",
+	"cloudyCrits",
+	"rainyRespawn",
+	"widgetMedic",
+	"coffeeDemoknight",
+	"ragdollPilot",
+	"duckTapeHero",
+	"fragileGenius",
+	"patchTuesday",
+	"steelPancake",
+	"strangeCollector",
+	"honkIfSpy",
+	"pingPongKing",
+	"spawnRoomDJ",
+	"cartPusher9000",
+	"pyroMainMaybe",
+	"tinyTankUnit",
+	"ramenGunner",
+	"pixelMaverick",
+	"overhealBuddy",
+	"criticalMiss",
+}
 local classtbl4d = {"tank_l4d","boomer","boomer","boomer","jockey","charger","charger","spitter","spitter","smoker","hunter"}
 local classtb = {"scout", "soldier", "pyro", "demoman", "heavy", "engineer", "medic", "sniper", "spy"}
 local bot_class = CreateConVar("tf_bot_keep_class_after_death", "0", {FCVAR_ARCHIVE, FCVAR_REPLICATED, FCVAR_NOTIFY})
@@ -119,16 +192,283 @@ local bot_respawn = CreateConVar("tf_bot_npc_respawn", "0", {FCVAR_ARCHIVE, FCVA
 local tf_bot_notarget = CreateConVar("tf_bot_notarget", "0", {FCVAR_ARCHIVE, FCVAR_NOTIFY})
 local tf_bot_force_class = CreateConVar("tf_bot_force_class", "", {FCVAR_GAMEDLL})
 local tf_bot_melee_only = CreateConVar("tf_bot_melee_only", "0", {FCVAR_ARCHIVE, FCVAR_REPLICATED, FCVAR_NOTIFY})
+local tf_bot_random_names = CreateConVar("tf_bot_random_names", "1", {FCVAR_ARCHIVE, FCVAR_NOTIFY}, "Randomize bot names from a large username list.")
+local tf_bot_public_names = CreateConVar("tf_bot_public_names", "1", {FCVAR_ARCHIVE, FCVAR_NOTIFY}, "Include public username-style names in the bot name pool.")
+local tf_bot_include_legacy_names = CreateConVar("tf_bot_include_legacy_names", "0", {FCVAR_ARCHIVE, FCVAR_NOTIFY}, "Include classic meme-style bot names in addition to username-style names.")
+local tf_bot_name_file = CreateConVar("tf_bot_name_file", "tf_bot_usernames_public.txt", {FCVAR_ARCHIVE, FCVAR_NOTIFY}, "DATA file path for additional bot names, one per line.")
+local tf_bot_random_loadouts = CreateConVar("tf_bot_random_loadouts", "1", {FCVAR_ARCHIVE, FCVAR_NOTIFY}, "Randomize bot loadouts on spawn.")
+local tf_bot_randomizer_mode = CreateConVar("tf_bot_randomizer_mode", "0", {FCVAR_ARCHIVE, FCVAR_NOTIFY}, "Ignore class restrictions when randomizing bot loadouts.")
+local tf_bot_loadout_mutation_chance = CreateConVar("tf_bot_loadout_mutation_chance", "0.20", {FCVAR_ARCHIVE, FCVAR_NOTIFY}, "Chance a respawning bot changes one weapon slot in its saved random loadout.")
+local tf_bot_loadout_debug = CreateConVar("tf_bot_loadout_debug", "0", {FCVAR_ARCHIVE, FCVAR_NOTIFY}, "Enable debug logs for bot loadout randomization.")
+local tf_bot_ragdoll_drop_boost = CreateConVar("tf_bot_ragdoll_drop_boost", "280", {FCVAR_ARCHIVE, FCVAR_NOTIFY}, "Additional downward velocity for dead bot ragdolls.")
+-- Keep perf CVars defined here because this file is loaded before shared.lua.
+local tf_bot_perf_enable = CreateConVar("tf_bot_perf_enable", "1", {FCVAR_ARCHIVE, FCVAR_NOTIFY})
+local tf_bot_perf_debug = CreateConVar("tf_bot_perf_debug", "0", {FCVAR_ARCHIVE, FCVAR_NOTIFY})
+local tf_bot_sense_interval = CreateConVar("tf_bot_sense_interval", "0.35", {FCVAR_ARCHIVE, FCVAR_NOTIFY})
+local tf_bot_objective_interval = CreateConVar("tf_bot_objective_interval", "1.00", {FCVAR_ARCHIVE, FCVAR_NOTIFY})
+local tf_bot_avoidance_interval = CreateConVar("tf_bot_avoidance_interval", "0.15", {FCVAR_ARCHIVE, FCVAR_NOTIFY})
+local tf_bot_repath_interval = CreateConVar("tf_bot_repath_interval", "2.20", {FCVAR_ARCHIVE, FCVAR_NOTIFY})
+local tf_bot_nav_budget_ms = CreateConVar("tf_bot_nav_budget_ms", "1.50", {FCVAR_ARCHIVE, FCVAR_NOTIFY})
+local tf_bot_perf_scale_start = CreateConVar("tf_bot_perf_scale_start", "8", {FCVAR_ARCHIVE, FCVAR_NOTIFY})
+local tf_bot_perf_scale_max = CreateConVar("tf_bot_perf_scale_max", "5", {FCVAR_ARCHIVE, FCVAR_NOTIFY})
+local tf_bot_breakable_check_interval = CreateConVar("tf_bot_breakable_check_interval", "0.35", {FCVAR_ARCHIVE, FCVAR_NOTIFY})
+local tf_bot_perf_hard_threshold = CreateConVar("tf_bot_perf_hard_threshold", "16", {FCVAR_ARCHIVE, FCVAR_NOTIFY}, "Bot count threshold where extra throttling kicks in.")
+local tf_bot_perf_hard_multiplier = CreateConVar("tf_bot_perf_hard_multiplier", "1.6", {FCVAR_ARCHIVE, FCVAR_NOTIFY}, "Extra interval multiplier used above hard threshold.")
+local tf_bot_disable_social_look_highload = CreateConVar("tf_bot_disable_social_look_highload", "1", {FCVAR_ARCHIVE, FCVAR_NOTIFY}, "Disable friendly look-at-me scan when high-load threshold is reached.")
+
+local function CVFloat(cv, fallback)
+	if cv and cv.GetFloat then
+		return cv:GetFloat()
+	end
+	return fallback
+end
+
+local function CVBool(cv, fallback)
+	if cv and cv.GetBool then
+		return cv:GetBool()
+	end
+	return fallback
+end
+
+concommand.Add("tf_bot_perf_profile", function(ply, _, args)
+	if IsValid(ply) and not ply:IsAdmin() then return end
+	local profile = string.lower(tostring(args and args[1] or "max"))
+	if profile == "ultra" then
+		RunConsoleCommand("tf_bot_sense_interval", "0.45")
+		RunConsoleCommand("tf_bot_objective_interval", "1.25")
+		RunConsoleCommand("tf_bot_avoidance_interval", "0.22")
+		RunConsoleCommand("tf_bot_repath_interval", "2.80")
+		RunConsoleCommand("tf_bot_nav_budget_ms", "1.00")
+		RunConsoleCommand("tf_bot_perf_scale_start", "6")
+		RunConsoleCommand("tf_bot_perf_scale_max", "7")
+		RunConsoleCommand("tf_bot_breakable_check_interval", "0.50")
+		RunConsoleCommand("tf_bot_perf_hard_threshold", "14")
+		RunConsoleCommand("tf_bot_perf_hard_multiplier", "1.8")
+		RunConsoleCommand("tf_bot_disable_social_look_highload", "1")
+		MsgN("[tf_bot_perf] Applied 'ultra' profile.")
+		return
+	end
+	if profile == "balanced" then
+		RunConsoleCommand("tf_bot_sense_interval", "0.30")
+		RunConsoleCommand("tf_bot_objective_interval", "0.85")
+		RunConsoleCommand("tf_bot_avoidance_interval", "0.12")
+		RunConsoleCommand("tf_bot_repath_interval", "1.90")
+		RunConsoleCommand("tf_bot_nav_budget_ms", "2.00")
+		RunConsoleCommand("tf_bot_perf_scale_start", "10")
+		RunConsoleCommand("tf_bot_perf_scale_max", "4")
+		RunConsoleCommand("tf_bot_breakable_check_interval", "0.25")
+		RunConsoleCommand("tf_bot_perf_hard_threshold", "18")
+		RunConsoleCommand("tf_bot_perf_hard_multiplier", "1.2")
+		RunConsoleCommand("tf_bot_disable_social_look_highload", "0")
+		MsgN("[tf_bot_perf] Applied 'balanced' profile.")
+		return
+	end
+
+	-- Default to max throughput profile.
+	RunConsoleCommand("tf_bot_sense_interval", "0.35")
+	RunConsoleCommand("tf_bot_objective_interval", "1.00")
+	RunConsoleCommand("tf_bot_avoidance_interval", "0.15")
+	RunConsoleCommand("tf_bot_repath_interval", "2.20")
+	RunConsoleCommand("tf_bot_nav_budget_ms", "2.20")
+	RunConsoleCommand("tf_bot_perf_scale_start", "8")
+	RunConsoleCommand("tf_bot_perf_scale_max", "4")
+	RunConsoleCommand("tf_bot_breakable_check_interval", "0.35")
+	RunConsoleCommand("tf_bot_perf_hard_threshold", "16")
+	RunConsoleCommand("tf_bot_perf_hard_multiplier", "1.4")
+	RunConsoleCommand("tf_bot_disable_social_look_highload", "1")
+	MsgN("[tf_bot_perf] Applied 'max' profile.")
+end)
+
+local objectiveCache = {
+	nextRefresh = 0,
+	team_train_watcher = {},
+	item_teamflag = {},
+	item_teamflag_mvm = {},
+	func_capturezone = {},
+	trigger_capture_area = {},
+	bot_hint_sentrygun = {},
+	obj_sentrygun = {},
+	obj_dispenser = {},
+	obj_teleporter = {},
+}
+
+local navBudget = {
+	window = 0,
+	used = 0,
+}
+
+local function PerfEnabled()
+	return CVBool(tf_bot_perf_enable, true)
+end
+
+local function PerfDebug(msg)
+	if CVBool(tf_bot_perf_debug, false) then
+		MsgN("[tf_bot_perf] " .. msg)
+	end
+end
+
+local function GetAdaptivePerfScale()
+	if not PerfEnabled() then return 1 end
+	local startCount = math.max(CVFloat(tf_bot_perf_scale_start, 12), 1)
+	local maxScale = math.max(CVFloat(tf_bot_perf_scale_max, 3), 1)
+	local botCount = math.max(#player.GetBots(), 1)
+	if botCount <= startCount then
+		return 1
+	end
+	local scale = botCount / startCount
+	local hardThreshold = math.max(CVFloat(tf_bot_perf_hard_threshold, 16), 1)
+	if botCount >= hardThreshold then
+		scale = scale * math.max(CVFloat(tf_bot_perf_hard_multiplier, 1.6), 1)
+	end
+	return math.Clamp(scale, 1, maxScale)
+end
+
+local function GetAdaptiveInterval(baseValue, minimum)
+	local minValue = minimum or 0.05
+	return math.max(baseValue * GetAdaptivePerfScale(), minValue)
+end
+
+local function RefreshObjectiveCache(force)
+	if not PerfEnabled() then return end
+	local now = CurTime()
+	local interval = CVFloat(tf_bot_objective_interval, 0.75)
+	interval = GetAdaptiveInterval(interval, 0.05)
+	if not force and objectiveCache.nextRefresh > now then return end
+	objectiveCache.nextRefresh = now + math.max(interval, 0.05)
+	objectiveCache.team_train_watcher = ents.FindByClass("team_train_watcher")
+	objectiveCache.item_teamflag = ents.FindByClass("item_teamflag")
+	objectiveCache.item_teamflag_mvm = ents.FindByClass("item_teamflag_mvm")
+	objectiveCache.func_capturezone = ents.FindByClass("func_capturezone")
+	objectiveCache.trigger_capture_area = ents.FindByClass("trigger_capture_area")
+	objectiveCache.bot_hint_sentrygun = ents.FindByClass("bot_hint_sentrygun")
+	objectiveCache.obj_sentrygun = ents.FindByClass("obj_sentrygun")
+	objectiveCache.obj_dispenser = ents.FindByClass("obj_dispenser")
+	objectiveCache.obj_teleporter = ents.FindByClass("obj_teleporter")
+end
+
+local function GetCachedEntities(classname)
+	if not PerfEnabled() then
+		return ents.FindByClass(classname)
+	end
+	RefreshObjectiveCache(false)
+	return objectiveCache[classname] or {}
+end
+
+local function GetNearbyEntities(bot, radius, minInterval)
+	if not IsValid(bot) then return {} end
+	if not PerfEnabled() then
+		return ents.FindInSphere(bot:GetPos(), radius)
+	end
+	local now = CurTime()
+	bot._nearbyCache = bot._nearbyCache or {}
+	local key = tostring(radius)
+	local cache = bot._nearbyCache[key]
+	if cache and cache.next and cache.next > now then
+		return cache.data
+	end
+	local interval = minInterval or CVFloat(tf_bot_sense_interval, 0.25)
+	local data = ents.FindInSphere(bot:GetPos(), radius)
+	bot._nearbyCache[key] = {
+		data = data,
+		next = now + math.max(interval, 0.05),
+	}
+	return data
+end
+
+hook.Add("Think", "TFBot_PerfCacheRefresh", function()
+	RefreshObjectiveCache(false)
+end)
 
 local currentNameIndex = 0
+local shuffledNameBag = {}
+local shuffledNameBagIndex = 0
+
+local function TrimString(s)
+	return string.Trim(s or "")
+end
+
+local function BuildNamePool()
+	local pool = {}
+	local seen = {}
+
+	local function AddName(candidate)
+		if not isstring(candidate) then return end
+		local cleaned = TrimString(candidate)
+		if cleaned == "" then return end
+		local key = string.lower(cleaned)
+		if seen[key] then return end
+		seen[key] = true
+		pool[#pool + 1] = cleaned
+	end
+
+	if CVBool(tf_bot_public_names, true) then
+		for _, n in ipairs(public_usernames) do
+			AddName(n)
+		end
+	end
+
+	local customPath = TrimString(tf_bot_name_file:GetString())
+	if customPath ~= "" and file.Exists(customPath, "DATA") then
+		local raw = file.Read(customPath, "DATA") or ""
+		for line in string.gmatch(raw, "[^\r\n]+") do
+			AddName(line)
+		end
+	end
+
+	if CVBool(tf_bot_include_legacy_names, false) then
+		for _, n in ipairs(names) do
+			AddName(n)
+		end
+	end
+
+	return pool
+end
+
+local function RebuildNameBag()
+	shuffledNameBag = BuildNamePool()
+	for i = #shuffledNameBag, 2, -1 do
+		local j = math.random(i)
+		shuffledNameBag[i], shuffledNameBag[j] = shuffledNameBag[j], shuffledNameBag[i]
+	end
+	shuffledNameBagIndex = 0
+	currentNameIndex = 0
+end
 
 function GetNextBotName()
-    currentNameIndex = currentNameIndex + 1
-    if currentNameIndex > #names then
-        currentNameIndex = 1 -- wrap around to start
-    end
-    return names[currentNameIndex]
+	if not CVBool(tf_bot_random_names, true) then
+		if #shuffledNameBag == 0 then
+			RebuildNameBag()
+		end
+		if #shuffledNameBag > 0 then
+			currentNameIndex = currentNameIndex + 1
+			if currentNameIndex > #shuffledNameBag then
+				currentNameIndex = 1
+			end
+			return shuffledNameBag[currentNameIndex]
+		end
+		currentNameIndex = currentNameIndex + 1
+		if currentNameIndex > #names then
+			currentNameIndex = 1
+		end
+		return names[currentNameIndex]
+	end
+
+	if #shuffledNameBag == 0 or shuffledNameBagIndex >= #shuffledNameBag then
+		RebuildNameBag()
+	end
+	if #shuffledNameBag == 0 then
+		return "TFBot_" .. tostring(math.random(1000, 9999))
+	end
+
+	shuffledNameBagIndex = shuffledNameBagIndex + 1
+	return shuffledNameBag[shuffledNameBagIndex]
 end
+
+RebuildNameBag()
+cvars.AddChangeCallback("tf_bot_random_names", RebuildNameBag, "TFBotNamesRebuildRandom")
+cvars.AddChangeCallback("tf_bot_public_names", RebuildNameBag, "TFBotNamesRebuildPublic")
+cvars.AddChangeCallback("tf_bot_include_legacy_names", RebuildNameBag, "TFBotNamesRebuildLegacy")
+cvars.AddChangeCallback("tf_bot_name_file", RebuildNameBag, "TFBotNamesRebuildFile")
 
 local function IsValidTarget(bot,target)
 
@@ -154,8 +494,18 @@ local function IsValidTarget(bot,target)
 		if (target:EntIndex() == bot:EntIndex()) then
 			return false
 		end
-		if (target:EntityTeam() != TEAM_RED &&  target:EntityTeam() != TEAM_BLU) then
-			return false
+		-- Some entities/bots return inconsistent EntityTeam values on custom maps.
+		-- Prefer explicit team checks for players and only reject true neutral/spectator.
+		if target:IsPlayer() then
+			local t = target:Team()
+			if t == TEAM_SPECTATOR or t == TEAM_NEUTRAL then
+				return false
+			end
+		else
+			local et = target.EntityTeam and target:EntityTeam() or nil
+			if et and et ~= TEAM_RED and et ~= TEAM_BLU and et ~= TF_TEAM_PVE_INVADERS then
+				return false
+			end
 		end
 		return true
 	end
@@ -165,7 +515,7 @@ end
 function lookForNearestHealthPack(bot)
 	
 	local npcs = {}
-	for k,v in ipairs(ents.FindInSphere(bot:GetPos(), 2048)) do
+	for k,v in ipairs(GetNearbyEntities(bot, 2048, GetAdaptiveInterval(CVFloat(tf_bot_sense_interval, 0.25), 0.05))) do
 		if (string.find(v:GetClass(),"item_healthkit") or string.find(v:GetClass(),"item_healthvial") or (string.find(v:GetClass(),"obj_dispenser") and v:IsFriendly(bot))) then
 			table.insert(npcs, v)
 		end
@@ -176,7 +526,7 @@ end
 function lookForNearestAmmoPack(bot)
 	
 	local npcs = {}
-	for k,v in ipairs(ents.FindInSphere(bot:GetPos(), 2048)) do
+	for k,v in ipairs(GetNearbyEntities(bot, 2048, GetAdaptiveInterval(CVFloat(tf_bot_sense_interval, 0.25), 0.05))) do
 		if (string.find(v:GetClass(),"item_ammopack") or string.find(v:GetClass(),"obj_dispenser")) then
 			table.insert(npcs, v)
 		end
@@ -186,7 +536,7 @@ function lookForNearestAmmoPack(bot)
 end
 function lookForNearestPlayer(bot)
 	local npcs = {}
-		for k,v in ipairs(ents.FindInSphere(bot:GetPos(), 2048)) do
+		for k,v in ipairs(GetNearbyEntities(bot, 2048, GetAdaptiveInterval(CVFloat(tf_bot_sense_interval, 0.25), 0.05))) do
 			if (v:IsPlayer() and v:Health() > 1 and IsValidTarget(bot,v) and (bot:Visible(v))) then
 				table.insert(npcs, v)	
 			end
@@ -195,7 +545,7 @@ function lookForNearestPlayer(bot)
 end
 function lookForNearestEnemyPlayer(bot)
 	local npcs = {}
-		for k,v in ipairs(ents.FindInSphere(bot:GetPos(), 2048)) do
+		for k,v in ipairs(GetNearbyEntities(bot, 2048, GetAdaptiveInterval(CVFloat(tf_bot_sense_interval, 0.25), 0.05))) do
 			if (v:IsPlayer() and v:Health() > 1 and IsValidTarget(bot,v)) then
 				table.insert(npcs, v)	
 			end
@@ -203,21 +553,47 @@ function lookForNearestEnemyPlayer(bot)
 		return table.Random(npcs)
 end
 
+local function AcquireEnemyTarget(bot)
+	if not IsValid(bot) then return nil end
+	local target = lookForNearestPlayer(bot)
+	if not IsValid(target) then
+		target = lookForNearestEnemyPlayer(bot)
+	end
+	if IsValid(target) and IsValidTarget(bot, target) then
+		return target
+	end
+	return nil
+end
+
 function lookForClosestFriendlyHumanLookingAtMe(bot)
+	if not IsValid(bot) then return nil end
+	if PerfEnabled() then
+		local botCount = #player.GetBots()
+		local hardThreshold = math.max(CVFloat(tf_bot_perf_hard_threshold, 16), 1)
+		if CVBool(tf_bot_disable_social_look_highload, true) and botCount >= hardThreshold then
+			return nil
+		end
+		bot._nextFriendlyLookCheck = bot._nextFriendlyLookCheck or 0
+		if bot._nextFriendlyLookCheck > CurTime() then
+			return bot._cachedFriendlyLookAtMe
+		end
+		bot._nextFriendlyLookCheck = CurTime() + GetAdaptiveInterval(CVFloat(tf_bot_sense_interval, 0.25), 0.10)
+	end
 	local npcs = {}
-		for k,v in ipairs(ents.FindInSphere(bot:GetPos(), 600)) do
-			if (v:IsPlayer() and v:Health() > 0 and v:IsFriendly(bot) and !v:IsBot()) then
+		for k,v in ipairs(GetNearbyEntities(bot, 600, GetAdaptiveInterval(CVFloat(tf_bot_sense_interval, 0.25), 0.05))) do
+			if (IsValid(v) and v:IsPlayer() and v:Health() > 0 and v:IsFriendly(bot) and !v:IsBot()) then
 				local tr = v:GetEyeTrace()
-				if (tr.Entity:EntIndex() == bot:EntIndex()) then
+				if tr and IsValid(tr.Entity) and (tr.Entity:EntIndex() == bot:EntIndex()) then
 					table.insert(npcs, v)
 				end
 			end
 		end
-		return table.Random(npcs)
+		bot._cachedFriendlyLookAtMe = table.Random(npcs)
+		return bot._cachedFriendlyLookAtMe
 end
 function escortAvailable(bot)
 	local npcs = {} 
-	for k,v in ipairs(ents.FindByClass("team_train_watcher")) do
+	for k,v in ipairs(GetCachedEntities("team_train_watcher")) do
 		if (IsValid(v)) then
 			table.insert(npcs, v)		
 		end
@@ -227,7 +603,7 @@ end
 
 function flagAvailable(bot)
 	local npcs = {} 
-	for k,v in ipairs(ents.FindByClass("item_teamflag")) do
+	for k,v in ipairs(GetCachedEntities("item_teamflag")) do
 		if (IsValid(v)) then
 			table.insert(npcs, v)		
 		end
@@ -236,7 +612,7 @@ function flagAvailable(bot)
 end
 function bombAvailable(bot)
 	local npcs = {} 
-	for k,v in ipairs(ents.FindByClass("item_teamflag_mvm")) do
+	for k,v in ipairs(GetCachedEntities("item_teamflag_mvm")) do
 		if (IsValid(v)) then
 			table.insert(npcs, v)		
 		end
@@ -247,7 +623,7 @@ end
 function lookForClosestHumanPlayer(bot)
 	local npcs = {} 
 	if bot.TFBot then
-		for k,v in ipairs(ents.FindInSphere(bot:GetPos(), 800)) do 
+		for k,v in ipairs(GetNearbyEntities(bot, 800, GetAdaptiveInterval(CVFloat(tf_bot_sense_interval, 0.25), 0.05))) do 
 			if (v:IsPlayer() and v:Health() > 0 and !v:IsBot() and v:EntIndex() != bot:EntIndex() and v:EntityTeam(bot) != TEAM_NEUTRAL and !IsValid(bot.TargetEnt) and !v:IsFriendly(bot) and v:Team() != TEAM_NEUTRAL and v:Team() != TEAM_FRIENDLY and v:Health() > 0 ) then
 				table.insert(npcs, v)
 			end
@@ -492,8 +868,8 @@ local function LeadBot_S_Add_Zombie(team,class,pos)
 		return
 	end
 
-	local name = string.upper(string.sub(class,1,1))..string.sub(class,2)
-	local bot = player.CreateNextBot(name)
+	local botName = GetNextBotName()
+	local bot = player.CreateNextBot(botName)
 	local teamv = TEAM_RED
 	if team == 1 then
 		teamv = TEAM_INFECTED
@@ -525,7 +901,7 @@ local function LeadBot_S_Add_Zombie(team,class,pos)
 		end
 	end)
 
-	MsgN("[LeadBot] Bot " .. name .. " with strategy " .. bot.BotStrategy .. " added!")
+	MsgN("[LeadBot] Bot " .. bot:Nick() .. " with strategy " .. bot.BotStrategy .. " added!")
 end
 
 local function LeadBot_S_Add_Survivor(team,class,pos)
@@ -534,8 +910,8 @@ local function LeadBot_S_Add_Survivor(team,class,pos)
 		return
 	end
 
-	local name = string.upper(string.sub(class,1,1))..string.sub(class,2)
-	local bot = player.CreateNextBot(name)
+	local botName = GetNextBotName()
+	local bot = player.CreateNextBot(botName)
 	local teamv = TEAM_RED
 	if team == 1 then
 		teamv = TEAM_BLU
@@ -567,7 +943,7 @@ local function LeadBot_S_Add_Survivor(team,class,pos)
 		end
 	end)
 
-	MsgN("[LeadBot] Bot " .. name .. " with strategy " .. bot.BotStrategy .. " added!")
+	MsgN("[LeadBot] Bot " .. bot:Nick() .. " with strategy " .. bot.BotStrategy .. " added!")
 end
 local function LeadBot_S_Add_BlueSurvivor(team,class,pos)
 	if !navmesh.IsLoaded() then
@@ -575,8 +951,8 @@ local function LeadBot_S_Add_BlueSurvivor(team,class,pos)
 		return
 	end
 
-	local name = string.upper(string.sub(class,1,1))..string.sub(class,2)
-	local bot = player.CreateNextBot(name)
+	local botName = GetNextBotName()
+	local bot = player.CreateNextBot(botName)
 	local teamv = TEAM_BLU
 	if team == 1 then
 		teamv = TEAM_BLU
@@ -608,7 +984,7 @@ local function LeadBot_S_Add_BlueSurvivor(team,class,pos)
 		end
 	end)
 
-	MsgN("[LeadBot] Bot " .. name .. " with strategy " .. bot.BotStrategy .. " added!")
+	MsgN("[LeadBot] Bot " .. bot:Nick() .. " with strategy " .. bot.BotStrategy .. " added!")
 end
 
 hook.Add("PostCleanupMap", "LeadBot_S_PostCleanup", function()
@@ -654,33 +1030,343 @@ hook.Add("PostPlayerDeath", "LeadBot_S_Death", function(bot)
 		end)]]
 	end
 end)
-function RandomWeapon2(ply, wepslot)
-	local weps = tf_items.ReturnItems()
-	local class = ply:GetPlayerClass()
-	local validweapons = {}
-	for k, v in pairs(weps) do
-		if v and istable(v) and isstring(wepslot) and v["name"] and v["item_slot"] == wepslot and !string.find(v["name"], "Jumper") and v["prefab"] and v["prefab"] != "weapon_melee_allclass" and v["used_by_classes"] and v["used_by_classes"][class] and v["craft_class"] == "weapon" then
-			table.insert(validweapons, v["name"])
+
+local BOT_WEAPON_SLOTS = {"primary", "secondary", "melee", "pda", "pda2", "building"}
+local BOT_COSMETIC_SLOTS = {"head", "misc"}
+local BOT_LOADOUT_SLOTS = {"primary", "secondary", "melee", "pda", "pda2", "building", "head", "misc"}
+local botLoadoutCache = {}
+local badLoadoutCandidates = {}
+
+local function ClearBotLoadoutCache()
+	botLoadoutCache = {}
+	badLoadoutCandidates = {}
+end
+
+cvars.AddChangeCallback("tf_bot_random_loadouts", ClearBotLoadoutCache, "TFBotLoadoutCacheRandom")
+cvars.AddChangeCallback("tf_bot_randomizer_mode", ClearBotLoadoutCache, "TFBotLoadoutCacheMode")
+
+local function BotLoadoutDebug(bot, msg)
+	if not CVBool(tf_bot_loadout_debug, false) then return end
+	local who = IsValid(bot) and (bot:Nick() .. " [" .. bot:EntIndex() .. "]") or "invalid bot"
+	MsgN("[tf_bot_loadout] " .. who .. " - " .. msg)
+end
+
+local function ResolveItemByName(name)
+	if not isstring(name) or name == "" then return nil end
+	local items = tf_items and tf_items.Items
+	if not istable(items) then return nil end
+	return items[name]
+end
+
+local function IsBotWeaponItem(item)
+	if not istable(item) then return false end
+	local itemClass = tostring(item.item_class or "")
+	local prefab = tostring(item.prefab or "")
+	if string.find(itemClass, "tf_weapon", 1, true) then return true end
+	if string.find(itemClass, "demoshield", 1, true) then return true end
+	if string.find(itemClass, "tideturnr", 1, true) then return true end
+	if string.find(itemClass, "chargintard", 1, true) then return true end
+	if string.find(prefab, "boots", 1, true) then return true end
+	return false
+end
+
+local function IsBotCosmeticItem(item)
+	if not istable(item) then return false end
+	local slot = tostring(item.item_slot or "")
+	if slot ~= "head" and slot ~= "misc" then return false end
+	local prefab = tostring(item.prefab or "")
+	local equipRegion = tostring(item.equip_region or "")
+	local itemClass = tostring(item.item_class or "")
+	local itemName = tostring(item.item_name or "")
+	if prefab == "tournament_medal" then return false end
+	if equipRegion == "medal" then return false end
+	if string.find(itemName, "Taunt", 1, true) then return false end
+	if itemClass == "tf_wearable" or string.find(itemClass, "wearable", 1, true) then
+		return true
+	end
+	return false
+end
+
+local function BuildLoadoutSlotMap(bot)
+	local bySlot = {}
+	if not IsValid(bot) or not istable(bot.ItemLoadout) then return bySlot end
+	for _, itemName in ipairs(bot.ItemLoadout) do
+		local item = ResolveItemByName(itemName)
+		if item and isstring(item.item_slot) and item.item_slot ~= "" then
+			bySlot[item.item_slot] = itemName
+		end
+	end
+	return bySlot
+end
+
+local function HasCategoryDifference(proposedBySlot, currentBySlot, slots)
+	for _, slot in ipairs(slots) do
+		if proposedBySlot[slot] and proposedBySlot[slot] ~= currentBySlot[slot] then
+			return true
+		end
+	end
+	return false
+end
+
+local function MarkBadCandidate(className, randomizerMode, slot, itemName)
+	local cacheKey = className .. "|" .. (randomizerMode and "1" or "0")
+	badLoadoutCandidates[cacheKey] = badLoadoutCandidates[cacheKey] or {}
+	badLoadoutCandidates[cacheKey][slot] = badLoadoutCandidates[cacheKey][slot] or {}
+	badLoadoutCandidates[cacheKey][slot][itemName] = true
+end
+
+local function IsBadCandidate(className, randomizerMode, slot, itemName)
+	local cacheKey = className .. "|" .. (randomizerMode and "1" or "0")
+	return badLoadoutCandidates[cacheKey] and badLoadoutCandidates[cacheKey][slot] and badLoadoutCandidates[cacheKey][slot][itemName]
+end
+
+local function GetRandomLoadoutCandidates(className, randomizerMode)
+	local cacheKey = className .. "|" .. (randomizerMode and "1" or "0")
+	local cache = botLoadoutCache[cacheKey]
+	if cache and cache.nextRefresh > CurTime() then
+		return cache.bySlot
+	end
+
+	local bySlot = {}
+	for _, slot in ipairs(BOT_LOADOUT_SLOTS) do
+		bySlot[slot] = {}
+	end
+
+	for itemName, item in pairs(tf_items.Items or {}) do
+		if not istable(item) then continue end
+		local slot = item.item_slot
+		if not slot or not bySlot[slot] then continue end
+		local isWeapon = IsBotWeaponItem(item)
+		local isCosmetic = IsBotCosmeticItem(item)
+		if not isWeapon and not isCosmetic then continue end
+		if not randomizerMode and (not item.used_by_classes or not item.used_by_classes[className]) then continue end
+		local name = item.name or itemName
+		if isstring(name) and not IsBadCandidate(className, randomizerMode, slot, name) then
+			bySlot[slot][#bySlot[slot] + 1] = name
 		end
 	end
 
-	local wep = table.Random(validweapons)
-	ply:EquipInLoadout(wep)
+	botLoadoutCache[cacheKey] = {
+		bySlot = bySlot,
+		nextRefresh = CurTime() + 20,
+	}
+	return bySlot
 end
 
-function RandomCosmetic(ply, wepslot)
-	local weps = tf_items.ReturnItems()
-	local class = ply:GetPlayerClass()
-	local validweapons = {}
-	for k, v in pairs(weps) do
-		if v and istable(v) and isstring(wepslot) and v["name"] and v["item_slot"] == wepslot and v["used_by_classes"] and v["used_by_classes"][class] and v["prefab"] != "tournament_medal" and !string.find(v["item_name"], "Taunt") and v["equip_region"] != "medal" and (v["item_class"] == "tf_wearable" || !IsValid(v["item_class"]) ) then
-			table.insert(validweapons, v["name"])
+local function PickRandomSlotItem(slotList, previousName)
+	if not istable(slotList) or #slotList == 0 then return nil end
+	if #slotList == 1 then return slotList[1] end
+	if not previousName then return table.Random(slotList) end
+
+	local pick = previousName
+	local maxAttempts = math.min(#slotList * 2, 24)
+	for _ = 1, maxAttempts do
+		pick = table.Random(slotList)
+		if pick ~= previousName then
+			return pick
+		end
+	end
+	return pick
+end
+
+local function BuildInitialBotLoadoutState(candidates)
+	local state = {}
+	for _, slot in ipairs(BOT_LOADOUT_SLOTS) do
+		state[slot] = PickRandomSlotItem(candidates[slot], nil)
+	end
+	return state
+end
+
+local function MaybeMutateSavedLoadout(savedBySlot, candidates)
+	local chance = math.Clamp(CVFloat(tf_bot_loadout_mutation_chance, 0.20), 0, 1)
+	if chance <= 0 or math.Rand(0, 1) > chance then return end
+
+	local mutableSlots = {}
+	for _, slot in ipairs(BOT_LOADOUT_SLOTS) do
+		local list = candidates[slot]
+		if istable(list) and #list > 1 and savedBySlot[slot] then
+			mutableSlots[#mutableSlots + 1] = slot
+		end
+	end
+	if #mutableSlots == 0 then return end
+
+	local slotToChange = table.Random(mutableSlots)
+	local old = savedBySlot[slotToChange]
+	savedBySlot[slotToChange] = PickRandomSlotItem(candidates[slotToChange], old)
+end
+
+local function EnsureCategoryVariation(savedBySlot, currentBySlot, candidates, slots)
+	if HasCategoryDifference(savedBySlot, currentBySlot, slots) then return true end
+
+	local eligible = {}
+	for _, slot in ipairs(slots) do
+		local list = candidates[slot]
+		if istable(list) and #list > 0 then
+			eligible[#eligible + 1] = slot
+		end
+	end
+	if #eligible == 0 then return false end
+
+	for _ = 1, 4 do
+		local slot = table.Random(eligible)
+		savedBySlot[slot] = PickRandomSlotItem(candidates[slot], currentBySlot[slot])
+		if HasCategoryDifference(savedBySlot, currentBySlot, slots) then
+			return true
 		end
 	end
 
-	local wep = table.Random(validweapons)
-	ply:EquipInLoadout(wep)
+	return HasCategoryDifference(savedBySlot, currentBySlot, slots)
 end
+
+local function TryEquipSlotChoice(bot, className, randomizerMode, slot, chosenName)
+	if not isstring(chosenName) or chosenName == "" then return false end
+	local beforeBySlot = BuildLoadoutSlotMap(bot)
+	local before = beforeBySlot[slot]
+	bot:EquipInLoadout(chosenName, {}, true)
+	local afterBySlot = BuildLoadoutSlotMap(bot)
+	local after = afterBySlot[slot]
+	if after == chosenName then
+		return true
+	end
+	MarkBadCandidate(className, randomizerMode, slot, chosenName)
+	BotLoadoutDebug(bot, "candidate failed for slot '" .. slot .. "': " .. tostring(chosenName) .. " (before=" .. tostring(before) .. ", after=" .. tostring(after) .. ")")
+	return false
+end
+
+local function SetLoadoutReason(bot, reason)
+	if IsValid(bot) then
+		bot._lastLoadoutRandomizeReason = reason
+	end
+end
+
+function TFBot_ApplyRandomLoadout(bot, opts)
+	if not IsValid(bot) or not bot.TFBot or bot.IsL4DZombie then return false end
+	if not CVBool(tf_bot_random_loadouts, true) then return false end
+	opts = opts or {}
+	local now = CurTime()
+	if not opts.bypass_cooldown and bot._nextLoadoutApply and bot._nextLoadoutApply > now then
+		SetLoadoutReason(bot, "cooldown")
+		return false
+	end
+	bot._nextLoadoutApply = now + (opts.cooldown or 0.2)
+
+	local className = bot:GetPlayerClass()
+	if not isstring(className) or className == "" then
+		SetLoadoutReason(bot, "no_class")
+		BotLoadoutDebug(bot, "abort: no class")
+		return false
+	end
+	if not istable(bot.ItemLoadout) or not istable(bot.ItemProperties) then
+		if not opts.reinit_attempted then
+			BotLoadoutDebug(bot, "ItemLoadout missing, forcing class rebuild and retry")
+			bot:SetPlayerClass(className)
+			timer.Simple(0.08, function()
+				if not IsValid(bot) then return end
+				TFBot_ApplyRandomLoadout(bot, {
+					cooldown = 0,
+					bypass_cooldown = true,
+					reinit_attempted = true,
+				})
+			end)
+		end
+		SetLoadoutReason(bot, "no_itemloadout")
+		return false
+	end
+
+	local randomizerMode = CVBool(tf_bot_randomizer_mode, false)
+	local candidates = GetRandomLoadoutCandidates(className, randomizerMode)
+	if not istable(candidates) then
+		SetLoadoutReason(bot, "no_candidates_table")
+		return false
+	end
+	local currentBySlot = BuildLoadoutSlotMap(bot)
+
+	if not istable(bot._savedRandomLoadout) or bot._savedRandomLoadoutClass ~= className or bot._savedRandomizerMode ~= randomizerMode then
+		bot._savedRandomLoadout = BuildInitialBotLoadoutState(candidates)
+		bot._savedRandomLoadoutClass = className
+		bot._savedRandomizerMode = randomizerMode
+		EnsureCategoryVariation(bot._savedRandomLoadout, currentBySlot, candidates, BOT_WEAPON_SLOTS)
+		EnsureCategoryVariation(bot._savedRandomLoadout, currentBySlot, candidates, BOT_COSMETIC_SLOTS)
+	else
+		MaybeMutateSavedLoadout(bot._savedRandomLoadout, candidates)
+	end
+
+	local changed = false
+	for _, slot in ipairs(BOT_LOADOUT_SLOTS) do
+		local chosen = bot._savedRandomLoadout[slot]
+		if isstring(chosen) and chosen ~= "" then
+			local equipped = TryEquipSlotChoice(bot, className, randomizerMode, slot, chosen)
+			if equipped then
+				changed = true
+			else
+				local fallback = PickRandomSlotItem(candidates[slot], chosen)
+				if fallback and fallback ~= chosen then
+					bot._savedRandomLoadout[slot] = fallback
+					if TryEquipSlotChoice(bot, className, randomizerMode, slot, fallback) then
+						changed = true
+					end
+				end
+			end
+		end
+	end
+	if not changed then
+		SetLoadoutReason(bot, "no_changed_slots")
+		BotLoadoutDebug(bot, "abort: no slot changed")
+		return false
+	end
+
+	local finalBySlot = BuildLoadoutSlotMap(bot)
+	local hasWeaponDiff = HasCategoryDifference(finalBySlot, currentBySlot, BOT_WEAPON_SLOTS)
+	local hasCosmeticDiff = HasCategoryDifference(finalBySlot, currentBySlot, BOT_COSMETIC_SLOTS)
+	local hasAnyWeaponCandidates = false
+	local hasAnyCosmeticCandidates = false
+	for _, slot in ipairs(BOT_WEAPON_SLOTS) do
+		if istable(candidates[slot]) and #candidates[slot] > 0 then hasAnyWeaponCandidates = true break end
+	end
+	for _, slot in ipairs(BOT_COSMETIC_SLOTS) do
+		if istable(candidates[slot]) and #candidates[slot] > 0 then hasAnyCosmeticCandidates = true break end
+	end
+	if hasAnyWeaponCandidates and not hasWeaponDiff then
+		SetLoadoutReason(bot, "no_weapon_variation")
+		BotLoadoutDebug(bot, "abort: no weapon variation")
+		return false
+	end
+	if hasAnyCosmeticCandidates and not hasCosmeticDiff then
+		SetLoadoutReason(bot, "no_cosmetic_variation")
+		BotLoadoutDebug(bot, "abort: no cosmetic variation")
+		return false
+	end
+
+	-- Reapply class to refresh weapons immediately after batched loadout edits.
+	bot:SetPlayerClass(className)
+	SetLoadoutReason(bot, "ok")
+	BotLoadoutDebug(bot, "success: weaponDiff=" .. tostring(hasWeaponDiff) .. " cosmeticDiff=" .. tostring(hasCosmeticDiff))
+	return true
+end
+
+concommand.Add("tf_bot_print_loadout", function(ply, _, args)
+	if IsValid(ply) and not ply:IsAdmin() then return end
+	local idx = tonumber(args and args[1] or "")
+	if not idx then
+		MsgN("Usage: tf_bot_print_loadout <entindex>")
+		return
+	end
+	local target = Entity(idx)
+	if not IsValid(target) or not target:IsPlayer() then
+		MsgN("Invalid player entindex: " .. tostring(idx))
+		return
+	end
+	MsgN("Loadout for " .. target:Nick() .. " [" .. target:EntIndex() .. "], class=" .. tostring(target:GetPlayerClass()))
+	if not istable(target.ItemLoadout) then
+		MsgN("  ItemLoadout: nil")
+		return
+	end
+	for i, itemName in ipairs(target.ItemLoadout) do
+		local item = ResolveItemByName(itemName)
+		local slot = item and item.item_slot or "?"
+		MsgN("  [" .. i .. "] slot=" .. tostring(slot) .. " item=" .. tostring(itemName))
+	end
+end)
 
 hook.Add("PlayerSpawn", "LeadBot_S_PlayerSpawn", function(bot)
 	if (IsValid(bot)) then
@@ -715,18 +1401,32 @@ hook.Add("PlayerSpawn", "LeadBot_S_PlayerSpawn", function(bot)
 					end
 				end
 				timer.Simple(0.1, function()
-						if (--[[bot.IsL4DZombie and ]]!string.find(bot:GetModel(),"/bot_")) then
-							//RandomWeapon2(bot, "primary")
-							//RandomWeapon2(bot, "secondary")
-							//RandomWeapon2(bot, "melee")
-							//RandomCosmetic(bot, "misc")
-							//RandomCosmetic(bot, "misc")
-							//RandomCosmetic(bot, table.Random({"hat","head"}))
-						end
+					if not IsValid(bot) then return end
+					TFBot_ApplyRandomLoadout(bot, { cooldown = 0.05 })
 				end)
 				bot:SetFOV(75, 0) 
 		end
 	end
+end)
+
+hook.Add("CreateEntityRagdoll", "TFBot_FasterRagdollDrop", function(ply, ragdoll)
+	if not IsValid(ply) or not ply:IsPlayer() or not ply.TFBot then return end
+	if not IsValid(ragdoll) then return end
+
+	local boost = math.max(CVFloat(tf_bot_ragdoll_drop_boost, 280), 0)
+	if boost <= 0 then return end
+
+	timer.Simple(0, function()
+		if not IsValid(ragdoll) then return end
+		local down = Vector(0, 0, -boost)
+		ragdoll:SetVelocity(down)
+		for i = 0, ragdoll:GetPhysicsObjectCount() - 1 do
+			local phys = ragdoll:GetPhysicsObjectNum(i)
+			if IsValid(phys) then
+				phys:AddVelocity(down)
+			end
+		end
+	end)
 end)
 
 hook.Remove("SetupMove", "LeadBot_Control22")
@@ -741,8 +1441,10 @@ hook.Add("Move", "LeadBot_Control22", function(bot, mv)
 		if (GetConVar("ai_disabled"):GetBool()) then return end
 		if (IsValid(bot.TargetEnt)) then
 			if (!IsValidTarget(bot,bot.TargetEnt)) then
-				bot.TargetEnt = lookForNearestPlayer(bot)
+				bot.TargetEnt = AcquireEnemyTarget(bot)
 			end
+		else
+			bot.TargetEnt = AcquireEnemyTarget(bot)
 		end
 		if !bot.ControllerBot.nextRandomLook or bot.ControllerBot.nextRandomLook < CurTime() then
 			bot.ControllerBot.LookAt = Angle(math.Rand(-45,45),math.Rand(-360,360),0)
@@ -882,7 +1584,17 @@ hook.Add("Move", "LeadBot_Control22", function(bot, mv)
 				end
 			end
 		end]]
-			for k,v in ipairs(ents.FindInSphere(bot:GetPos(),moveawayrange)) do
+			local canRunAvoidance = true
+			if PerfEnabled() then
+				bot._nextAvoid = bot._nextAvoid or 0
+				if bot._nextAvoid > CurTime() then
+					canRunAvoidance = false
+				else
+					bot._nextAvoid = CurTime() + GetAdaptiveInterval(CVFloat(tf_bot_avoidance_interval, 0.10), 0.05)
+				end
+			end
+			if canRunAvoidance then
+			for k,v in ipairs(GetNearbyEntities(bot, moveawayrange, GetAdaptiveInterval(CVFloat(tf_bot_avoidance_interval, 0.10), 0.05))) do
 				if (IsValid(v) and GAMEMODE:EntityTeam(v) == bot:Team() and v:IsPlayer() and v:EntIndex() != bot:EntIndex() and bot:GetNWBool("Taunting",false) != true) then
 					local forward = bot:EyeAngles():Forward()
 					local right = bot:EyeAngles():Right()
@@ -945,8 +1657,9 @@ hook.Add("Move", "LeadBot_Control22", function(bot, mv)
 					mv:SetSideSpeed(mv:GetSideSpeed() + (side))
 				end
 			end
+			end
 		if (bot.playerclass == "Medic") then
-			for k,v in ipairs(ents.FindInSphere(bot:GetPos(), 1200)) do
+			for k,v in ipairs(GetNearbyEntities(bot, 1200, GetAdaptiveInterval(CVFloat(tf_bot_sense_interval, 0.25), 0.05))) do
 				if (v:IsPlayer() and v:EntIndex() != bot:EntIndex()) then
 					if (v.TFBot and v:IsFriendly(bot) and v:Health() > 0 and v.playerclass ~= "Medic") then
 						if (!IsValid(bot.TargetEnt)) then
@@ -1104,8 +1817,8 @@ local function ComputePathCost(bot, area, fromArea, ladder, length)
     if self:GetPlayerClass() == "spy" then
         local enemyTeam = (self:Team() == TEAM_RED) and TEAM_BLUE or TEAM_RED
 
-        for _, ent in ipairs(ents.GetAll()) do
-            if ent:IsValid() and ent:GetClass() == "obj_sentrygun" and ent:Team() == enemyTeam then
+        for _, ent in ipairs(GetCachedEntities("obj_sentrygun")) do
+            if IsValid(ent) and ent:Team() == enemyTeam then
                 if ent.GetLastKnownArea and ent:GetLastKnownArea() == area then
                     dist = dist * 10.0
                 end
@@ -1130,31 +1843,30 @@ hook.Add("SetupMove", "LeadBot_Control", function(bot, mv, cmd)
 	if bot.TFBot then
 		if (GetConVar("ai_disabled"):GetBool()) then return end
 		-- if our targetent is not alive, don't do anything until it's nil
-		for k,v in ipairs(ents.FindInSphere(bot:GetPos(), bot:GetModelRadius() * 1.02)) do
-			if (v:IsPlayer() and !v:IsFriendly(bot)) then
-				if (!timer.Exists("UpdateTarget"..bot:EntIndex())) then
-					timer.Create("UpdateTarget"..bot:EntIndex(),0.5,1, function()
-						bot.TargetEnt = v
-						timer.Create("UpdateTarget"..v:EntIndex(),0.5,1, function()
-							v.TargetEnt = bot
-						end)
-					end)
-				end
+		local canSense = true
+		if PerfEnabled() then
+			bot._nextSense = bot._nextSense or 0
+			if bot._nextSense > CurTime() then
+				canSense = false
+			else
+				bot._nextSense = CurTime() + GetAdaptiveInterval(CVFloat(tf_bot_sense_interval, 0.25), 0.05)
 			end
 		end
-		for k,v in ipairs(ents.FindInSphere(bot:GetPos(), 1200)) do
-			if (v:IsPlayer() and v:Team() ~= bot:Team()) then
-				if (!timer.Exists("UpdateTarget"..bot:EntIndex())) then
-					timer.Create("UpdateTarget"..bot:EntIndex(),0.5,1, function()
-						if (v:GetEyeTrace().Entity == bot) then
-							bot.TargetEnt = v
-							timer.Create("UpdateTarget"..v:EntIndex(),0.5,1, function()
-								if (bot:GetEyeTrace().Entity == v) then
-									v.TargetEnt = bot
-								end
-							end)
-						end
-					end)
+		if canSense then
+			local closeTargets = GetNearbyEntities(bot, bot:GetModelRadius() * 1.02, GetAdaptiveInterval(CVFloat(tf_bot_sense_interval, 0.25), 0.05))
+			for _, v in ipairs(closeTargets) do
+				if v:IsPlayer() and not v:IsFriendly(bot) then
+					bot.TargetEnt = v
+					break
+				end
+			end
+			if not IsValid(bot.TargetEnt) then
+				local mediumTargets = GetNearbyEntities(bot, 1200, GetAdaptiveInterval(CVFloat(tf_bot_sense_interval, 0.25), 0.05))
+				for _, v in ipairs(mediumTargets) do
+					if v:IsPlayer() and v:Team() ~= bot:Team() and v:GetEyeTrace().Entity == bot then
+						bot.TargetEnt = v
+						break
+					end
 				end
 			end
 		end
@@ -1174,17 +1886,29 @@ hook.Add("SetupMove", "LeadBot_Control", function(bot, mv, cmd)
 		local intelcap
 		local fintelcap
 		local targetpos = Vector(0, 0, 0)
+		local canUpdateObjective = true
+		if PerfEnabled() then
+			bot._nextObjective = bot._nextObjective or 0
+			if bot._nextObjective > CurTime() then
+				canUpdateObjective = false
+			else
+				bot._nextObjective = CurTime() + GetAdaptiveInterval(CVFloat(tf_bot_objective_interval, 0.75), 0.1)
+			end
+		end
+		if canUpdateObjective then
 			if escortAvailable(bot) and !GAMEMODE.RoundHasWinner then -- Payload AI
-					for k, v in pairs(ents.FindByClass("trigger_capture_area")) do
+					for k, v in pairs(GetCachedEntities("trigger_capture_area")) do
 						intel = v
 					end
 
-					bot.botPos = intel.Pos
+					if IsValid(intel) then
+						bot.botPos = intel.Pos
+					end
 					
 					--bot.LastSegmented = CurTime() + math.Rand(0.5, 1)
 
 			elseif flagAvailable(bot) and !GAMEMODE.RoundHasWinner then -- CTF AI
-				for k, v in pairs(ents.FindByClass("item_teamflag")) do
+				for k, v in pairs(GetCachedEntities("item_teamflag")) do
 					if v.TeamNum ~= bot:Team() then
 						intel = v
 					else
@@ -1192,7 +1916,7 @@ hook.Add("SetupMove", "LeadBot_Control", function(bot, mv, cmd)
 					end
 				end
 
-				for k, v in pairs(ents.FindByClass("func_capturezone")) do
+				for k, v in pairs(GetCachedEntities("func_capturezone")) do
 					if v.TeamNum ~= bot:Team() then
 						intelcap = v 
 					else
@@ -1200,19 +1924,19 @@ hook.Add("SetupMove", "LeadBot_Control", function(bot, mv, cmd)
 					end
 				end
 
-				if !intel.Carrier then -- neither intel has a capture
+				if IsValid(intel) and !intel.Carrier then -- neither intel has a capture
 					targetpos = intel:GetPos()
 					bot.intelcarrier = nil
-				elseif intel.Carrier and intel.Carrier:EntIndex() == bot:EntIndex() then -- or if friendly intelligence has capture
+				elseif IsValid(intel) and intel.Carrier and intel.Carrier:EntIndex() == bot:EntIndex() and IsValid(fintelcap) then -- or if friendly intelligence has capture
 					targetpos = fintelcap.Pos -- goto friendly cap spot
 					bot.intelcarrier = nil
-				elseif IsValid(intel.Carrier) and bot:EntIndex() != intel.Carrier:EntIndex() then -- or else if we have it already carried
+				elseif IsValid(intel) and IsValid(intel.Carrier) and bot:EntIndex() != intel.Carrier:EntIndex() then -- or else if we have it already carried
 					targetpos = intel.Carrier:GetPos()
 					bot.intelcarrier = intel.Carrier
-				elseif fintel.Carrier and bot:EntIndex() != fintel.Carrier:EntIndex() then -- if our intel is being stolen...
+				elseif IsValid(fintel) and fintel.Carrier and bot:EntIndex() != fintel.Carrier:EntIndex() then -- if our intel is being stolen...
 					targetpos = fintel.Carrier:GetPos() -- defend our intel
 					bot.intelcarrier = fintel.Carrier
-				else
+				elseif IsValid(fintelcap) then
 					targetpos = fintelcap.Pos -- move to the bomb, the flag is currently invalid until a bot gets it
 					bot.intelcarrier = nil
 				end	
@@ -1240,13 +1964,13 @@ hook.Add("SetupMove", "LeadBot_Control", function(bot, mv, cmd)
 				bot.botPos = targetpos
 			]]
 			elseif bombAvailable(bot) and (bot:Team() == TEAM_BLU or bot:Team() == TF_TEAM_PVE_INVADERS) and bot:GetPlayerClass() != "engineer" and bot.playerclass != "medic" and bot:GetPlayerClass() != "sentrybuster" and !GAMEMODE.RoundHasWinner then -- CTF AI in MVM Maps
-				for k, v in pairs(ents.FindByClass("item_teamflag_mvm")) do
+				for k, v in pairs(GetCachedEntities("item_teamflag_mvm")) do
 					if v.TeamNum ~= bot:Team() and k == 1 then 
 						intel = v
 					end
 				end
 
-				for k, v in pairs(ents.FindByClass("func_capturezone")) do
+				for k, v in pairs(GetCachedEntities("func_capturezone")) do
 					fintelcap = v
 				end
 				if (IsValid(intel)) then
@@ -1254,23 +1978,23 @@ hook.Add("SetupMove", "LeadBot_Control", function(bot, mv, cmd)
 					if !intel.Carrier then -- neither intel has a capture
 						targetpos = intel:GetPos()
 						bot.intelcarrier = nil
-					elseif intel.Carrier and intel.Carrier:EntIndex() == bot:EntIndex() then -- or if friendly intelligence has capture
+					elseif intel.Carrier and intel.Carrier:EntIndex() == bot:EntIndex() and IsValid(fintelcap) then -- or if friendly intelligence has capture
 						targetpos = fintelcap.Pos -- goto friendly cap spot
 						bot.intelcarrier = nil
 					elseif IsValid(intel.Carrier) and bot:EntIndex() != intel.Carrier:EntIndex() then -- or else if we have it already carried
 						if (!bot:IsMiniBoss()) then
 							targetpos = intel.Carrier:GetPos()
-							bot.intelcarrier = intel.carrier
+							bot.intelcarrier = intel.Carrier
 						else
 							if (IsValid(bot.TargetEnt)) then
 								targetpos = bot.TargetEnt:GetPos()
 							end
 						end
-					else
+					elseif IsValid(fintelcap) then
 						targetpos = fintelcap.Pos -- move to the bomb, the flag is currently invalid until a bot gets it
 						bot.intelcarrier = nil
 					end	
-				else
+				elseif IsValid(fintelcap) then
 					targetpos = fintelcap.Pos -- goto friendly cap spot
 				end
 
@@ -1293,6 +2017,7 @@ hook.Add("SetupMove", "LeadBot_Control", function(bot, mv, cmd)
 					end
 				end
 			end
+		end
 		
 			if (2*bot:Health()<bot:GetMaxHealth() and !string.find(bot:GetModel(),"/bot_")) then
 				if (!IsValid(bot.healthkit)) then
@@ -1313,14 +2038,15 @@ hook.Add("SetupMove", "LeadBot_Control", function(bot, mv, cmd)
 				bot.botPos = navArea:GetCenter()
 			end
 		end
-		for k, v in ipairs(ents.FindInSphere(bot:GetPos(),600)) do
-			if (v:GetClass() == "obj_teleporter" and v:EntIndex() != bot.intelcarrier:EntIndex()) then
+		for _, v in ipairs(GetNearbyEntities(bot, 600, GetAdaptiveInterval(CVFloat(tf_bot_objective_interval, 0.75), 0.1))) do
+			if not IsValid(v) then continue end
+			if (v:GetClass() == "obj_teleporter" and (not IsValid(bot.intelcarrier) or v:EntIndex() != bot.intelcarrier:EntIndex())) then
 				if (v:IsEntrance() and IsValid(v:GetLinkedTeleporter()) and v:IsFriendly(bot) and v:IsReady()) then 
 					bot.botPos = v:GetPos()
 				end
 			end
 		end
-		for _, intel in pairs(ents.FindByClass("item_teamflag_mvm")) do
+		for _, intel in pairs(GetCachedEntities("item_teamflag_mvm")) do
 						
 			if IsValid(intel.Carrier) and bot:GetPos():Distance(intel.Carrier:GetPos()) < 180 and bot:EntIndex() != intel.Carrier:EntIndex() then -- dont move if too close!
 				bot.tooclose = true
@@ -1335,7 +2061,7 @@ hook.Add("SetupMove", "LeadBot_Control", function(bot, mv, cmd)
 			local fintel
 			for k, v in pairs(player.GetBots()) do
 				
-				for _, intel in pairs(ents.FindByClass("item_teamflag_mvm")) do
+				for _, intel in pairs(GetCachedEntities("item_teamflag_mvm")) do
 					fintel = intel
 					if (IsValid(intel.Carrier)) then
 						if intel.Carrier ~= bot and bot:IsFriendly(intel.Carrier) then
@@ -1366,8 +2092,17 @@ hook.Add("SetupMove", "LeadBot_Control", function(bot, mv, cmd)
 		 -----[[ENTITY DETECTION]]-----
 		------------------------------
 		if (bot:Team() == TEAM_BLU and bot:GetPlayerClass() == "sentrybuster") then
-		
-				for k, v in pairs(ents.FindByClass("obj_*")) do
+				local buildingCandidates = {}
+				for _, build in ipairs(GetCachedEntities("obj_sentrygun")) do
+					buildingCandidates[#buildingCandidates + 1] = build
+				end
+				for _, build in ipairs(GetCachedEntities("obj_dispenser")) do
+					buildingCandidates[#buildingCandidates + 1] = build
+				end
+				for _, build in ipairs(GetCachedEntities("obj_teleporter")) do
+					buildingCandidates[#buildingCandidates + 1] = build
+				end
+				for _, v in ipairs(buildingCandidates) do
 					if (!IsValid(bot.TargetEnt)) then
 						if v:EntIndex() != bot:EntIndex() then
 							if (!v:IsFriendly(bot)) then -- TODO: find a better way to do this
@@ -1408,7 +2143,7 @@ hook.Add("SetupMove", "LeadBot_Control", function(bot, mv, cmd)
 
 		if (!bot.lookingAt and bot:GetNWBool("Taunting",false) != true) then
 			if (bot:GetPlayerClass() == "engineer") then
-				for k, v in pairs(ents.FindByClass("obj_sentrygun")) do
+				for k, v in pairs(GetCachedEntities("obj_sentrygun")) do
 						
 					if (IsValid(bot.SentryGun) and bot.SentryGun:GetLevel() == 3 and bot.SentryGun:Health() == bot.SentryGun:GetMaxHealth() and !IsValid(bot.Dispenser)) then
 						bot.BuiltDispenser = false
@@ -1451,12 +2186,29 @@ end)
 
 hook.Remove("PlayerSpawn", "leadbot_spawn")
 
+local function DropFlagsForCarrier(carrier)
+	if not carrier then return end
+
+	for _, intel in ipairs(ents.FindByClass("item_teamflag")) do
+		if IsValid(intel) and intel.Carrier == carrier then
+			intel:Drop(true)
+		end
+	end
+
+	for _, intel in ipairs(ents.FindByClass("item_teamflag_mvm")) do
+		if IsValid(intel) and intel.Carrier == carrier then
+			intel:Drop(true)
+		end
+	end
+end
+
 hook.Add("PlayerDisconnected", "leadbot_removed", function(ply)
 	for k,v in ipairs(player.GetAll()) do
 		if (k < 0) then
 			GAMEMODE.round_active = false
 		end
 	end
+	DropFlagsForCarrier(ply)
 	if IsValid(ply) and IsValid(ply.ControllerBot) then
 		ply.ControllerBot:Remove()
 	end
@@ -1468,9 +2220,71 @@ hook.Add("PlayerDisconnected", "leadbot_removed", function(ply)
 	ply:StopSound("MVM.GiantHeavyLoop")
 end)
 
+hook.Add("EntityRemoved", "leadbot_drop_flag_on_removed_carrier", function(ent)
+	if not ent or not ent.IsPlayer or not ent:IsPlayer() then return end
+	DropFlagsForCarrier(ent)
+end)
+
 hook.Add("OnPlayerReady", "leadbot_ready", function()
 	RunConsoleCommand("lk.ready_bots")
 end)
+
+local function GetTeamRespawnPoint(ply)
+	if not IsValid(ply) then return nil end
+
+	local teamID = ply:Team()
+	local primarySpawns = nil
+	if teamID == TEAM_RED then
+		primarySpawns = ents.FindByClass("info_player_redspawn")
+	elseif teamID == TEAM_BLU or teamID == TEAM_GREEN or teamID == TF_TEAM_PVE_INVADERS then
+		primarySpawns = ents.FindByClass("info_player_bluspawn")
+	end
+
+	if istable(primarySpawns) and #primarySpawns > 0 then
+		return table.Random(primarySpawns)
+	end
+
+	local teamSpawns = {}
+	for _, spawn in ipairs(ents.FindByClass("info_player_teamspawn")) do
+		if not IsValid(spawn) then continue end
+		local kv = spawn:GetKeyValues()
+		local startDisabled = kv and tonumber(kv.StartDisabled or 0) or 0
+		local spawnTeam = kv and tonumber(kv.TeamNum or -1) or -1
+		if kv and startDisabled == 0 then
+			if teamID == TEAM_RED and spawnTeam == 2 then
+				table.insert(teamSpawns, spawn)
+			elseif (teamID == TEAM_BLU or teamID == TEAM_GREEN or teamID == TF_TEAM_PVE_INVADERS) and spawnTeam == 3 then
+				table.insert(teamSpawns, spawn)
+			end
+		end
+	end
+
+	if #teamSpawns > 0 then
+		return table.Random(teamSpawns)
+	end
+
+	return nil
+end
+
+local function MoveToTeamRespawnPoint(ply)
+	local spawn = GetTeamRespawnPoint(ply)
+	if not IsValid(spawn) then return end
+
+	ply:SetPos(spawn:GetPos() + Vector(0, 0, 4))
+	ply:SetEyeAngles(spawn:GetAngles())
+	ply:SetLocalVelocity(vector_origin)
+end
+
+local function RespawnBotAtTeamSpawn(bot)
+	if not IsValid(bot) or bot:Alive() then return end
+	bot:Spawn()
+	timer.Simple(0, function()
+		if IsValid(bot) and bot:Alive() then
+			MoveToTeamRespawnPoint(bot)
+		end
+	end)
+end
+
 hook.Add("StartCommand", "leadbot_control", function(bot, cmd)
 	--[[if (bot.ControllingPlayer) then
 		bot.ControlledButtons = cmd:GetButtons()
@@ -1568,7 +2382,7 @@ hook.Add("StartCommand", "leadbot_control", function(bot, cmd)
 						end
 					else
 						if (bot:GetPlayerClass() == "engineer" and !IsValid(bot.SentryGunHint) and !bot.BuiltSentry and bot:Team() != TEAM_BLU) then
-							bot.SentryGunHint = table.Random(ents.FindByClass("bot_hint_sentrygun"))
+							bot.SentryGunHint = table.Random(GetCachedEntities("bot_hint_sentrygun"))
 						elseif (IsValid(bot.SentryGunHint) and !bot.BuiltSentry and bot:Team() != TEAM_BLU) then
 							bot.botPos = bot.SentryGunHint:GetPos()
 							bot:Build(2,0)
@@ -1580,7 +2394,7 @@ hook.Add("StartCommand", "leadbot_control", function(bot, cmd)
 								end)
 							end
 						elseif (bot:GetPlayerClass() == "engineer" and !IsValid(bot.SentryGunHint) and !bot.BuiltSentry and bot:Team() == TEAM_BLU) then
-							bot.SentryGunHint = table.Random(ents.FindByClass("bot_hint_sentrygun"))
+							bot.SentryGunHint = table.Random(GetCachedEntities("bot_hint_sentrygun"))
 						elseif (IsValid(bot.SentryGunHint) and !bot.BuiltSentry and bot:Team() == TEAM_BLU) then
 							bot.botPos = bot.SentryGunHint:GetPos()
 							bot:Build(1,1)
@@ -1612,7 +2426,7 @@ hook.Add("StartCommand", "leadbot_control", function(bot, cmd)
 					end
 				else
 					if (bot:GetPlayerClass() == "engineer" and !IsValid(bot.SentryGunHint) and !bot.BuiltSentry) then
-						bot.SentryGunHint = table.Random(ents.FindByClass("bot_hint_sentrygun"))
+						bot.SentryGunHint = table.Random(GetCachedEntities("bot_hint_sentrygun"))
 					elseif (IsValid(bot.SentryGunHint) and !bot.BuiltSentry) then
 						bot.botPos = bot.SentryGunHint:GetPos()
 						bot:Build(2,0)
@@ -1760,22 +2574,20 @@ end)
 hook.Add("PostPlayerDeath", "leadbot_respawn", function(bot)
 	if (IsValid(bot)) then
 		timer.Simple(6.8, function()
-			if IsValid(bot) and bot:Deaths() >= 1 and bot.IsL4DZombie and bot:IsBot() then
-				if (!string.find(bot:GetModel(),"/bot_")) then
-					
-					if (!bot_respawn:GetBool() or bot:IsL4D()) then
-						bot:Kick("")
-					end
-
-				else
-
+			if IsValid(bot) and bot:Deaths() >= 1 and bot:IsBot() then
+				-- Keep regular TFBots in the respawn flow. Only remove true L4D zombies
+				-- when explicit bot respawn is disabled.
+				if bot.IsL4DZombie and bot:IsL4D() and not bot_respawn:GetBool() then
 					bot:Kick("")
-
 				end
 			end
 
 		end)
-		timer.Simple(6.5, function() if IsValid(bot) and bot.TFBot and !bot:Alive() and !GAMEMODE.RoundHasWinner then bot:Spawn() end end)
+		timer.Simple(6.5, function()
+			if IsValid(bot) and bot.TFBot and not bot:Alive() and not GAMEMODE.RoundHasWinner then
+				RespawnBotAtTeamSpawn(bot)
+			end
+		end)
 	end
 end)
 
@@ -2004,8 +2816,19 @@ function reconstruct_path( cameFrom, current )
 end
 
 function AstarVector( bot, start, goal )
-	local startArea = navmesh.GetNearestNavArea( start, true, 10000, true, true, bot:Team() )
-	local goalArea = navmesh.GetNearestNavArea( goal, true, 10000, true, true, bot:Team() )
+	local team = (IsValid(bot) and bot.Team and bot:Team()) or nil
+	local startArea = navmesh.GetNearestNavArea( start, true, 10000, true, true, team )
+	local goalArea = navmesh.GetNearestNavArea( goal, true, 10000, true, true, team )
+	-- Some maps don't have team-marked nav areas consistently; fallback without team filter.
+	if not IsValid(startArea) then
+		startArea = navmesh.GetNearestNavArea( start, true, 10000, true, true )
+	end
+	if not IsValid(goalArea) then
+		goalArea = navmesh.GetNearestNavArea( goal, true, 10000, true, true )
+	end
+	if not IsValid(startArea) or not IsValid(goalArea) then
+		return nil
+	end
 	return Astar( bot, startArea, goalArea )
 end
 
@@ -2056,17 +2879,49 @@ hook.Add( "StartCommand", "TFBot_Movement", function( ply, cmd )
 	// internal variable to limit how often the path can be (re)generated
 	ply.lastRePath2 = ply.lastRePath2 or 0 
 
-	if ( ply.path && ply.lastRePath + rePathDelay < CurTime() && currentArea != ply.targetArea ) then
+	local repathDelay = rePathDelay
+	if PerfEnabled() then
+		repathDelay = GetAdaptiveInterval(CVFloat(tf_bot_repath_interval, 1.75), 0.25)
+	end
+	if ( ply.path && ply.lastRePath + repathDelay < CurTime() && currentArea != ply.targetArea ) then
 		ply.path = nil
 		ply.lastRePath = CurTime()
 	end
 
-	if ( !ply.path && ply.lastRePath2 + rePathDelay < CurTime() ) then
+	if ( !ply.path && ply.lastRePath2 + repathDelay < CurTime() ) then
+		if PerfEnabled() then
+			ply._nextPath = ply._nextPath or 0
+			if ply._nextPath > CurTime() then
+				return
+			end
+			local spread = (ply:EntIndex() % 10) * 0.01
+			ply._nextPath = CurTime() + spread
+		end
 
 		local targetPos = ply.botPos // target position to go to, the first player on the server
 		ply.targetArea = nil
-		
+
+		if PerfEnabled() then
+			local budgetMs = math.max(CVFloat(tf_bot_nav_budget_ms, 2.5), 0.25)
+			local window = math.floor(CurTime() * 20) -- 50 ms window
+			if navBudget.window ~= window then
+				navBudget.window = window
+				navBudget.used = 0
+			end
+			if navBudget.used >= budgetMs then
+				-- Budget-starved bots should retry soon rather than wait full repathDelay.
+				ply._nextPath = CurTime() + 0.05 + ((ply:EntIndex() % 7) * 0.01)
+				return
+			end
+			local t0 = SysTime()
 			ply.path = AstarVector( ply, ply:GetPos(), targetPos )
+			navBudget.used = navBudget.used + ((SysTime() - t0) * 1000)
+			if CVBool(tf_bot_perf_debug, false) and navBudget.used > budgetMs then
+				PerfDebug("Nav budget reached: " .. string.format("%.2f/%.2f ms", navBudget.used, budgetMs))
+			end
+		else
+			ply.path = AstarVector( ply, ply:GetPos(), targetPos )
+		end
 			if ( !istable( ply.path ) ) then // We are in the same area as the target, or we can't navigate to the target
 				ply.path = nil // Clear the path, bail and try again next time
 				ply.lastRePath2 = CurTime()
@@ -2083,6 +2938,19 @@ hook.Add( "StartCommand", "TFBot_Movement", function( ply, cmd )
 	if ( !ply.path || #ply.path < 1 ) then
 		ply.path = nil
 		ply.targetArea = nil
+		local fallback = ply.botPos
+		if fallback then
+			local dir = (fallback - ply:GetPos())
+			if dir:LengthSqr() > 64 then
+				local ang = dir:GetNormalized():Angle()
+				cmd:SetForwardMove(350)
+				cmd:SetViewAngles(ang)
+				if (!IsValid(ply.TargetEnt)) then
+					ply:SetEyeAngles(LerpAngle(FrameTime() * 5 * 1.2, ply:EyeAngles(), ang))
+				end
+				return
+			end
+		end
 		return
 	end
 
@@ -2135,8 +3003,10 @@ hook.Add("PlayerDeath", "TF2_RespawnWave_Queue", function(ply)
     if not IsValid(ply) or not ply:Team() then return end
 	if (ply:IsBot()) then
 		local teamID = ply:Team()
+		local queue = respawnQueue[teamID]
+		if not queue then return end
 
-		table.insert(respawnQueue[teamID], ply)
+		table.insert(queue, ply)
 		ply:SetNWBool("InRespawnQueue", true)
 
 		-- Prevent automatic respawn
@@ -2152,7 +3022,7 @@ local function ProcessRespawnWave(teamID)
     for i = #queue, 1, -1 do
         local ply = queue[i]
         if IsValid(ply) and ply:Team() == teamID and ply:Alive() == false then
-            ply:Spawn()
+			RespawnBotAtTeamSpawn(ply)
             ply:SetNWBool("InRespawnQueue", false)
         end
         table.remove(queue, i)
@@ -2168,6 +3038,14 @@ end
 
 local function BreakTouchingEntities(ply)
     if not IsValid(ply) or not ply:IsPlayer() then return end
+
+	if PerfEnabled() then
+		ply._lastBreakablePos = ply._lastBreakablePos or ply:GetPos()
+		if ply._lastBreakablePos:DistToSqr(ply:GetPos()) < 16 then
+			return
+		end
+		ply._lastBreakablePos = ply:GetPos()
+	end
 
     local bboxMin, bboxMax = ply:OBBMins(), ply:OBBMaxs()
     local pos = ply:GetPos()
@@ -2192,10 +3070,22 @@ local function BreakTouchingEntities(ply)
     end
 end
 
-hook.Add("Think", "BreakablesTouchByBotPlayers", function()
-    for _, ply in ipairs(player.GetAll()) do
-        if ply.TFBot then
-            BreakTouchingEntities(ply)
-        end
-    end
+local function ProcessBreakablesTouchByBots()
+	for _, ply in ipairs(player.GetAll()) do
+		if ply.TFBot then
+			BreakTouchingEntities(ply)
+		end
+	end
+end
+
+hook.Remove("Think", "BreakablesTouchByBotPlayers")
+timer.Create("BreakablesTouchByBotPlayersTimer", 0.2, 0, function()
+	local interval = 0.2
+	if tf_bot_breakable_check_interval then
+		interval = math.max(CVFloat(tf_bot_breakable_check_interval, 0.20), 0.05)
+	end
+	if timer.Exists("BreakablesTouchByBotPlayersTimer") then
+		timer.Adjust("BreakablesTouchByBotPlayersTimer", interval, 0)
+	end
+	ProcessBreakablesTouchByBots()
 end)

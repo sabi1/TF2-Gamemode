@@ -130,18 +130,58 @@ local PlayerScore = {
 	yalign=TEXT_ALIGN_CENTER,
 }
 
+local MvMTitle = {
+	text="MANN VS MACHINE",
+	font="ScoreboardTeamNameLarge",
+	pos={300*Scale, 26*Scale},
+	color=Colors.TanLight,
+	xalign=TEXT_ALIGN_CENTER,
+	yalign=TEXT_ALIGN_CENTER,
+}
+
+local MvMWave = {
+	text="WAVE 1 / 1",
+	font="ScoreboardMedium",
+	pos={300*Scale, 43*Scale},
+	color=Colors.TanLight,
+	xalign=TEXT_ALIGN_CENTER,
+	yalign=TEXT_ALIGN_CENTER,
+}
+
+local MvMDifficulty = {
+	text="DIFFICULTY: ADVANCED",
+	font="ScoreboardVerySmall",
+	pos={300*Scale, 57*Scale},
+	color=Colors.TanLight,
+	xalign=TEXT_ALIGN_CENTER,
+	yalign=TEXT_ALIGN_CENTER,
+}
+
+local MvMDefenders = {
+	text="DEFENDERS",
+	font="ScoreboardSmallest",
+	pos={300*Scale, 79*Scale},
+	color=Colors.TanLight,
+	xalign=TEXT_ALIGN_CENTER,
+	yalign=TEXT_ALIGN_CENTER,
+}
+
 function PANEL:Init()
 	self:SetPaintBackgroundEnabled(false)
 	self:SetVisible(false)
-	if string.find(game.GetMap(), "mvm_") then
+	self.IsMvM = string.find(game.GetMap(), "mvm_", 1, true) ~= nil
+	if self.IsMvM then
 		self.BluePlayerList = vgui.Create("TFMVMScoreboardPlayerList", self)
-		self.BluePlayerList:SetTeam(TEAM_BLU)
+		self.BluePlayerList:SetTeam(TEAM_RED)
+		self.RedPlayerList = vgui.Create("TFMVMScoreboardPlayerList", self)
+		self.RedPlayerList:SetTeam(TEAM_BLU)
+		self.RedPlayerList:SetVisible(false)
 	else
 		self.BluePlayerList = vgui.Create("TFScoreboardPlayerList", self)
-		self.BluePlayerList:SetTeam(TEAM_BLU)	
+		self.BluePlayerList:SetTeam(TEAM_BLU)
+		self.RedPlayerList = vgui.Create("TFScoreboardPlayerList", self)
+		self.RedPlayerList:SetTeam(TEAM_RED)
 	end
-	self.RedPlayerList = vgui.Create("TFScoreboardPlayerList", self)
-	self.RedPlayerList:SetTeam(TEAM_RED)
 	self.InfectedPlayerList = vgui.Create("TFScoreboardPlayerList", self)
 	self.InfectedPlayerList:SetTeam(TEAM_INFECTED)	
 	
@@ -153,20 +193,64 @@ function PANEL:PerformLayout()
 	
 	self:SetPos(W*0.5 - 300*Scale, 16*Scale)
 	self:SetSize(600*Scale, 448*Scale)
-	
-	self.BluePlayerList:SetPos(5*Scale, 72*Scale)
-	self.BluePlayerList:SetSize(290*Scale, 280*Scale)
-	self.InfectedPlayerList:SetPos(5*Scale, 72*Scale)
-	self.InfectedPlayerList:SetSize(290*Scale, 280*Scale)
-	
-	self.RedPlayerList:SetPos(305*Scale, 72*Scale)
-	self.RedPlayerList:SetSize(290*Scale, 280*Scale)
+
+	if self.IsMvM then
+		self.BluePlayerList:SetPos(8*Scale, 86*Scale)
+		self.BluePlayerList:SetSize(584*Scale, 260*Scale)
+		self.RedPlayerList:SetVisible(false)
+		self.InfectedPlayerList:SetVisible(false)
+	else
+		self.BluePlayerList:SetPos(5*Scale, 72*Scale)
+		self.BluePlayerList:SetSize(290*Scale, 280*Scale)
+		self.InfectedPlayerList:SetPos(5*Scale, 72*Scale)
+		self.InfectedPlayerList:SetSize(290*Scale, 280*Scale)
+		self.RedPlayerList:SetPos(305*Scale, 72*Scale)
+		self.RedPlayerList:SetSize(290*Scale, 280*Scale)
+	end
 	
 	self.LocalStats:SetPos(0, 395*Scale)
 	self.LocalStats:SetSize(600*Scale, 448*Scale)
 end
 
 function PANEL:Paint()
+	if self.IsMvM then
+		local humanCount = #team.GetPlayers(TEAM_RED)
+		local credits = LocalPlayer():GetNWInt("TF_MVM_Credits", 0)
+
+		surface.SetDrawColor(255, 255, 255, 255)
+		tf_draw.BorderPanel(tournament_panel_brown, 1.5*Scale, 8*Scale, 595.5*Scale, 375*Scale, 23, 23, 8*Scale, 8*Scale)
+		surface.SetDrawColor(0, 0, 0, 153)
+		surface.DrawRect(9*Scale, 74*Scale, 582*Scale, 1*Scale)
+		surface.DrawRect(10*Scale, 355*Scale, 580*Scale, 1*Scale)
+
+		draw.Text(MvMTitle)
+		draw.Text(MvMDifficulty)
+		draw.Text(MvMDefenders)
+
+		local waveCurrent = 1
+		local waveTotal = 1
+		if WaveManager and WaveManager.CurrentWave then
+			waveCurrent = math.max(1, tonumber(WaveManager.CurrentWave) or 1)
+			waveTotal = math.max(waveCurrent, tonumber(#(WaveManager.Waves or {})) or 1)
+		end
+		MvMWave.text = "WAVE " .. tostring(waveCurrent) .. " / " .. tostring(waveTotal)
+		draw.Text(MvMWave)
+
+		ServerName.text = tf_lang.GetFormatted("#Scoreboard_Server", GetHostName())
+		ServerName.pos = {11*Scale, 18*Scale}
+		draw.Text(ServerName)
+
+		ServerTimeLeft.text = "PLAYERS: " .. tostring(humanCount)
+		ServerTimeLeft.pos = {585*Scale, 18*Scale}
+		draw.Text(ServerTimeLeft)
+
+		Spectators.text = "Credits: " .. tostring(credits)
+		Spectators.pos = {16*Scale, 369*Scale}
+		Spectators.color = Colors.TanLight
+		draw.Text(Spectators)
+		return
+	end
+
 	local num, tab, tex
 	local playerteam = LocalPlayer():Team()
 	local playerclass = LocalPlayer():GetPlayerClassTable()

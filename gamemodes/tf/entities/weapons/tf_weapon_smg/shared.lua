@@ -1,5 +1,5 @@
 if SERVER then
-	AddCSLuaFile( "shared.lua" )
+	AddCSLuaFile()
 end
 
 SWEP.Slot				= 1

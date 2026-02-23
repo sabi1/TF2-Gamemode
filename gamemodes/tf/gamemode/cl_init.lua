@@ -7,6 +7,7 @@ local load_time = SysTime()
 local blacklist = {["Frying Pan"] = true, ["Golden Frying Pan"] = true, ["The PASSTIME Jack"] = true, ["TTG Max Pistol"] = true, ["Sexo de Pene Gay"] = true, ["Team Spirit"] = true,} -- Items that should NEVER show, must be their item.name if a hat/weapon!
 local name_blacklist = {["The AK47"] = true,} -- Weapons that have names of other weapons must have their item.name put in here
 
+include("cl_scheme.lua")
 include("cl_hud.lua")
 include("tf_lang_module.lua")
 include("shd_items.lua")
@@ -16,11 +17,11 @@ include("cl_proxies.lua")
 include("cl_pickteam.lua")
 
 include("cl_conflict.lua")
+include("cl_debug_bridge.lua")
  
 include("shared.lua")
 include("cl_entclientinit.lua")
 include("cl_deathnotice.lua") 
-include("cl_scheme.lua")
 
 include("cl_player_other.lua")
 
@@ -58,6 +59,7 @@ hook.Add( "PopulateToolMenu", "Civ2Settings1", function()
 		panel:Button("Toggle Immersive View","tf_tp_immersive_toggle","")
 		panel:NumSlider( "SPECIAL: Voice DSP Type", "tf_special_dsp_type", 1, 135 )
 		panel:CheckBox( "Right Handed", "tf_righthand" )
+		panel:CheckBox( "Fast Weapon Switch", "tf_fastweaponswitch" )
 		-- Add stuff here
 	end )
 	spawnmenu.AddToolMenuOption( "Options", "Team Fortress 2 Gamemode", "TF2GMCiv2Customization", "#Customization Settings", "", "", function( panel )
@@ -117,6 +119,7 @@ CreateClientConVar( "tf_give_hl2_weapons", "0", {FCVAR_CLIENTCMD_CAN_EXECUTE}, "
 CreateClientConVar( "tf_dingalingaling_sound", "", {FCVAR_CLIENTCMD_CAN_EXECUTE, FCVAR_ARCHIVE}, "Ding Dong!" )
 CreateClientConVar( "tf_dingalingaling_killsound", "", {FCVAR_CLIENTCMD_CAN_EXECUTE, FCVAR_ARCHIVE}, "Diiinnng...." )
 CreateClientConVar( "civ2_playermodel_reference_pose_prevention", "0", {FCVAR_CLIENTCMD_CAN_EXECUTE, FCVAR_ARCHIVE}, "Use Animated Props for fixing broken playermodel animations." )
+CreateClientConVar( "tf_fastweaponswitch", "0", {FCVAR_CLIENTCMD_CAN_EXECUTE, FCVAR_ARCHIVE}, "Instantly switch weapons when selecting slots or cycling." )
 
 
 concommand.Add("tf_upgradewep03clientonly", function(ply)
@@ -143,6 +146,79 @@ concommand.Add("tf_changeclass", ClassSelection)
 concommand.Add("tf_door", DoorClose)
 concommand.Add("tf_hatpainter", HatPicker)
 concommand.Add("tf_menu", ClassSelection)
+
+-- Gamemode-only key behavior:
+-- E -> voicemenu 0 0
+-- Shift+E -> +use
+hook.Add("PlayerBindPress", "TF2Gamemode_EVoiceMenu_ShiftUse", function(ply, bind, pressed, code)
+	if not pressed then return end
+	if code ~= KEY_E then return end
+	if not isstring(bind) then return end
+
+	local lowered = string.lower(bind)
+	if not string.find(lowered, "+use", 1, true) then return end
+
+	local shiftHeld = input.IsKeyDown(KEY_LSHIFT) or input.IsKeyDown(KEY_RSHIFT)
+	if shiftHeld then
+		return false -- keep normal +use while shift is held
+	end
+
+	RunConsoleCommand("voicemenu", "0", "0")
+	return true -- block +use when pressing E without shift
+end)
+concommand.Add("tf_open_backpack", function(ply)
+	if IsValid(ply) and ply ~= LocalPlayer() then return end
+
+	local classToIndex = {
+		scout = 1,
+		soldier = 2,
+		pyro = 3,
+		demoman = 4,
+		demo = 4,
+		heavy = 5,
+		engineer = 6,
+		medic = 7,
+		sniper = 8,
+		spy = 9,
+	}
+
+	local className = "scout"
+	local lp = LocalPlayer()
+	if IsValid(lp) and isstring(lp:GetPlayerClass()) and lp:GetPlayerClass() ~= "" then
+		className = lp:GetPlayerClass()
+	end
+
+	local classIndex = classToIndex[className] or 1
+	RunConsoleCommand("tf_hud_loadout_class", tostring(classIndex))
+
+	local attempts = 0
+	timer.Create("TFOpenStandaloneBackpack", 0.05, 40, function()
+		attempts = attempts + 1
+		if isfunction(TF_OpenStandaloneBackpack) then
+			TF_OpenStandaloneBackpack(className, classIndex)
+			timer.Remove("TFOpenStandaloneBackpack")
+			return
+		end
+		if attempts >= 40 then
+			timer.Remove("TFOpenStandaloneBackpack")
+		end
+	end)
+end)
+concommand.Add("tf_reload_addon", function(ply)
+	if IsValid(ply) and ply ~= LocalPlayer() then return end
+
+	RunConsoleCommand("reload_vgui")
+	RunConsoleCommand("spawnmenu_reload")
+	RunConsoleCommand("cl_fullupdate")
+
+	-- Host/admin can trigger a server-side map reload through the same command.
+	RunConsoleCommand("tf_reload_addon_server")
+
+	local lp = LocalPlayer()
+	if IsValid(lp) then
+		lp:PrintMessage(HUD_PRINTTALK, "[TF2-Gamemode] Reloaded client UI/scripts. If you are host/admin, server reload was also requested.")
+	end
+end)
 
 
 
@@ -676,6 +752,66 @@ function ClassSelection()
 
 
 local ply = LocalPlayer()
+local allowDuringTeamSwitch = TFJoinFlow and TFJoinFlow.PendingTeamJoinUntil and TFJoinFlow.PendingTeamJoinUntil > CurTime()
+if IsValid(ply) and ply:Team() == TEAM_SPECTATOR and not allowDuringTeamSwitch then
+	RunConsoleCommand("tf_changeteam")
+	return
+end
+local function PlayMenuUISound(snd)
+	if not isstring(snd) or snd == "" then return end
+	snd = string.gsub(snd, "^/", "")
+
+	local tries = {snd}
+	if string.StartWith(snd, "music/") then
+		tries[#tries + 1] = "ui/" .. string.sub(snd, 7)
+	end
+
+	for _, path in ipairs(tries) do
+		surface.PlaySound(path)
+		if IsValid(LocalPlayer()) then
+			LocalPlayer():EmitSound(path, 100, 100, 1, CHAN_AUTO)
+		end
+	end
+end
+
+local function StopClassSelectMusic()
+	if not IsValid(LocalPlayer()) then return end
+	if LocalPlayer().TF2ClassSelectMusic then
+		LocalPlayer().TF2ClassSelectMusic:Stop()
+		LocalPlayer().TF2ClassSelectMusic = nil
+	end
+end
+
+local function StartClassSelectMusic()
+	if not IsValid(LocalPlayer()) then return end
+	StopClassSelectMusic()
+
+	local isMVM = string.find(game.GetMap(), "mvm_") ~= nil
+	local scriptTheme = isMVM and "ClassSelection.ThemeMVM" or "ClassSelection.ThemeNonMVM"
+	local candidates = isMVM and {"music/mvm_class_menu_bg.wav", "music/mvm_class_select.wav"} or {"music/class_menu_bg.wav", "music/class_menu_05.wav"}
+
+	-- Prefer scripted sounds first (they already point at class_menu_bg/mvm_class_menu_bg).
+	local scriptSnd = CreateSound(LocalPlayer(), scriptTheme)
+	if scriptSnd then
+		scriptSnd:PlayEx(0.7, 100)
+		LocalPlayer().TF2ClassSelectMusic = scriptSnd
+		return
+	end
+
+	for _, path in ipairs(candidates) do
+		if file.Exists("sound/" .. path, "GAME") then
+			local snd = CreateSound(LocalPlayer(), path)
+			if snd then
+				snd:PlayEx(0.7, 100)
+				LocalPlayer().TF2ClassSelectMusic = snd
+				return
+			end
+		end
+	end
+
+	PlayMenuUISound(isMVM and "music/mvm_class_menu_bg.wav" or "music/class_menu_bg.wav")
+end
+
 local ClassFrame = vgui.Create("DFrame") --create a frame
 ClassFrame:SetSize(ScrW() * 1, ScrH() * 1 ) --set its size
 ClassFrame:Center() --position it at the center of the screen
@@ -688,17 +824,12 @@ ClassFrame:MakePopup() --make it appear
 	local WScale = ScrW()/640
 	local Scale = ScrH()/480
 ClassFrame.OnClose = function()
-	LocalPlayer():StopSound("ClassSelection.ThemeMVM") 
-	LocalPlayer():StopSound("ClassSelection.ThemeNonMVM") 
+	StopClassSelectMusic()
 	if string.find(game.GetMap(), "mvm_") then 
-		LocalPlayer():EmitSound("music/mvm_class_select.wav") 
+		PlayMenuUISound("music/mvm_class_select.wav")
 	end
 end
-if string.find(game.GetMap(), "mvm_") then
-	LocalPlayer():EmitSound("ClassSelection.ThemeMVM")
-else
-	LocalPlayer():EmitSound("ClassSelection.ThemeNonMVM")	
-end
+StartClassSelectMusic()
 local iconC = vgui.Create( "DModelPanel", ClassFrame )
 iconC:SetSize( ScrW() * 1, ScrH() * 1 )
 
@@ -772,45 +903,46 @@ elseif (LocalPlayer():GetInfoNum("civ2_touhou",0) == 1) then
 else
 	icon:SetModel( "models/player/heavy.mdl" ) -- you can only change colors on playermodels
 end
-LocalPlayer():EmitSound( "/music/class_menu_05.wav", 100, 100, 1, CHAN_VOICE ) 
+PlayMenuUISound("music/class_menu_05.wav")
 icon:GetEntity():SetModelScale(1.2)
-icon:SetCamPos( Vector( 180, 0, 40 ) )
+icon:SetCamPos( Vector( 176, 0, 44 ) )
 icon:SetFOV(50)
-icon:SetLookAt(Vector(-90,0,-15))
+icon:SetLookAt(Vector(-85,0,-5))
 icon:SetAnimated(true)
 icon.AutomaticFrameAdvance = true
+icon:SetZPos(10)
 
 local icon2 = vgui.Create( "DModelPanel", ClassFrame )
 icon2:SetSize(ScrW() * 0.412, ScrH() * 1)
 icon2:SetPos(ScrW() * 0.012, ScrH() * 0.301)
-icon2:SetCamPos( Vector( 180, 0, 40 ) )
+icon2:SetCamPos( Vector( 176, 0, 44 ) )
 icon2:SetFOV(50)
-icon2:SetZPos(-0.01)
-icon2:SetLookAt(Vector(-90,0,-15))
+icon2:SetZPos(12)
+icon2:SetLookAt(Vector(-85,0,-5))
 icon2:SetModel( "models/weapons/w_models/w_minigun.mdl" ) -- you can only change colors on playermodels
 local icon3 = vgui.Create( "DModelPanel", ClassFrame )
 icon3:SetSize(ScrW() * 0.412, ScrH() * 1)
 icon3:SetPos(ScrW() * 0.012, ScrH() * 0.301)
-icon3:SetCamPos( Vector( 180, 0, 40 ) )
+icon3:SetCamPos( Vector( 176, 0, 44 ) )
 icon3:SetFOV(50)
-icon3:SetZPos(-0.01)
-icon3:SetLookAt(Vector(-90,0,-15))
+icon3:SetZPos(12)
+icon3:SetLookAt(Vector(-85,0,-5))
 icon3:SetModel( "models/empty.mdl" ) -- you can only change colors on playermodels
 local icon4 = vgui.Create( "DModelPanel", ClassFrame )
 icon4:SetSize(ScrW() * 0.412, ScrH() * 1)
 icon4:SetPos(ScrW() * 0.012, ScrH() * 0.301)
-icon4:SetCamPos( Vector( 180, 0, 40 ) )
+icon4:SetCamPos( Vector( 176, 0, 44 ) )
 icon4:SetFOV(50)
-icon4:SetZPos(-0.01)
-icon4:SetLookAt(Vector(-90,0,-15))
+icon4:SetZPos(12)
+icon4:SetLookAt(Vector(-85,0,-5))
 icon4:SetModel( "models/empty.mdl" ) -- you can only change colors on playermodels
 local icon5 = vgui.Create( "DModelPanel", ClassFrame )
 icon5:SetSize(ScrW() * 0.412, ScrH() * 1)
 icon5:SetPos(ScrW() * 0.012, ScrH() * 0.301)
-icon5:SetCamPos( Vector( 180, 0, 40 ) )
+icon5:SetCamPos( Vector( 176, 0, 44 ) )
 icon5:SetFOV(50)
-icon5:SetZPos(-0.01)
-icon5:SetLookAt(Vector(-90,0,-15))
+icon5:SetZPos(12)
+icon5:SetLookAt(Vector(-85,0,-5))
 icon5:SetModel( "models/empty.mdl" ) -- you can only change colors on playermodels
 local convar = GetConVar("loadout_heavy")
 local split = string.Split(convar:GetString(), ",")
@@ -839,20 +971,182 @@ icon5:GetEntity():SetNoDraw(false)
 icon5:GetEntity():SetParent(icon:GetEntity())
 icon5:GetEntity():AddEffects(EF_BONEMERGE)
 
+local function getWearablePreviewModel(item, className)
+	if not istable(item) then return nil end
+
+	local perClass = item.model_player_per_class
+	if istable(perClass) then
+		local resolved = perClass[className] or perClass[(className == "demoman" and "demo" or className)] or perClass.basename
+		if isstring(resolved) and resolved ~= "" then
+			resolved = string.Replace(resolved, "%s", className)
+			if className == "demoman" and not file.Exists(resolved, "GAME") then
+				local demoResolved = string.Replace(resolved, "demoman", "demo")
+				if file.Exists(demoResolved, "GAME") then
+					resolved = demoResolved
+				end
+			end
+			return resolved
+		end
+	elseif isstring(perClass) and perClass ~= "" then
+		local resolved = string.Replace(perClass, "%s", className)
+		if className == "demoman" and not file.Exists(resolved, "GAME") then
+			local demoResolved = string.Replace(perClass, "%s", "demo")
+			if file.Exists(demoResolved, "GAME") then
+				resolved = demoResolved
+			end
+		end
+		return resolved
+	end
+
+	if isstring(item.model_player) and item.model_player ~= "" then
+		return item.model_player
+	end
+	if isstring(item.model_world) and item.model_world ~= "" then
+		return item.model_world
+	end
+	return nil
+end
+
+local function applyPreviewWearables(className)
+	local convar = GetConVar("loadout_" .. className)
+	if not convar then return end
+
+	local baseEnt = IsValid(icon) and icon:GetEntity() or nil
+	if IsValid(baseEnt) then
+		for i = 0, baseEnt:GetNumBodyGroups() - 1 do
+			baseEnt:SetBodygroup(i, 0)
+		end
+	end
+
+	local split = string.Split(convar:GetString(), ",")
+	local wearableIDs = {
+		tonumber(split[4]) or -1,
+		tonumber(split[5]) or -1,
+		tonumber(split[6]) or -1,
+	}
+	local wearablePanels = {icon3, icon4, icon5}
+
+	for i = 1, 3 do
+		local p = wearablePanels[i]
+		if IsValid(p) and IsValid(p:GetEntity()) then
+			p:GetEntity():SetModel("models/empty.mdl")
+			p:GetEntity():SetParent(icon:GetEntity())
+			p:GetEntity():AddEffects(EF_BONEMERGE)
+			p:GetEntity():SetNoDraw(false)
+		end
+	end
+
+	for _, wep in pairs(tf_items.Items) do
+		if istable(wep) then
+			for idx = 1, 3 do
+				if wep.id == wearableIDs[idx] then
+					local mdl = getWearablePreviewModel(wep, className)
+					if isstring(mdl) and mdl ~= "" then
+						local panel = wearablePanels[idx]
+						if IsValid(panel) and IsValid(panel:GetEntity()) then
+							panel:GetEntity():SetModel(mdl)
+							panel:GetEntity():SetParent(icon:GetEntity())
+							panel:GetEntity():AddEffects(EF_BONEMERGE)
+						end
+					end
+
+					if IsValid(baseEnt) then
+						local vis = wep.visuals
+						if LocalPlayer():Team() == TEAM_BLU or LocalPlayer():Team() == TF_TEAM_PVE_INVADERS then
+							vis = wep.visuals_blu or vis
+						else
+							vis = wep.visuals_red or vis
+						end
+
+						local groupsHide = {}
+						local groupsShow = {}
+						if istable(vis) then
+							if istable(vis.player_bodygroups) then
+								for _, g in ipairs(vis.player_bodygroups) do groupsHide[#groupsHide + 1] = g end
+								for g, value in pairs(vis.player_bodygroups) do
+									if isstring(g) then
+										local n = tonumber(value)
+										if n and n <= 0 then
+											groupsShow[#groupsShow + 1] = g
+										else
+											groupsHide[#groupsHide + 1] = g
+										end
+									end
+								end
+							end
+							if istable(vis.hide_player_bodygroup_names) then
+								for _, g in ipairs(vis.hide_player_bodygroup_names) do groupsHide[#groupsHide + 1] = g end
+							end
+							if istable(vis.show_player_bodygroup_names) then
+								for _, g in ipairs(vis.show_player_bodygroup_names) do groupsShow[#groupsShow + 1] = g end
+							end
+						end
+
+						local named = PlayerNamedBodygroups and PlayerNamedBodygroups[className]
+						local function applyGroup(groupName, state)
+							local bg = named and named[groupName] or nil
+							if bg == nil and baseEnt.FindBodygroupByName then
+								bg = baseEnt:FindBodygroupByName(groupName)
+							end
+							if bg ~= nil and bg >= 0 then
+								baseEnt:SetBodygroup(bg, state)
+							end
+						end
+						for _, groupName in ipairs(groupsHide) do
+							applyGroup(groupName, 1)
+						end
+						for _, groupName in ipairs(groupsShow) do
+							applyGroup(groupName, 0)
+						end
+					end
+				end
+			end
+		end
+	end
+end
+
+applyPreviewWearables("heavy")
+
+local hoveredClassName = "heavy"
+local loadoutClassToIndex = {
+	scout = 1,
+	soldier = 2,
+	pyro = 3,
+	demoman = 4,
+	heavy = 5,
+	engineer = 6,
+	medic = 7,
+	sniper = 8,
+	spy = 9,
+}
+
 function icon:LayoutEntity( ent )
     self:RunAnimation()
 end
 function icon2:LayoutEntity( ent )
     return
 end
-	timer.Create("SetSkinForClassModels", 0.01, 0, function()
-		if LocalPlayer():Team() == TEAM_BLU or LocalPlayer():Team() == TF_TEAM_PVE_INVADERS then
-			if (IsValid(icon) and IsValid(icon2)) then
-				icon:GetEntity():SetSkin(1)
-				icon2:GetEntity():SetSkin(1)
-			else
-				return
-			end
+	local lastPreviewTeamSkin = nil
+	timer.Remove("SetSkinForClassModels")
+	timer.Create("SetSkinForClassModels", 0.03, 0, function()
+		if not IsValid(ClassFrame) then
+			timer.Remove("SetSkinForClassModels")
+			return
+		end
+		if not (IsValid(icon) and IsValid(icon2) and IsValid(icon3) and IsValid(icon4) and IsValid(icon5)) then
+			return
+		end
+
+		local skin = (LocalPlayer():Team() == TEAM_BLU or LocalPlayer():Team() == TF_TEAM_PVE_INVADERS) and 1 or 0
+		if IsValid(icon:GetEntity()) then icon:GetEntity():SetSkin(skin) end
+		if IsValid(icon2:GetEntity()) then icon2:GetEntity():SetSkin(skin) end
+		if IsValid(icon3:GetEntity()) then icon3:GetEntity():SetSkin(skin) end
+		if IsValid(icon4:GetEntity()) then icon4:GetEntity():SetSkin(skin) end
+		if IsValid(icon5:GetEntity()) then icon5:GetEntity():SetSkin(skin) end
+
+		if lastPreviewTeamSkin ~= skin then
+			lastPreviewTeamSkin = skin
+			applyPreviewWearables(hoveredClassName or "heavy")
 		end
 	end)
 
@@ -881,7 +1175,14 @@ end
 		self.LoadoutButton.font = "HudFontSmallBold"
 		function self.LoadoutButton:DoClick()
 			ClassFrame:Close()
+			local classIndex = loadoutClassToIndex[hoveredClassName] or loadoutClassToIndex[(LocalPlayer():GetPlayerClass() or "")] or 1
+			RunConsoleCommand("tf_hud_loadout_class", tostring(classIndex))
 			RunConsoleCommand("open_charinfo_direct")
+			timer.Simple(0.08, function()
+				if IsValid(CharInfoLoadoutSubPanel) and CharInfoLoadoutSubPanel.SelectClassLoadout2 then
+					CharInfoLoadoutSubPanel:SelectClassLoadout2(classIndex)
+				end
+			end)
 		end
 	end
 
@@ -889,7 +1190,7 @@ local ScoutButton = vgui.Create("DImageButton", ClassFrame)
 ScoutButton:SetSize(ScrW() * 0.056, ScrH() * 0.195)
 ScoutButton:SetPos(ScrW() * 0.128, ScrH() * -0.015) --ScrW() * 0.088, ScrH() * 0.002
 --ScoutButton:SetText("Scout")
-ScoutButton.DoClick = function()  RunConsoleCommand("changeclass", "scout") LocalPlayer():EmitSound( "/music/class_menu_01.wav", 100, 100, 1, CHAN_VOICE ) ClassFrame:Close()  end
+ScoutButton.DoClick = function()  RunConsoleCommand("changeclass", "scout") PlayMenuUISound("music/class_menu_01.wav") ClassFrame:Close()  end
 ScoutButton:SetAlpha(255)
 local scout_img = vgui.Create( "DImage", ScoutButton )	-- Add image to Frame
 scout_img:SetPos( 0, 0 )	-- Move it into frame
@@ -904,7 +1205,7 @@ sol_img:SetPos( 0, 0 )	-- Move it into frame
 sol_img:SetSize( SoldierButton:GetSize() )	-- Size it to 150x150
 SoldierButton:SetImage( "vgui/class_sel_sm_soldier_inactive" )
 SoldierButton:SetAlpha(255)
-SoldierButton.DoClick = function()  RunConsoleCommand("changeclass", "soldier") LocalPlayer():EmitSound( "/music/class_menu_02.wav", 100, 100, 1, CHAN_VOICE ) ClassFrame:Close() if string.find(game.GetMap(), "mvm_") then LocalPlayer():EmitSound("music/mvm_class_select.wav") end LocalPlayer():StopSound("ClassSelection.ThemeNonMVM") LocalPlayer():StopSound("ClassSelection.ThemeMVM")	end
+SoldierButton.DoClick = function()  RunConsoleCommand("changeclass", "soldier") PlayMenuUISound("music/class_menu_02.wav") ClassFrame:Close() if string.find(game.GetMap(), "mvm_") then PlayMenuUISound("music/mvm_class_select.wav") end LocalPlayer():StopSound("ClassSelection.ThemeNonMVM") LocalPlayer():StopSound("ClassSelection.ThemeMVM")	end
 
 local PyroButton = vgui.Create("DImageButton", ClassFrame)
 PyroButton:SetSize(ScrW() * 0.056, ScrH() * 0.195)
@@ -915,13 +1216,13 @@ py_img:SetPos( 0, 0 )	-- Move it into frame
 py_img:SetSize( PyroButton:GetSize() )	-- Size it to 150x150
 PyroButton:SetImage( "vgui/class_sel_sm_pyro_inactive" )
 PyroButton:SetAlpha(255)
-PyroButton.DoClick = function()  RunConsoleCommand("changeclass", "pyro") LocalPlayer():EmitSound( "/music/class_menu_03.wav", 100, 100, 1, CHAN_VOICE ) ClassFrame:Close()  if string.find(game.GetMap(), "mvm_") then LocalPlayer():EmitSound("music/mvm_class_select.wav") end LocalPlayer():StopSound("ClassSelection.ThemeNonMVM") LocalPlayer():StopSound("ClassSelection.ThemeMVM") end
+PyroButton.DoClick = function()  RunConsoleCommand("changeclass", "pyro") PlayMenuUISound("music/class_menu_03.wav") ClassFrame:Close()  if string.find(game.GetMap(), "mvm_") then PlayMenuUISound("music/mvm_class_select.wav") end LocalPlayer():StopSound("ClassSelection.ThemeNonMVM") LocalPlayer():StopSound("ClassSelection.ThemeMVM") end
 
 local DemomanButton = vgui.Create("DImageButton", ClassFrame)
 DemomanButton:SetSize(ScrW() * 0.056, ScrH() * 0.195)
 DemomanButton:SetPos(ScrW() * 0.368, ScrH() * -0.015)
 --DemomanButton:SetText("Demoman") --Set the name of the button
-DemomanButton.DoClick = function()  RunConsoleCommand("changeclass", "demoman") LocalPlayer():EmitSound( "/music/class_menu_04.wav", 100, 100, 1, CHAN_VOICE ) ClassFrame:Close()  if string.find(game.GetMap(), "mvm_") then LocalPlayer():EmitSound("music/mvm_class_select.wav") end LocalPlayer():StopSound("ClassSelection.ThemeNonMVM") LocalPlayer():StopSound("ClassSelection.ThemeMVM") end
+DemomanButton.DoClick = function()  RunConsoleCommand("changeclass", "demoman") PlayMenuUISound("music/class_menu_04.wav") ClassFrame:Close()  if string.find(game.GetMap(), "mvm_") then PlayMenuUISound("music/mvm_class_select.wav") end LocalPlayer():StopSound("ClassSelection.ThemeNonMVM") LocalPlayer():StopSound("ClassSelection.ThemeMVM") end
 local de_img = vgui.Create( "DImage", DemomanButton )	-- Add image to Frame
 de_img:SetPos( 0, 0 )	-- Move it into frame
 de_img:SetSize( DemomanButton:GetSize() )	-- Size it to 150x150
@@ -931,7 +1232,7 @@ local HeavyButton = vgui.Create("DImageButton", ClassFrame)
 HeavyButton:SetSize(ScrW() * 0.056, ScrH() * 0.195)
 HeavyButton:SetPos(ScrW() * 0.428, ScrH() * -0.015)
 --HeavyButton:SetText("Heavy") --Set the name of the button
-HeavyButton.DoClick = function()  RunConsoleCommand("changeclass", "heavy") LocalPlayer():EmitSound( "/music/class_menu_05.wav", 100, 100, 1, CHAN_VOICE ) ClassFrame:Close() if string.find(game.GetMap(), "mvm_") then LocalPlayer():EmitSound("music/mvm_class_select.wav") end LocalPlayer():StopSound("ClassSelection.ThemeNonMVM") LocalPlayer():StopSound("ClassSelection.ThemeMVM") end
+HeavyButton.DoClick = function()  RunConsoleCommand("changeclass", "heavy") PlayMenuUISound("music/class_menu_05.wav") ClassFrame:Close() if string.find(game.GetMap(), "mvm_") then PlayMenuUISound("music/mvm_class_select.wav") end LocalPlayer():StopSound("ClassSelection.ThemeNonMVM") LocalPlayer():StopSound("ClassSelection.ThemeMVM") end
 local he_img = vgui.Create( "DImage", HeavyButton )	-- Add image to Frame
 he_img:SetPos( 0, 0 )	-- Move it into frame
 he_img:SetSize( HeavyButton:GetSize() )	-- Size it to 150x150
@@ -947,7 +1248,7 @@ local EngineerButton = vgui.Create("DImageButton", ClassFrame)
 EngineerButton:SetSize(ScrW() * 0.056, ScrH() * 0.195)
 EngineerButton:SetPos(ScrW() * 0.478, ScrH() * -0.015)
 --EngineerButton:SetText("Engineer") --Set the name of the button
-EngineerButton.DoClick = function()  RunConsoleCommand("changeclass", "engineer") LocalPlayer():EmitSound( "/music/class_menu_06.wav", 100, 100, 1, CHAN_VOICE ) ClassFrame:Close() if string.find(game.GetMap(), "mvm_") then LocalPlayer():EmitSound("music/mvm_class_select.wav") end LocalPlayer():StopSound("ClassSelection.ThemeNonMVM") LocalPlayer():StopSound("ClassSelection.ThemeMVM") end
+EngineerButton.DoClick = function()  RunConsoleCommand("changeclass", "engineer") PlayMenuUISound("music/class_menu_06.wav") ClassFrame:Close() if string.find(game.GetMap(), "mvm_") then PlayMenuUISound("music/mvm_class_select.wav") end LocalPlayer():StopSound("ClassSelection.ThemeNonMVM") LocalPlayer():StopSound("ClassSelection.ThemeMVM") end
 local en_img = vgui.Create( "DImage", EngineerButton )	-- Add image to Frame
 en_img:SetPos( 0, 0 )	-- Move it into frame
 en_img:SetSize( EngineerButton:GetSize() )	-- Size it to 150x150
@@ -963,7 +1264,7 @@ me_img:SetPos( 0, 0 )	-- Move it into frame
 me_img:SetSize( MedicButton:GetSize() )	-- Size it to 150x150
 MedicButton:SetImage( "vgui/class_sel_sm_medic_inactive" )
 MedicButton:SetAlpha(255)
-MedicButton.DoClick = function()  RunConsoleCommand("changeclass", "medic") LocalPlayer():EmitSound( "/music/class_menu_07.wav", 100, 100, 1, CHAN_VOICE ) ClassFrame:Close() if string.find(game.GetMap(), "mvm_") then LocalPlayer():EmitSound("music/mvm_class_select.wav") end LocalPlayer():StopSound("ClassSelection.ThemeNonMVM") LocalPlayer():StopSound("ClassSelection.ThemeMVM") end
+MedicButton.DoClick = function()  RunConsoleCommand("changeclass", "medic") PlayMenuUISound("music/class_menu_07.wav") ClassFrame:Close() if string.find(game.GetMap(), "mvm_") then PlayMenuUISound("music/mvm_class_select.wav") end LocalPlayer():StopSound("ClassSelection.ThemeNonMVM") LocalPlayer():StopSound("ClassSelection.ThemeMVM") end
 
 local SniperButton = vgui.Create("DImageButton", ClassFrame)
 SniperButton:SetSize(ScrW() * 0.056, ScrH() * 0.195)
@@ -974,7 +1275,7 @@ sn_img:SetPos( 0, 0 )	-- Move it into frame
 sn_img:SetSize( SniperButton:GetSize() )	-- Size it to 150x150
 SniperButton:SetImage( "vgui/class_sel_sm_sniper_inactive" )
 SniperButton:SetAlpha(255)
-SniperButton.DoClick = function()  RunConsoleCommand("changeclass", "sniper") LocalPlayer():EmitSound( "/music/class_menu_08.wav", 100, 100, 1, CHAN_VOICE ) ClassFrame:Close() if string.find(game.GetMap(), "mvm_") then LocalPlayer():EmitSound("music/mvm_class_select.wav") end LocalPlayer():StopSound("ClassSelection.ThemeNonMVM") LocalPlayer():StopSound("ClassSelection.ThemeMVM") end
+SniperButton.DoClick = function()  RunConsoleCommand("changeclass", "sniper") PlayMenuUISound("music/class_menu_08.wav") ClassFrame:Close() if string.find(game.GetMap(), "mvm_") then PlayMenuUISound("music/mvm_class_select.wav") end LocalPlayer():StopSound("ClassSelection.ThemeNonMVM") LocalPlayer():StopSound("ClassSelection.ThemeMVM") end
 
 local SpyButton = vgui.Create("DImageButton", ClassFrame)
 SpyButton:SetSize(ScrW() * 0.056, ScrH() * 0.195)
@@ -984,7 +1285,7 @@ local sp_img = vgui.Create( "DImage", SpyButton )	-- Add image to Frame
 sp_img:SetPos( 0, 0 )	-- Move it into frame
 sp_img:SetSize( SpyButton:GetSize() )	-- Size it to 150x150
 SpyButton:SetImage( "vgui/class_sel_sm_spy_inactive" )
-SpyButton.DoClick = function()  RunConsoleCommand("changeclass", "spy") LocalPlayer():EmitSound( "/music/class_menu_09.wav", 100, 100, 1, CHAN_VOICE ) ClassFrame:Close() if string.find(game.GetMap(), "mvm_") then LocalPlayer():EmitSound("music/mvm_class_select.wav") end LocalPlayer():StopSound("ClassSelection.ThemeNonMVM") LocalPlayer():StopSound("ClassSelection.ThemeMVM") end
+SpyButton.DoClick = function()  RunConsoleCommand("changeclass", "spy") PlayMenuUISound("music/class_menu_09.wav") ClassFrame:Close() if string.find(game.GetMap(), "mvm_") then PlayMenuUISound("music/mvm_class_select.wav") end LocalPlayer():StopSound("ClassSelection.ThemeNonMVM") LocalPlayer():StopSound("ClassSelection.ThemeMVM") end
 scout_img:SetImage( "vgui/class_sel_sm_scout_inactive" )
 sol_img:SetImage( "vgui/class_sel_sm_soldier_inactive" )
 py_img:SetImage( "vgui/class_sel_sm_pyro_inactive" )
@@ -1261,6 +1562,7 @@ else
 	end 
 end
 ScoutButton.OnCursorEntered = function() 
+	hoveredClassName = "scout"
 	if (LocalPlayer():GetInfoNum("tf_tfc_model_override",0) == 1  and file.Exists("models/player/tfc_"..(c.ModelName or "scout")..".mdl", "WORKSHOP") ) then
 		icon:SetModel( "models/player/tfc_scout.mdl" ) -- you can only change colors on playermodels
 	elseif (LocalPlayer():GetInfoNum("tf_robot",0) == 1) then
@@ -1289,7 +1591,8 @@ double jump while in the air!]] )
 			end
 		end
 	end
-	LocalPlayer():EmitSound( "/music/class_menu_01.wav", 100, 100, 1, CHAN_VOICE ) 
+	PlayMenuUISound("music/class_menu_01.wav")
+	applyPreviewWearables("scout")
 	
       icon:GetEntity():SetSequence("selectionmenu_startpose")
 	icon:StartScene("scenes/player/scout/low/class_select.vcd")
@@ -1320,6 +1623,7 @@ double jump while in the air!]] )
 	end
 end
 SoldierButton.OnCursorEntered = function() 
+	hoveredClassName = "soldier"
 
 	if (LocalPlayer():GetInfoNum("tf_tfc_model_override",0) == 1  and file.Exists("models/player/tfc_"..(c.ModelName or "scout")..".mdl", "WORKSHOP") ) then
 		icon:SetModel( "models/player/tfc_soldier.mdl" ) -- you can only change colors on playermodels
@@ -1349,7 +1653,8 @@ Use your rocket launcher to rocket jump!]] )
 			end
 		end
 	end
-	LocalPlayer():EmitSound( "/music/class_menu_02.wav", 100, 100, 1, CHAN_VOICE ) 
+	PlayMenuUISound("music/class_menu_02.wav")
+	applyPreviewWearables("soldier")
 	
       icon:GetEntity():SetSequence("selectionmenu_startpose")
 	icon:StartScene("scenes/player/soldier/low/class_select.vcd")
@@ -1378,6 +1683,7 @@ Use your rocket launcher to rocket jump!]] )
 	end
 end
 PyroButton.OnCursorEntered = function() 
+	hoveredClassName = "pyro"
 
 	if (LocalPlayer():GetInfoNum("tf_tfc_model_override",0) == 1  and file.Exists("models/player/tfc_"..(c.ModelName or "scout")..".mdl", "WORKSHOP") ) then
 		icon:SetModel( "models/player/tfc_pyro.mdl" ) -- you can only change colors on playermodels
@@ -1401,7 +1707,8 @@ PyroButton.OnCursorEntered = function()
 			end
 		end
 	end
-	LocalPlayer():EmitSound( "/music/class_menu_03.wav", 100, 100, 1, CHAN_VOICE ) 
+	PlayMenuUISound("music/class_menu_03.wav")
+	applyPreviewWearables("pyro")
 	menuname:SetText( "PYRO" ) 
 	menutext:SetText( [[Ambush enemies at corners!
 Your flamethrower is more effective the 
@@ -1437,6 +1744,7 @@ closer you are to your target!]] )
 	end
 end
 DemomanButton.OnCursorEntered = function() 
+	hoveredClassName = "demoman"
 
 	if (LocalPlayer():GetInfoNum("tf_tfc_model_override",0) == 1  and file.Exists("models/player/tfc_"..(c.ModelName or "scout")..".mdl", "WORKSHOP") ) then
 		icon:SetModel( "models/player/tfc_demo.mdl" ) -- you can only change colors on playermodels
@@ -1467,7 +1775,8 @@ a stickybomb and jumping as you detonate it!]] )
 			end
 		end
 	end
-	LocalPlayer():EmitSound( "/music/class_menu_04.wav", 100, 100, 1, CHAN_VOICE ) 
+	PlayMenuUISound("music/class_menu_04.wav")
+	applyPreviewWearables("demoman")
 	
       icon:GetEntity():SetSequence("selectionmenu_startpose")
 	icon:StartScene("scenes/player/demoman/low/class_select.vcd")
@@ -1497,6 +1806,7 @@ a stickybomb and jumping as you detonate it!]] )
 	end
 end
 HeavyButton.OnCursorEntered = function() 
+	hoveredClassName = "heavy"
 
 	if (LocalPlayer():GetInfoNum("tf_tfc_model_override",0) == 1  and file.Exists("models/player/tfc_"..(c.ModelName or "scout")..".mdl", "WORKSHOP") ) then
 		icon:SetModel( "models/player/tfc_heavy.mdl" ) -- you can only change colors on playermodels
@@ -1522,7 +1832,8 @@ HeavyButton.OnCursorEntered = function()
 		end
 	end
 
-	LocalPlayer():EmitSound( "/music/class_menu_05.wav", 100, 100, 1, CHAN_VOICE ) 
+	PlayMenuUISound("music/class_menu_05.wav")
+	applyPreviewWearables("heavy")
 	
       icon:GetEntity():SetSequence("selectionmenu_startpose")
 	icon:StartScene("scenes/player/heavy/low/class_select.vcd")
@@ -1556,9 +1867,10 @@ for approaching enemies!]] )
 		
 	end
 end
-EngineerButton.DoClick = function()  RunConsoleCommand("changeclass", "engineer") LocalPlayer():EmitSound( "/music/class_menu_06.wav" ) ClassFrame:Close() if string.find(game.GetMap(), "mvm_") then LocalPlayer():EmitSound("music/mvm_class_select.wav") end LocalPlayer():StopSound("ClassSelection.ThemeNonMVM") LocalPlayer():StopSound("ClassSelection.ThemeMVM") end
+EngineerButton.DoClick = function()  RunConsoleCommand("changeclass", "engineer") PlayMenuUISound("music/class_menu_06.wav") ClassFrame:Close() if string.find(game.GetMap(), "mvm_") then PlayMenuUISound("music/mvm_class_select.wav") end LocalPlayer():StopSound("ClassSelection.ThemeNonMVM") LocalPlayer():StopSound("ClassSelection.ThemeMVM") end
 
 EngineerButton.OnCursorEntered = function() 
+	hoveredClassName = "engineer"
 
 	if (LocalPlayer():GetInfoNum("tf_tfc_model_override",0) == 1  and file.Exists("models/player/tfc_"..(c.ModelName or "scout")..".mdl", "WORKSHOP") ) then
 		icon:SetModel( "models/player/tfc_engineer.mdl" ) -- you can only change colors on playermodels
@@ -1595,7 +1907,8 @@ team mates get to the front lines!]] )
 			end
 		end
 	end
-	LocalPlayer():EmitSound( "/music/class_menu_06.wav", 100, 100, 1, CHAN_VOICE ) 
+	PlayMenuUISound("music/class_menu_06.wav")
+	applyPreviewWearables("engineer")
 	
       icon:GetEntity():SetSequence("selectionmenu_startpose")
 	icon:StartScene("scenes/player/engineer/low/class_select.vcd")
@@ -1624,9 +1937,10 @@ team mates get to the front lines!]] )
 		
 	end
 end
-MedicButton.DoClick = function()  RunConsoleCommand("changeclass", "medic") LocalPlayer():EmitSound( "/music/class_menu_07.wav" ) ClassFrame:Close() if string.find(game.GetMap(), "mvm_") then LocalPlayer():EmitSound("music/mvm_class_select.wav") end LocalPlayer():StopSound("ClassSelection.ThemeNonMVM") LocalPlayer():StopSound("ClassSelection.ThemeMVM") end
+MedicButton.DoClick = function()  RunConsoleCommand("changeclass", "medic") PlayMenuUISound("music/class_menu_07.wav") ClassFrame:Close() if string.find(game.GetMap(), "mvm_") then PlayMenuUISound("music/mvm_class_select.wav") end LocalPlayer():StopSound("ClassSelection.ThemeNonMVM") LocalPlayer():StopSound("ClassSelection.ThemeMVM") end
 
 MedicButton.OnCursorEntered = function() 
+	hoveredClassName = "medic"
 
 	if (LocalPlayer():GetInfoNum("tf_tfc_model_override",0) == 1  and file.Exists("models/player/tfc_"..(c.ModelName or "scout")..".mdl", "WORKSHOP") ) then
 		icon:SetModel( "models/player/tfc_medic.mdl" ) -- you can only change colors on playermodels
@@ -1651,7 +1965,8 @@ MedicButton.OnCursorEntered = function()
 			end
 		end
 	end
-	LocalPlayer():EmitSound( "/music/class_menu_07.wav", 100, 100, 1, CHAN_VOICE ) 
+	PlayMenuUISound("music/class_menu_07.wav")
+	applyPreviewWearables("medic")
 	menuname:SetText( "MEDIC" ) 
 	menutext:SetText( [[Fill your ÜberCharge by 
 	healing your team mates!
@@ -1688,9 +2003,10 @@ your medi gun target!]] )
 		
 	end
 end
-SniperButton.DoClick = function()  RunConsoleCommand("changeclass", "sniper") LocalPlayer():EmitSound( "/music/class_menu_08.wav" ) ClassFrame:Close() if string.find(game.GetMap(), "mvm_") then LocalPlayer():EmitSound("music/mvm_class_select.wav") end LocalPlayer():StopSound("ClassSelection.ThemeNonMVM") LocalPlayer():StopSound("ClassSelection.ThemeMVM") end
+SniperButton.DoClick = function()  RunConsoleCommand("changeclass", "sniper") PlayMenuUISound("music/class_menu_08.wav") ClassFrame:Close() if string.find(game.GetMap(), "mvm_") then PlayMenuUISound("music/mvm_class_select.wav") end LocalPlayer():StopSound("ClassSelection.ThemeNonMVM") LocalPlayer():StopSound("ClassSelection.ThemeMVM") end
 
 SniperButton.OnCursorEntered = function() 
+	hoveredClassName = "sniper"
 
 	if (LocalPlayer():GetInfoNum("tf_tfc_model_override",0) == 1  and file.Exists("models/player/tfc_"..(c.ModelName or "scout")..".mdl", "WORKSHOP") ) then
 		icon:SetModel( "models/player/tfc_sniper.mdl" ) -- you can only change colors on playermodels
@@ -1714,7 +2030,8 @@ SniperButton.OnCursorEntered = function()
 			end
 		end
 	end
-	LocalPlayer():EmitSound( "/music/class_menu_08.wav", 100, 100, 1, CHAN_VOICE ) 
+	PlayMenuUISound("music/class_menu_08.wav")
+	applyPreviewWearables("sniper")
 	
       icon:GetEntity():SetSequence("selectionmenu_startpose")
 	icon:StartScene("scenes/player/sniper/low/class_select.vcd")
@@ -1750,6 +2067,7 @@ aim for the head to do critical hits!]] )
 	end
 end
 SpyButton.OnCursorEntered = function() 
+	hoveredClassName = "spy"
 
 	if (LocalPlayer():GetInfoNum("tf_tfc_model_override",0) == 1  and file.Exists("models/player/tfc_"..(c.ModelName or "scout")..".mdl", "WORKSHOP") ) then
 		icon:SetModel( "models/player/tfc_spy.mdl" ) -- you can only change colors on playermodels
@@ -1773,7 +2091,8 @@ SpyButton.OnCursorEntered = function()
 			end
 		end
 	end
-	LocalPlayer():EmitSound( "/music/class_menu_09.wav", 100, 100, 1, CHAN_VOICE ) 
+	PlayMenuUISound("music/class_menu_09.wav")
+	applyPreviewWearables("spy")
 	
       icon:GetEntity():SetSequence("selectionmenu_startpose")
 	icon:StartScene("scenes/player/spy/low/class_select.vcd")
@@ -2746,17 +3065,106 @@ hook.Add( "SpawnMenuEnabled", "BlockThisShit", function(  )
 end )   
 
 local function MergeSteamInventory(ply)
+	if not IsValid(ply) then
+		ply = LocalPlayer()
+	end
+	if not IsValid(ply) or not isfunction(ply.SteamID64) then
+		if TFDebugBridge and TFDebugBridge.Emit then
+			TFDebugBridge.Emit("merge_error", { error = "invalid_player" }, true)
+		end
+		return
+	end
+	if TFDebugBridge and TFDebugBridge.Emit then
+		TFDebugBridge.Emit("merge_start", {
+			steamid64 = ply:SteamID64(),
+		}, true)
+	end
+
+	local function getConfiguredSteamAPIKey()
+		local keyFromFile = file.Read("tf_steam_api_key.txt", "DATA")
+		if isstring(keyFromFile) then
+			keyFromFile = string.Trim(keyFromFile)
+			if keyFromFile ~= "" then
+				return keyFromFile
+			end
+		end
+
+		local keyFromConvar = GetConVar("tf_steam_api_key") and GetConVar("tf_steam_api_key"):GetString() or ""
+		if isstring(keyFromConvar) then
+			keyFromConvar = string.Trim(keyFromConvar)
+			if keyFromConvar ~= "" then
+				return keyFromConvar
+			end
+		end
+
+		return nil
+	end
+
+	local function decodeSteamInventoryJSON(raw)
+		if not isstring(raw) then return nil, nil end
+		raw = string.gsub(raw, "^\239\187\191", "")
+		raw = string.Trim(raw)
+		if raw == "" then return nil, nil end
+
+		local parsed = util.JSONToTable(raw)
+		if istable(parsed) then
+			return parsed, raw
+		end
+
+		local wrapped = string.match(raw, "(%b{})")
+		if isstring(wrapped) and wrapped ~= "" then
+			parsed = util.JSONToTable(wrapped)
+			if istable(parsed) then
+				return parsed, wrapped
+			end
+		end
+
+		return nil, nil
+	end
+
+	local steamAPIKey = getConfiguredSteamAPIKey()
+	if not steamAPIKey then
+		chat.AddText(Color(220, 120, 80), "[TF2-Gamemode] Steam inventory sync skipped: no API key configured. Use: tf_set_steam_api_key <your_key>")
+		if TFDebugBridge and TFDebugBridge.Emit then
+			TFDebugBridge.Emit("merge_error", { error = "missing_api_key" }, true)
+		end
+		return
+	end
+
 	--Send request to the SteamDEV API with the SteamID64 of the player who has just connected.
 	http.Fetch(
-	string.format("https://api.steampowered.com/IEconItems_440/GetPlayerItems/v0001/?steamid=%s&key=EFC1DC87C314EAD8164899A6AAEEC6F8&format=json",
+	string.format("https://api.steampowered.com/IEconItems_440/GetPlayerItems/v0001/?steamid=%s&key=%s&format=json",
 		ply:SteamID64()
+		, steamAPIKey
 	), 
 	function(body)
-		file.Write("tf_loadout.json", body)
+		local decoded, normalizedJSON = decodeSteamInventoryJSON(body)
+		if not istable(decoded) then
+			file.Write("tf_loadout_last_response.txt", tostring(body or ""))
+			local bodyStr = tostring(body or "")
+			if string.find(string.lower(bodyStr), "forbidden", 1, true) and string.find(string.lower(bodyStr), "key=", 1, true) then
+				chat.AddText(Color(220, 120, 80), "[TF2-Gamemode] Steam inventory sync failed: API key rejected. Set a valid key with: tf_set_steam_api_key <your_key>")
+			else
+				chat.AddText(Color(220, 120, 80), "[TF2-Gamemode] Steam inventory sync failed: response was not valid JSON. Saved raw response to data/tf_loadout_last_response.txt")
+			end
+			if TFDebugBridge and TFDebugBridge.Emit then
+				TFDebugBridge.Emit("merge_error", {
+					error = "invalid_json_response",
+				}, true)
+			end
+			return
+		end
+
+		file.Write("tf_loadout.json", normalizedJSON or body)
+		hook.Run("TFInventoryCacheUpdated")
 		timer.Simple(1.5, function()
 			
-			local json = util.JSONToTable(file.Read( "tf_loadout.json", "DATA" ))
+			local json = decoded
 			timer.Simple(0.5, function()
+				if not istable(json) then
+					file.Write("tf_loadout_table.json", "Steam inventory JSON parse failed.\n")
+					return
+				end
 			
 				file.Write("tf_loadout_table.json", table.ToString(json))
 
@@ -3100,8 +3508,23 @@ local function MergeSteamInventory(ply)
 					
 						convar:SetString(table.concat(split, ","))
 						RunConsoleCommand("loadout_update")
+						hook.Run("TFInventoryCacheUpdated")
+						if TFDebugBridge and TFDebugBridge.Emit then
+							local nItems = 0
+							if istable(json.result) and istable(json.result.items) then
+								nItems = #json.result.items
+							end
+							TFDebugBridge.Emit("merge_done", {
+								items = nItems,
+							}, true)
+						end
 					end)
 				else
+					if TFDebugBridge and TFDebugBridge.Emit then
+						TFDebugBridge.Emit("merge_error", {
+							error = "json_missing_result",
+						}, true)
+					end
 					error("JSON returned nothing! Try again later")
 				end
 			end)
@@ -3109,6 +3532,12 @@ local function MergeSteamInventory(ply)
 	end,
 
 	function(code)
+		if TFDebugBridge and TFDebugBridge.Emit then
+			TFDebugBridge.Emit("merge_error", {
+				error = "http_fetch_failed",
+				code = tostring(code),
+			}, true)
+		end
 		error(string.format("IEconItems_440: Failed API call for %s | %s (Error: %s)\n", ply:Nick(), ply:SteamID(), code))
 	end
 	)
@@ -3145,6 +3574,39 @@ end)
 
 concommand.Add("tf_merge_loadout", function(ply)
 	MergeSteamInventory(ply)
+end)
+
+concommand.Add("merge_tf2_loadout", function(ply)
+	MergeSteamInventory(ply)
+end)
+
+concommand.Add("mergetf2loadout", function(ply)
+	MergeSteamInventory(ply)
+end)
+
+CreateClientConVar("tf_steam_api_key", "", true, false, "Steam Web API key used for TF2 inventory merge.")
+concommand.Add("tf_set_steam_api_key", function(_, _, args)
+	local key = string.Trim(table.concat(args or {}, " "))
+	if key == "" then
+		chat.AddText(Color(220, 120, 80), "[TF2-Gamemode] Usage: tf_set_steam_api_key <your_key>")
+		return
+	end
+	file.Write("tf_steam_api_key.txt", key)
+	RunConsoleCommand("tf_steam_api_key", key)
+	chat.AddText(Color(120, 220, 140), "[TF2-Gamemode] Steam API key saved to data/tf_steam_api_key.txt")
+end)
+
+CreateClientConVar("tf_auto_merge_loadout", "1", true, false, "Automatically refresh TF2 Steam inventory cache on map load.")
+hook.Add("InitPostEntity", "TFAutoMergeLoadoutOnMapStart", function()
+	timer.Simple(2, function()
+		if not IsValid(LocalPlayer()) then return end
+		local c = GetConVar("tf_auto_merge_loadout")
+		local keyFile = file.Read("tf_steam_api_key.txt", "DATA")
+		local hasKey = isstring(keyFile) and string.Trim(keyFile) ~= ""
+		if c and c:GetBool() and hasKey then
+			MergeSteamInventory(LocalPlayer())
+		end
+	end)
 end)
 
 if not util.IsBinaryModuleInstalled("steamrichpresencer") then

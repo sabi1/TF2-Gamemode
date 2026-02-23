@@ -23,6 +23,7 @@ if SERVER then
 hook.Add("DoPlayerDeath", "IntelSafeHelp2", function(ply)
 	for _,v in pairs(ents.FindByClass("item_teamflag_mvm")) do
 		if v.Carrier==ply then
+			if v.Deploying then return end
 			v:Drop()
 		end
 	end
@@ -187,7 +188,7 @@ function ENT:Think()
 end
 
 function ENT:CanPickup(ply)
-	return ply:Team()~=self.TeamNum and not self.PickupLock[v]
+	return ply:Team()~=self.TeamNum and not self.PickupLock[ply]
 end
 
 function ENT:StartTouch(ent)
@@ -206,13 +207,23 @@ function ENT:PlayerTouched(pl)
 	self:Pickup(pl)
 end
 
-function ENT:Capture()
+function ENT:Capture(activator, captureZone)
+	local outputActivator = activator
+	if not IsValid(outputActivator) then
+		outputActivator = self.Carrier
+	end
+	if not IsValid(outputActivator) then
+		outputActivator = self
+	end
+
+	self:TriggerOutput("OnCapture", outputActivator)
+	if IsValid(captureZone) and captureZone.TriggerOutput then
+		captureZone:TriggerOutput("OnCapture", outputActivator)
+	end
+
 	self:Return(true)
 	self.Prop2:SetNoDraw(false)
 	self.Prop2:SetNoDraw(true)
-	if IsValid(self.Carrier) then
-		self:TriggerOutput("OnCapture", self.Carrier)
-	end
 end
 
 function ENT:Return(nosound)
@@ -271,8 +282,8 @@ function ENT:Pickup(ply)
 			end
 		end  
 	
-		timer.Create("DropIfCarrierNotAlive", 0.001, 0, function()
-			if ply:Alive() then
+			timer.Create("DropIfCarrierNotAlive", 0.001, 0, function()
+				if ply:Alive() then
 				if !string.find(ply:GetModel(),"_boss.mdl") then
 					ply:SetClassSpeed(ply:GetPlayerClassTable().Speed * 0.5)		
 				end  
@@ -283,9 +294,10 @@ function ENT:Pickup(ply)
 				end
 			end
 	
-			if not ply:Alive() then
-				ply:Freeze(false)
-				ply:SetNoDraw(false)
+				if not ply:Alive() then
+					if self.Deploying then return end
+					ply:Freeze(false)
+					ply:SetNoDraw(false)
 				self:SetNoDraw(false)
 				timer.Stop("Warning1")
 				timer.Stop("Warning2")

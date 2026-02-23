@@ -645,6 +645,7 @@ local function PlayerGiantBotSpawn( ply, mv )
 		ply:EmitSound("vo/losky_respawn01.wav")
 	end]]
 	timer.Simple(0.4, function()
+		if not IsValid(ply) then return end
 		if ply:GetInfoNum("tf_lazyzombie", 0) == 1 then
 			if ply:GetPlayerClass() != "demoman" then
 				ply:SetModel("models/lazy_zombies_v2/"..ply:GetPlayerClass()..".mdl")
@@ -1411,19 +1412,53 @@ concommand.Add( "random_team", function( ply, cmd, args )
 
 end)
 concommand.Add( "changeteam", function( pl, cmd, args )
+	local requestedTeam = tonumber(args[1])
 	--if ( tonumber( args[ 1 ] ) >= 5 and args[ 1 ] ~= 1002 ) then return end
-	if ( tonumber( args[ 1 ] ) == 0 or tonumber( args[ 1 ] ) < 0 or tonumber( args[ 1 ] ) > TEAM_FRIENDLY) then pl:ChatPrint("Invalid Team!") return end
-	if ( !GetConVar("tf_competitive"):GetBool() and pl:Team() == tonumber( args[ 1 ] ) ) then pl:PrintMessage(HUD_PRINTTALK,"You are already in this team!") return false end
-	if ( GetConVar("tf_competitive"):GetBool() and tonumber( args[ 1 ] ) == 4 ) then pl:ChatPrint("Competitive mode is on!") return end
-	if ( string.find(game.GetMap(), "mvm_") and tonumber( args[ 1 ] ) == 6 and !pl:IsAdmin() ) then pl:ChatPrint("Friendly Team is disabled!") return end
-	if ( string.find(game.GetMap(), "mvm_") and !pl:IsAdmin() and tonumber( args[ 1 ] ) == 5 and !pl:IsAdmin() ) then pl:ChatPrint("Neutral Team is disabled!") return end
-	if ( GetConVar("tf_competitive"):GetBool() and tonumber( args[ 1 ] ) == 6 and !pl:IsAdmin() ) then pl:ChatPrint("Friendly Team is disabled!") return end
-	if ( GetConVar("tf_competitive"):GetBool() and tonumber( args[ 1 ] ) == 5 and !pl:IsAdmin() ) then pl:ChatPrint("Neutral Team is disabled!") return end
-	if ( GetConVar("tf_competitive"):GetBool() and tonumber( args[ 1 ] ) == 4 and !pl:IsAdmin() ) then pl:ChatPrint("Green Team is disabled!") return end
-	if ( GetConVar("tf_competitive"):GetBool() and tonumber( args[ 1 ] ) == 3 and !pl:IsAdmin() ) then pl:ChatPrint("Yellow Team is disabled!") return end
+	if requestedTeam == nil then
+		pl:ChatPrint("Invalid Team!")
+		return
+	end
+	if ( requestedTeam ~= TEAM_SPECTATOR and (requestedTeam == 0 or requestedTeam < 0 or requestedTeam > TEAM_FRIENDLY) ) then pl:ChatPrint("Invalid Team!") return end
+	if requestedTeam == TEAM_SPECTATOR and pl:Team() == TEAM_SPECTATOR then
+		-- Allow re-selecting spectator to refresh spectate target/mode without chat spam.
+		timer.Simple(0, function()
+			if IsValid(pl) and pl:Team() == TEAM_SPECTATOR then
+				pl:ConCommand("tf_spectate")
+			end
+		end)
+		return
+	end
+	if ( !GetConVar("tf_competitive"):GetBool() and pl:Team() == requestedTeam ) then pl:PrintMessage(HUD_PRINTTALK,"You are already in this team!") return false end
+	if ( GetConVar("tf_competitive"):GetBool() and requestedTeam == 4 ) then pl:ChatPrint("Competitive mode is on!") return end
+	if ( string.find(game.GetMap(), "mvm_") and requestedTeam == 6 and !pl:IsAdmin() ) then pl:ChatPrint("Friendly Team is disabled!") return end
+	if ( string.find(game.GetMap(), "mvm_") and !pl:IsAdmin() and requestedTeam == 5 and !pl:IsAdmin() ) then pl:ChatPrint("Neutral Team is disabled!") return end
+	if ( GetConVar("tf_competitive"):GetBool() and requestedTeam == 6 and !pl:IsAdmin() ) then pl:ChatPrint("Friendly Team is disabled!") return end
+	if ( GetConVar("tf_competitive"):GetBool() and requestedTeam == 5 and !pl:IsAdmin() ) then pl:ChatPrint("Neutral Team is disabled!") return end
+	if ( GetConVar("tf_competitive"):GetBool() and requestedTeam == 4 and !pl:IsAdmin() ) then pl:ChatPrint("Green Team is disabled!") return end
+	if ( GetConVar("tf_competitive"):GetBool() and requestedTeam == 3 and !pl:IsAdmin() ) then pl:ChatPrint("Yellow Team is disabled!") return end
+
+	if requestedTeam == TEAM_SPECTATOR then
+		if pl:Alive() then
+			pl:Kill() -- Team switch should always produce a death ragdoll.
+		end
+		pl:StripWeapons()
+		pl:StripAmmo()
+		pl:SetTeam(TEAM_SPECTATOR)
+		pl:Spectate(OBS_MODE_ROAMING)
+		timer.Simple(0, function()
+			if IsValid(pl) and pl:Team() == TEAM_SPECTATOR then
+				pl:ConCommand("tf_spectate")
+			end
+		end)
+		timer.Simple(0.3, function()
+			if !IsValid(pl) then return end
+			PrintMessage(HUD_PRINTTALK, 'Player ' .. pl:Nick() .. ' joined team ' .. team.GetName(pl:Team()))
+		end)
+		return
+	end
 
 	if ( GetConVar("tf_competitive"):GetBool() ) then
-		local theteam = tonumber( args[ 1 ] )
+		local theteam = requestedTeam
 		local nDiffBetweenTeams = 0;
 		local m_iLightestTeam = 0;
 		local m_iHeaviestTeam = 0;
@@ -1456,16 +1491,29 @@ concommand.Add( "changeteam", function( pl, cmd, args )
 				pl:PrintMessage(HUD_PRINTTALK,"You are already in this team!")
 				return false
 			else
-				pl:SetTeam( tonumber( args[ 1 ] ) )  
+				if pl:Alive() then
+					pl:Kill() -- Team switch should always produce a death ragdoll.
+				end
+				pl:SetTeam(theteam)
 			end
 		end
 	else
-		pl:SetTeam( tonumber( args[ 1 ] ) )  
+		if pl:Alive() then
+			pl:Kill() -- Team switch should always produce a death ragdoll.
+		end
+		pl:SetTeam(requestedTeam)
 	end
-	pl:ConCommand("tf_changeclass")
+
+	if requestedTeam == TEAM_SPECTATOR then
+		timer.Simple(0.1, function()
+			if IsValid(pl) and pl:Team() == TEAM_SPECTATOR then
+				pl:ConCommand("tf_spectate")
+			end
+		end)
+	else
+		pl:ConCommand("tf_changeclass")
+	end
 	timer.Simple(0.3, function() if !IsValid(pl) then return end PrintMessage(HUD_PRINTTALK, 'Player '.. pl:Nick() ..	' joined team '.. team.GetName(pl:Team()) ) end) 
-	if pl:Alive() and pl:Team() != TEAM_SPECTATOR then pl:Kill() end 
-	if pl:Alive() and pl:Team() == TEAM_SPECTATOR then pl:Spawn() end 
 end )
 
 
@@ -1548,6 +1596,12 @@ function GM:PlayerInitialSpawn(ply)
 	-- Msg("PlayerInitialSpawn : "..ply:GetName().." "..tostring(self.Landmark).."\n")
 	if self.Landmark then--and self.Landmark:IsValidMap() then
 		--self.Landmark:LoadPlayerData(ply)
+	end
+
+	if IsValid(ply) and not ply:IsBot() and not ply.TFInitialJoinFlowSent then
+		ply.TFInitialJoinFlowSent = true
+		net.Start("TF_OpenInitialJoinFlow")
+		net.Send(ply)
 	end
 end
 
@@ -1646,6 +1700,24 @@ concommand.Add("changelevel2", function(ply,com,arg)
     RunConsoleCommand("changelevel", arg[1])
 end)
 
+concommand.Add("tf_reload_addon_server", function(ply)
+	if IsValid(ply) and not (ply:IsListenServerHost() or ply:IsAdmin()) then
+		ply:PrintMessage(HUD_PRINTTALK, "[TF2-Gamemode] You need to be host or admin to reload server scripts.")
+		return
+	end
+
+	local currentMap = game.GetMap()
+	if not currentMap or currentMap == "" then return end
+
+	for _, v in ipairs(player.GetAll()) do
+		v:PrintMessage(HUD_PRINTTALK, "[TF2-Gamemode] Reloading server/shared scripts by changing level to " .. currentMap .. "...")
+	end
+
+	timer.Simple(0.1, function()
+		RunConsoleCommand("changelevel", currentMap)
+	end)
+end)
+
 
 if ( file.Exists( "tf/gamemode/maps/"..game.GetMap()..".lua", "LUA" ) ) then
 
@@ -1725,7 +1797,9 @@ hook.Add( "PlayerButtonDown", "PlayerButtonDownTF", function( pl, key )
 		end)
 	end
 	if key == KEY_Z then 
-		pl:ConCommand("voice_menu_1") 
+		if pl:Team() ~= TEAM_SPECTATOR then
+			pl:ConCommand("voice_menu_1")
+		end
 	end
 	if pl:GetPlayerClass() == "fastzombie" then
 		if key == KEY_SPACE and pl:OnGround() then 
@@ -1734,16 +1808,24 @@ hook.Add( "PlayerButtonDown", "PlayerButtonDownTF", function( pl, key )
 		end
 	end
 	if key == KEY_X then  
-		pl:ConCommand("voice_menu_2")   
+		if pl:Team() ~= TEAM_SPECTATOR then
+			pl:ConCommand("voice_menu_2")
+		end
 	end
 	if key == KEY_L then
 		pl:ConCommand("gmod_undo")   
 	end
 	if key == KEY_C then
-		pl:ConCommand("voice_menu_3") 
+		if pl:Team() ~= TEAM_SPECTATOR then
+			pl:ConCommand("voice_menu_3")
+		end
 	end
 	if key == KEY_COMMA then
-		pl:ConCommand("tf_changeclass")
+		if pl:Team() == TEAM_SPECTATOR then
+			pl:ConCommand("tf_changeteam")
+		else
+			pl:ConCommand("tf_changeclass")
+		end
 	end
 	if key == KEY_M then
 		pl:ConCommand("hud_showloadout 1")
@@ -1862,6 +1944,7 @@ function GM:PlayerSpawn(ply)
 	end
 	ply:SetNWBool("SpawnGlows",true)
 	timer.Simple(10, function()
+		if not IsValid(ply) then return end
 		ply:SetNWBool("SpawnGlows",false)
 	end)
 	--[[
@@ -2012,6 +2095,7 @@ function GM:PlayerSpawn(ply)
 		end
 	end
 	timer.Simple(0.5, function()
+		if not IsValid(ply) then return end
 		if ply:GetPlayerClass() == "engineer" and (string.find(ply:GetModel(),"/bot_") or (ply.TFBot and ply:Team() == TEAM_BLU and string.find(game.GetMap(),"mvm_"))) then 
 			ply:EmitSound("MVM.Robot_Engineer_Spawn")
 			
@@ -2028,6 +2112,10 @@ function GM:PlayerSpawn(ply)
 	ply:SetNoCollideWithTeammates( true ) 
 	ply.LastWeapon = nil
 	timer.Create("ItsHealing"..ply:EntIndex(), 1, 0, function()
+		if not IsValid(ply) then
+			timer.Remove("ItsHealing"..ply:EntIndex())
+			return
+		end
 		if (ply:GetPlayerClass() != "medic") then return end
 		if (!ply:Alive()) then return end
 		if (ply:Health() < ply:GetMaxHealth()) then
@@ -2082,7 +2170,7 @@ function GM:PlayerSpawn(ply)
 			ply:UnSpectate()
 		end]]	
 	elseif ply:GetPlayerClass()=="" and ply:Team() == TEAM_SPECTATOR then
-		ply:ConCommand("tf_changeteam")
+		-- Do not reopen team select for established spectators; joinflow handles initial team selection.
 		ply:ConCommand("tf_spectate","2")
 		--ply:Spectate(OBS_MODE_FIXED)
 		--ply:StripWeapons()
@@ -2665,6 +2753,7 @@ end
 -- Networking
 util.AddNetworkString("UpdateLoadout")
 util.AddNetworkString("TF_PlayerSpawn")
+util.AddNetworkString("TF_OpenInitialJoinFlow")
 
 function GM:PlayerDroppedWeapon(ply)
 	if IsValid(ply) and ply:IsPlayer() and !ply:IsHL2() then

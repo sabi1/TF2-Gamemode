@@ -262,6 +262,11 @@ function PANEL:OnMousePressed(b)
 			surface.PlaySound("ui/buttonclickrelease.wav")
 		end)
 		self:DoClick()
+	elseif b==MOUSE_RIGHT then
+		surface.PlaySound("ui/buttonclick.wav")
+		if isfunction(self.DoRightClick) then
+			self:DoRightClick()
+		end
 	end
 end
 

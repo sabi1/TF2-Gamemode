@@ -6,6 +6,52 @@ function ENT:Initialize()
 	self.Players = 0 
 end
 
+local function GetPlayerControlPointTeam(ply)
+	if not IsValid(ply) or not ply:IsPlayer() then
+		return nil
+	end
+
+	if ply:Team() == TEAM_RED then
+		return 2
+	end
+	if ply:Team() == TEAM_BLU then
+		return 3
+	end
+
+	return nil
+end
+
+local function GetControlPointOwnerTeam(cp)
+	if not IsValid(cp) then
+		return nil
+	end
+
+	if cp.GetOwnerTeam then
+		return tonumber(cp:GetOwnerTeam())
+	end
+
+	return tonumber(cp.OwnerTeam or (cp.Properties and cp.Properties.point_default_owner))
+end
+
+function ENT:RefreshControlPointLocks()
+	local master = ents.FindByClass("team_control_point_master")[1]
+	if IsValid(master) and master.UpdateControlPoints then
+		master:UpdateControlPoints()
+		return
+	end
+
+	local points = ents.FindByClass("team_control_point")
+	if #points == 0 then
+		points = ents.FindByClass("tf_team_control_point")
+	end
+
+	for _, point in ipairs(points) do
+		if point.UpdateLockStatus then
+			point:UpdateLockStatus()
+		end
+	end
+end
+
 function ENT:InitPostEntity()
 	--print(self)
 	self.CapturePoint = ents.FindByName(self.Properties.area_cap_point or "")[1] or NULL
@@ -82,45 +128,50 @@ function ENT:StartTouch(ent)
 		end
 	else
 		if IsValid(self.CapturePoint) and ent:IsPlayer() then
+			local capTeam = GetPlayerControlPointTeam(ent)
+			if not capTeam then
+				return
+			end
+
 			if ent.CurrentControlPoint ~= self.CapturePoint.ID then
 				ent.CurrentControlPoint = self.CapturePoint.ID
 				umsg.Start("TF_EnterControlPoint", ent)
 					umsg.Char(ent.CurrentControlPoint)
 				umsg.End()
-				if GAMEMODE:EntityTeam(self.CapturePoint) != ent:Team() then
+
+				local ownerTeam = GetControlPointOwnerTeam(self.CapturePoint)
+				if ownerTeam ~= capTeam and not self.CapturePoint.Locked then
 					umsg.Start("TF_PlayGlobalSound", ent)
 						umsg.String("Announcer.ControlPointContested")
 					umsg.End()
 					self.CapturePoint:EmitSound("ControlPoint.Start", 80, 100)
 					self.CapturePoint:EmitSound("ControlPoint.Move", 80, 100)
 					timer.Create("CapPoint"..ent.CurrentControlPoint, 10, 1, function()
-						umsg.Start("TF_SetControlPointTeam", ent)
-							umsg.Char(ent.CurrentControlPoint) 
-							umsg.Float(tonumber(ent:Team()) + 1) 
-						umsg.End()
-						umsg.Start("TF_UnLockControlPoint", ent)
-								umsg.Char(ent.CurrentControlPoint) 
-						umsg.End()
-						for k,v in ipairs(ents.FindByClass("team_control_point")) do
-							if GAMEMODE:EntityTeam(v) != GAMEMODE:EntityTeam(self.ControlPoint) then
-								umsg.Start("TF_UnLockControlPoint", ent)
-									umsg.Char(v.ID) 
-								umsg.End() 
-							end
+						if not IsValid(self) or not IsValid(self.CapturePoint) or not IsValid(ent) then
+							return
 						end
-						if ent:Team() == TEAM_RED then
-							self.CapturePoint:SetBodygroup(0, ent:Team() + 1)
-						elseif ent:Team() == TEAM_BLU then	
-							self.CapturePoint:SetBodygroup(0, ent:Team() + 1) 
+						if ent.CurrentControlPoint ~= self.CapturePoint.ID then
+							return
 						end
-						self.CapturePoint:SetNWInt("Team", ent:Team())
-						self.CapturePoint:ResetSequence(self.CapturePoint:SelectWeightedSequence(ACT_IDLE))
-						self.CapturePoint:DrawShadow(false)
+						if self.CapturePoint.Locked then
+							return
+						end
+
+						local captureTeam = GetPlayerControlPointTeam(ent)
+						if not captureTeam then
+							return
+						end
+						if GetControlPointOwnerTeam(self.CapturePoint) == captureTeam then
+							return
+						end
+
+						self.CapturePoint:SetOwnerTeam(captureTeam)
 						self.CapturePoint:StopSound("ControlPoint.Move")
 						self.CapturePoint:EmitSound("ControlPoint.Stop")
+						self:RefreshControlPointLocks()
 					end)
 				end  
-				if GAMEMODE:EntityTeam(self.CapturePoint) == ent:Team() then
+				if ownerTeam == capTeam then
 					timer.Stop("CapPoint"..ent.CurrentControlPoint)
 					self.CapturePoint:StopSound("ControlPoint.Move")
 					self.CapturePoint:EmitSound("ControlPoint.Malfunction")
@@ -167,9 +218,10 @@ function ENT:EndTouch(ent)
 				umsg.Start("TF_ExitControlPoint", ent)
 				umsg.End()
 				
-				if GAMEMODE:EntityTeam(self.CapturePoint) != ent:Team() then		
+				local capTeam = GetPlayerControlPointTeam(ent)
+				if capTeam and GetControlPointOwnerTeam(self.CapturePoint) ~= capTeam then
 					
-					timer.Create("CapPoint"..self.CapturePoint, 20, 1, function()
+					timer.Create("CapPoint"..self.CapturePoint.ID, 20, 1, function()
 						self.CapturePoint:StopSound("ControlPoint.Move")
 						self.CapturePoint:StopSound("ControlPoint.Malfunction")
 						self.CapturePoint:EmitSound("ControlPoint.Stop")

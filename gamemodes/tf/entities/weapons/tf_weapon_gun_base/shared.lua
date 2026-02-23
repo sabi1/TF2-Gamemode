@@ -1,5 +1,5 @@
 if SERVER then
-	AddCSLuaFile( "shared.lua" )
+	AddCSLuaFile()
 end
 
 if CLIENT then
@@ -98,12 +98,23 @@ function SWEP:PrimaryAttack()
 		end
 		timer.Simple(0.35 * self.Owner:GetViewModel():GetPlaybackRate(), function()
 			if CLIENT then
-				if (self:GetItemData().model_player == "models/weapons/c_models/c_shotgun/c_shotgun.mdl" || self:GetItemData().model_player == "models/workshop/weapons/c_models/c_russian_riot/c_russian_riot.mdl" || self:GetItemData().model_player == "models/workshop/weapons/c_models/c_reserve_shooter/c_reserve_shooter.mdl") then
+				if not IsValid(self) or not IsValid(self.Owner) then return end
+				if self.Owner:Team() == TEAM_SPECTATOR then return end
+				if not isfunction(self.GetItemData) then return end
+				local itemData = self:GetItemData()
+				if not istable(itemData) then return end
+				local modelPlayer = itemData.model_player
+				if (modelPlayer == "models/weapons/c_models/c_shotgun/c_shotgun.mdl" || modelPlayer == "models/workshop/weapons/c_models/c_russian_riot/c_russian_riot.mdl" || modelPlayer == "models/workshop/weapons/c_models/c_reserve_shooter/c_reserve_shooter.mdl") then
 					----PrintTable(self.CModel:GetAttachments())
+					if not IsValid(self.CModel) then return end
+					local ejectAttachment = self.CModel:LookupAttachment("eject_brass")
+					if not ejectAttachment or ejectAttachment <= 0 then return end
+					local attach = self.CModel:GetAttachment(ejectAttachment)
+					if not attach or not attach.Pos or not attach.Ang then return end
 					local effectdata = EffectData()
 					effectdata:SetEntity( self.Owner:GetViewModel() )
-					effectdata:SetOrigin( self.CModel:GetAttachment(self.CModel:LookupAttachment("eject_brass")).Pos )
-					effectdata:SetAngles( Angle(self.CModel:GetAttachment(self.CModel:LookupAttachment("eject_brass")).Ang.x,self.CModel:GetAttachment(self.CModel:LookupAttachment("eject_brass")).Ang.y,self.CModel:GetAttachment(self.CModel:LookupAttachment("eject_brass")).Ang.z) )
+					effectdata:SetOrigin( attach.Pos )
+					effectdata:SetAngles( Angle(attach.Ang.x, attach.Ang.y, attach.Ang.z) )
 					util.Effect( "ShotgunShellEject", effectdata )
 				end
 			end
@@ -282,7 +293,8 @@ end
 
 function SWEP:ShootEffects()
 	if (!self:CanPrimaryAttack()) then return end
-	local wmodel = self:GetItemData().model_player or self.WorldModelOverride or self.WorldModel
+	local itemData = isfunction(self.GetItemData) and self:GetItemData() or nil
+	local wmodel = (istable(itemData) and itemData.model_player) or self.WorldModelOverride or self.WorldModel
 	if (self.Owner:GetNWBool("NoWeapon")) then
 		--self.WorldModel = "models/empty.mdl"
 	else

@@ -78,6 +78,10 @@ function ENT:RestartTimer(endsetup)
 	else
 		
 		timer.Simple(1, function()
+			if not IsValid(self) then
+				return
+			end
+
 			self.IsSetupPhase = false
 			if (string.find(game.GetMap(),"mvm")) then
 				umsg.Start("TF_PlayGlobalSound")

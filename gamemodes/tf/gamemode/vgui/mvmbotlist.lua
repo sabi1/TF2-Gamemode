@@ -6,20 +6,18 @@ local H = ScrH()
 local WScale = W/640
 local Scale = H/480
 
-local default_avatar = surface.GetTextureID("vgui/av_default")
-local bot_avatar = surface.GetTextureID("vgui/null")
-
-local leaderboard_dom = {}
-for i=1, 16 do
-	leaderboard_dom[i] = surface.GetTextureID("hud/leaderboard_dom"..i)
-end
-
-local ico_friend_indicator_scoreboard = surface.GetTextureID("vgui/ico_friend_indicator_scoreboard")
-
 local NameLabel = {
 	text="Name",
 	font="ScoreboardSmallest",
-	pos={44*Scale, 7*Scale},
+	pos={26*Scale, 7*Scale},
+	xalign=TEXT_ALIGN_LEFT,
+	yalign=TEXT_ALIGN_CENTER,
+}
+
+local ClassLabel = {
+	text="Class",
+	font="ScoreboardSmallest",
+	pos={122*Scale, 7*Scale},
 	xalign=TEXT_ALIGN_LEFT,
 	yalign=TEXT_ALIGN_CENTER,
 }
@@ -27,7 +25,23 @@ local NameLabel = {
 local ScoreLabel = {
 	text="Score",
 	font="ScoreboardSmallest",
-	pos={253*Scale, 7*Scale},
+	pos={190*Scale, 7*Scale},
+	xalign=TEXT_ALIGN_RIGHT,
+	yalign=TEXT_ALIGN_CENTER,
+}
+
+local DamageLabel = {
+	text="Damage",
+	font="ScoreboardSmallest",
+	pos={232*Scale, 7*Scale},
+	xalign=TEXT_ALIGN_RIGHT,
+	yalign=TEXT_ALIGN_CENTER,
+}
+
+local MoneyLabel = {
+	text="Money",
+	font="ScoreboardSmallest",
+	pos={266*Scale, 7*Scale},
 	xalign=TEXT_ALIGN_RIGHT,
 	yalign=TEXT_ALIGN_CENTER,
 }
@@ -35,7 +49,7 @@ local ScoreLabel = {
 local PingLabel = {
 	text="Ping",
 	font="ScoreboardSmallest",
-	pos={276*Scale, 7*Scale},
+	pos={296*Scale, 7*Scale},
 	xalign=TEXT_ALIGN_RIGHT,
 	yalign=TEXT_ALIGN_CENTER,
 }
@@ -43,21 +57,42 @@ local PingLabel = {
 local PlayerName = {
 	text="",
 	font="TFDefault",
-	pos={44*Scale, 7*Scale},
+	pos={26*Scale, 7*Scale},
+	xalign=TEXT_ALIGN_LEFT,
+	yalign=TEXT_ALIGN_CENTER,
+}
+local PlayerClass = {
+	text="",
+	font="TFDefault",
+	pos={122*Scale, 7*Scale},
 	xalign=TEXT_ALIGN_LEFT,
 	yalign=TEXT_ALIGN_CENTER,
 }
 local PlayerScore = {
 	text="",
 	font="TFDefault",
-	pos={253*Scale, 7*Scale},
+	pos={190*Scale, 7*Scale},
+	xalign=TEXT_ALIGN_RIGHT,
+	yalign=TEXT_ALIGN_CENTER,
+}
+local PlayerDamage = {
+	text="",
+	font="TFDefault",
+	pos={232*Scale, 7*Scale},
+	xalign=TEXT_ALIGN_RIGHT,
+	yalign=TEXT_ALIGN_CENTER,
+}
+local PlayerMoney = {
+	text="",
+	font="TFDefault",
+	pos={266*Scale, 7*Scale},
 	xalign=TEXT_ALIGN_RIGHT,
 	yalign=TEXT_ALIGN_CENTER,
 }
 local PlayerPing = {
 	text="",
 	font="TFDefault",
-	pos={276*Scale, 7*Scale},
+	pos={296*Scale, 7*Scale},
 	xalign=TEXT_ALIGN_RIGHT,
 	yalign=TEXT_ALIGN_CENTER,
 }
@@ -83,7 +118,10 @@ function PANEL:Paint()
 	
 	surface.DrawLine(3*Scale, 11.25*Scale, w-3.5*Scale, 11.25*Scale)
 	draw.Text(NameLabel)
+	draw.Text(ClassLabel)
 	draw.Text(ScoreLabel)
+	draw.Text(DamageLabel)
+	draw.Text(MoneyLabel)
 	draw.Text(PingLabel)
 	
 	local ypos = math.floor(23*Scale)
@@ -112,87 +150,30 @@ function PANEL:Paint()
 		PlayerName.pos[2] = ypos
 		draw.Text(PlayerName)
 
-		--surface.DrawTexturedRect(math.floor(14*Scale), ypos-math.floor(8*Scale), 15*Scale, 15*Scale)
-		
-		if c and c.ScoreboardImage then
-			if (pl:GetNWString("PreferredIcon") != "") then
+		PlayerClass.text = string.upper((pl:GetPlayerClass() or "?"):sub(1, 8))
+		PlayerClass.color = col
+		PlayerClass.pos[2] = ypos
+		draw.Text(PlayerClass)
 
-				local tex
-				if d then
-					tex = surface.GetTextureID(pl:GetNWString("PreferredIcon"),nil) or c.ScoreboardImage[2]
-				else
-					tex = surface.GetTextureID(pl:GetNWString("PreferredIcon"),nil)
-				end
-				if tex then
-					if pl:IsMiniBoss() then
-						surface.SetDrawColor( 255, 0, 0, 255 )
-						surface.DrawRect(math.floor(14*Scale), ypos-math.floor(8*Scale), 15*Scale, 15*Scale)
-					end
-					surface.SetDrawColor(Colors.White)
-					surface.SetTexture(tex)
-					surface.DrawTexturedRect(math.floor(14*Scale), ypos-math.floor(8*Scale), 15*Scale, 15*Scale)
-				end
-			else
-				local tex
-				if d then
-					tex = c.ScoreboardImage[2]
-				else
-					tex = c.ScoreboardImage[1]
-				end
-				if tex then
-					if pl:IsMiniBoss() then
-						surface.SetDrawColor( 255, 0, 0, 255 )
-						surface.DrawRect(math.floor(14*Scale), ypos-math.floor(8*Scale), 15*Scale, 15*Scale)
-					end
-					surface.SetDrawColor(Colors.White)
-					surface.SetTexture(tex)
-					surface.DrawTexturedRect(math.floor(14*Scale), ypos-math.floor(8*Scale), 15*Scale, 15*Scale)
-				end 
-			end
-		end
-		if pl:GetPlayerClass() == "heavyweightchamp" or pl:GetPlayerClass() == "soldierbuffed" or pl:GetPlayerClass() == "melee_scout_expert" or pl:GetPlayerClass() == "giantsoldiercharged" then
-			local crit = surface.GetTextureID("hud/leaderboard_class_critical")
-			surface.SetTexture(crit)
-			surface.DrawTexturedRect(math.floor(14*Scale), ypos-math.floor(8*Scale), 15*Scale, 15*Scale)
-			
-			surface.SetDrawColor( 255, 255, 255, 100 )
-			if c and c.ScoreboardImage then
-				if (pl:GetNWString("PreferredIcon") != "") then
+		PlayerScore.text = tostring(pl:Frags())
+		PlayerScore.color = col
+		PlayerScore.pos[2] = ypos
+		draw.Text(PlayerScore)
 
-					local tex
-					if d then
-						tex = surface.GetTextureID(pl:GetNWString("PreferredIcon"),nil) or c.ScoreboardImage[2]
-					else
-						tex = surface.GetTextureID(pl:GetNWString("PreferredIcon"),nil)
-					end
-					if tex then
-						if pl:IsMiniBoss() then
-							surface.SetDrawColor( 255, 0, 0, 255 )
-							surface.DrawRect(math.floor(14*Scale), ypos-math.floor(8*Scale), 15*Scale, 15*Scale)
-						end
-						surface.SetDrawColor(Colors.White)
-						surface.SetTexture(tex)
-						surface.DrawTexturedRect(math.floor(14*Scale), ypos-math.floor(8*Scale), 15*Scale, 15*Scale)
-					end
-				else
-					local tex
-					if d then
-						tex = c.ScoreboardImage[2]
-					else
-						tex = c.ScoreboardImage[1]
-					end
-					if tex then
-						if pl:IsMiniBoss() then
-							surface.SetDrawColor( 255, 0, 0, 255 )
-							surface.DrawRect(math.floor(14*Scale), ypos-math.floor(8*Scale), 15*Scale, 15*Scale)
-						end
-						surface.SetDrawColor(Colors.White)
-						surface.SetTexture(tex)
-						surface.DrawTexturedRect(math.floor(14*Scale), ypos-math.floor(8*Scale), 15*Scale, 15*Scale)
-					end 
-				end
-			end
-		end
+		PlayerDamage.text = tostring(pl:Frags() * 100)
+		PlayerDamage.color = col
+		PlayerDamage.pos[2] = ypos
+		draw.Text(PlayerDamage)
+
+		PlayerMoney.text = tostring(pl:GetNWInt("TF_MVM_Credits", 0))
+		PlayerMoney.color = col
+		PlayerMoney.pos[2] = ypos
+		draw.Text(PlayerMoney)
+
+		PlayerPing.text = pl:IsBot() and "BOT" or tostring(pl:Ping())
+		PlayerPing.color = col
+		PlayerPing.pos[2] = ypos
+		draw.Text(PlayerPing)
 		
 		ypos = ypos + math.floor(22*Scale) 
 	end

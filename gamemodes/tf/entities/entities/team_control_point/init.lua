@@ -56,6 +56,7 @@ end
 
 function ENT:SetOwnerTeam(o)
 	self.OwnerTeam = o
+	self:SetNWInt("Team", self.OwnerTeam)
 	umsg.Start("TF_SetControlPointTeam")
 		umsg.Char(self.ID)
 		umsg.Char(self.OwnerTeam)
@@ -88,8 +89,24 @@ function ENT:SetLocked(b)
 	end
 end
 
+function ENT:GetAllControlPoints()
+	local points = ents.FindByClass("team_control_point")
+	if #points == 0 then
+		points = ents.FindByClass("tf_team_control_point")
+	end
+	return points
+end
+
 -- Should this control point be locked or not?
 function ENT:ComputeLockStatus()
+	local selfID = tonumber(self.ID or (self.Properties and self.Properties.point_index))
+	local function getPointID(point)
+		return tonumber(point.ID or (point.Properties and point.Properties.point_index))
+	end
+	local function getPointOwnerTeam(point)
+		return tonumber(point.OwnerTeam or (point.Properties and point.Properties.point_default_owner))
+	end
+
 	if self.TeamCanCap then
 		-- If this point cannot be captured by any team other than its owner, it's definitely locked
 		local lock = true
@@ -118,11 +135,15 @@ function ENT:ComputeLockStatus()
 					if not IsValid(pt) then
 						if i==0 then
 							local cannotcap = false
-							for _,pt in pairs(ents.FindByClass("team_control_point")) do
-								if ((t==2 and pt.ID>self.ID) or (t==3 and pt.ID<self.ID)) and pt~=self then
-									if pt.OwnerTeam~=t then
-										cannotcap = true
-										break
+							for _,pt in pairs(self:GetAllControlPoints()) do
+								if pt ~= self and selfID then
+									local ptID = getPointID(pt)
+									if ptID and ((t==2 and ptID>selfID) or (t==3 and ptID<selfID)) then
+										local ownerTeam = getPointOwnerTeam(pt)
+										if ownerTeam~=t then
+											cannotcap = true
+											break
+										end
 									end
 								end
 							end
@@ -133,7 +154,8 @@ function ENT:ComputeLockStatus()
 						end
 					else
 						if pt~=self then
-							if pt.OwnerTeam~=t then
+							local ownerTeam = getPointOwnerTeam(pt)
+							if ownerTeam~=t then
 								cancap = false
 								break
 							end
@@ -196,7 +218,18 @@ function ENT:AcceptInput(name, activator, caller, data)
 		local teamNum = tonumber(data)
 		if teamNum then
 			self:SetOwnerTeam(teamNum)
-			self:UpdateLockStatus()
+
+			local master = ents.FindByClass("team_control_point_master")[1]
+			if IsValid(master) and master.UpdateControlPoints then
+				master:UpdateControlPoints()
+			else
+				for _,point in ipairs(self:GetAllControlPoints()) do
+					if point.UpdateLockStatus then
+						point:UpdateLockStatus()
+					end
+				end
+			end
+
 			return true
 		end
 	end

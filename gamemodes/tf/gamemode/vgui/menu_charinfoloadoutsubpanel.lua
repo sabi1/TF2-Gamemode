@@ -330,11 +330,6 @@ function PANEL:PerformLayout()
 			]]
 		end
 
-		t:AddModel(1,"models/player/scout.mdl",{
-			Pos = Vector(190, 0, -36),
-			Ang = Angle(0, 200, 0),
-		})
-		
 		if (GetConVar("tf_hud_loadout_class"):GetInt() == 1) then
 			t:AddModel(1,"models/player/scout.mdl",{
 				Pos = Vector(190, 0, -36),
@@ -382,25 +377,69 @@ function PANEL:PerformLayout()
 			})
 		end
 
+		local function getWearablePreviewModel(item, className)
+			if not istable(item) then return nil end
+
+			local perClass = item.model_player_per_class
+			if istable(perClass) then
+				local resolved = perClass[className] or perClass[(className == "demoman" and "demo" or className)] or perClass.basename
+				if isstring(resolved) and resolved ~= "" then
+					resolved = string.Replace(resolved, "%s", className)
+					if className == "demoman" and not file.Exists(resolved, "GAME") then
+						local demoResolved = string.Replace(resolved, "demoman", "demo")
+						if file.Exists(demoResolved, "GAME") then
+							resolved = demoResolved
+						end
+					end
+					return resolved
+				end
+			elseif isstring(perClass) and perClass ~= "" then
+				local resolved = string.Replace(perClass, "%s", className)
+				if className == "demoman" and not file.Exists(resolved, "GAME") then
+					local demoResolved = string.Replace(perClass, "%s", "demo")
+					if file.Exists(demoResolved, "GAME") then
+						resolved = demoResolved
+					end
+				end
+				return resolved
+			end
+			if isstring(item.model_player) and item.model_player ~= "" then
+				return item.model_player
+			end
+			if isstring(item.model_world) and item.model_world ~= "" then
+				return item.model_world
+			end
+			return nil
+		end
+
 		for name, wep in pairs(tf_items.Items) do
 			if istable(wep) then
-				if wep.id == tonumber(loadout[4]) and isstring(wep.model_player_per_class) then
+				if wep.id == tonumber(loadout[4]) then
+					local wearableModel = getWearablePreviewModel(wep, oldclass)
+					if isstring(wearableModel) then
 
-					t:AddModel(3,string.Replace(wep.model_player_per_class,"%s",oldclass),{
-						Parent = 1,
-					})
+						t:AddModel(3, wearableModel, {
+							Parent = 1,
+						})
+					end
 
-				elseif wep.id == tonumber(loadout[5]) and isstring(wep.model_player_per_class) then
+				elseif wep.id == tonumber(loadout[5]) then
+					local wearableModel = getWearablePreviewModel(wep, oldclass)
+					if isstring(wearableModel) then
 
-					t:AddModel(4,string.Replace(wep.model_player_per_class,"%s",oldclass),{
-						Parent = 1,
-					})
+						t:AddModel(4, wearableModel, {
+							Parent = 1,
+						})
+					end
 
-				elseif wep.id == tonumber(loadout[6]) and isstring(wep.model_player_per_class) then
+				elseif wep.id == tonumber(loadout[6]) then
+					local wearableModel = getWearablePreviewModel(wep, oldclass)
+					if isstring(wearableModel) then
 
-					t:AddModel(5,string.Replace(wep.model_player_per_class,"%s",oldclass),{
-						Parent = 1,
-					})
+						t:AddModel(5, wearableModel, {
+							Parent = 1,
+						})
+					end
 
 				end
 				local oldclass2 = oldclass
@@ -707,31 +746,22 @@ function PANEL:Init()
 	t.inactiveImage = backpack_01_grey
 	
 	function t:DoClick()
-
-		local conflict_help_frame = vgui.Create( "DFrame" )
-		conflict_help_frame:SetSize(200, 200)
-		conflict_help_frame:Center()
-		conflict_help_frame:SetTitle("Warning")
-		conflict_help_frame:ShowCloseButton(true)
-		conflict_help_frame:SetBackgroundBlur(true)
-		conflict_help_frame:MakePopup()
-
-		local conflicttext = vgui.Create("RichText", conflict_help_frame)
-		conflicttext:Dock(FILL)
-		conflicttext:InsertColorChange(255, 255, 255, 255)
-		conflicttext:CenterHorizontal(0.5)
-		conflicttext:SetVerticalScrollbarEnabled(false)
-		conflicttext:AppendText("This will merge your TF2 loadout with the gamemode's loadout. Are you sure you want to merge?")
-			local conflictbut2 = vgui.Create("DButton", conflict_help_frame)
-			conflictbut2:SetSize(100, 30)
-			conflictbut2:SetPos(0, 125)
-			conflictbut2:CenterHorizontal(0.5)
-			conflictbut2:SetText("Yes") 
-
-			function conflictbut2.DoClick()
-				conflict_help_frame:Close()
-				RunConsoleCommand("tf_merge_loadout")
-			end
+		local classMap = {
+			[1] = "scout",
+			[2] = "soldier",
+			[3] = "pyro",
+			[4] = "demoman",
+			[5] = "heavy",
+			[6] = "engineer",
+			[7] = "medic",
+			[8] = "sniper",
+			[9] = "spy",
+		}
+		local classIndex = GetConVar("tf_hud_loadout_class"):GetInt()
+		local className = classMap[classIndex] or "scout"
+		if isfunction(TF_OpenStandaloneBackpack) then
+			TF_OpenStandaloneBackpack(className, classIndex)
+		end
 	end
 end
 
@@ -834,184 +864,820 @@ if CharInfoLoadoutSubPanel then CharInfoLoadoutSubPanel:Remove() end
 CharInfoLoadoutSubPanel = vgui.CreateFromTable(vgui.RegisterTable(PANEL, "DPanel"))
 
 
-function itemSelector(type, weapons, parent, classid, oldclass)
-    local Scale = ScrH() / 480
-    local loadout_rect = surface.GetTextureID("vgui/loadout_rect")
-    local loadout_rect_mouseover = surface.GetTextureID("vgui/loadout_rect_mouseover")
+local BackpackPickerPanel
 
-    local frame = vgui.Create("DFrame")
-    frame:SetTitle("Item Picker")
-    frame:SetSize(1300, 650)
-    frame:Center()
-    frame:SetDraggable(true)
-    frame:SetMouseInputEnabled(true)
-    frame:MakePopup() 
-
-    local scroll = vgui.Create("DScrollPanel", frame)
-    scroll:Dock(FILL)
-
-    local itemicons = vgui.Create("DIconLayout", scroll)
-    itemicons:Dock(FILL)
-
-    local attr = vgui.Create("ItemAttributePanel")
-    attr:SetSize(168 * Scale, 300 * Scale)
-    attr:SetPos(0, 0)
-    attr.text_ypos = 20
-    attr:SetMouseInputEnabled(false)
-
-    for k, v in pairs(weapons) do
-        local model = vgui.Create("ItemModelPanel", frame)
-        model:SetSize(140 * Scale, 75 * Scale)
-        model:SetCursor("hand")
-        model:SetQuality(v.item_quality and string.upper(string.sub(v.item_quality, 1, 1)) .. string.sub(v.item_quality, 2) or 0)
-        model.activeImage = loadout_rect_mouseover
-        model.inactiveImage = loadout_rect
-        model.number = type
-        model.model_xpos = 0
-        model.model_ypos = 5
-        model.model_tall = 55
-        model.text_xpos = -5
-        model.text_wide = 150
-        model.text_ypos = 60
-        model.itemImage_low = nil
-        model.text = tf_lang.GetRaw(v.item_name) or v.name
-        model.centerytext = true
-        model.disabled = false
-        if !isstring(v.image_inventory) or Material(v.image_inventory):IsError() then
-            model.FallbackModel = v.model_player
-            model.itemImage = surface.GetTextureID("backpack/weapons/c_models/c_bat")
-        elseif isstring(v.image_inventory) then
-            model.itemImage = surface.GetTextureID(v.image_inventory)
-        end
-
-        if v.attributes and v.attributes["material override"] and v.attributes["material override"].value then
-            model.overridematerial = v.attributes["material override"].value
-        end
-
-        model.DoClick = function()
-            updateLoadout(type, v.id, true, oldclass)
-			timer.Simple(0.1, function()
-			
-				CharInfoLoadoutSubPanel:SelectClassLoadout2(classid)	
-
-			end)
-            surface.PlaySound(v.mouse_pressed_sound or "ui/item_hat_pickup.wav")
-            frame:Close()
-        end
-
-        if istable(v.attributes) then
-            model.attributes = v.attributes
-        end
-
-        itemicons:Add(model)
-    end
-
-    attr:MoveToFront()
+local function classCanUseItem(item, className)
+	if not istable(item) or not isstring(className) then return false end
+	if not istable(item.used_by_classes) then return false end
+	return item.used_by_classes[className] == true or item.used_by_classes[className] == 1
 end
-function hatSelector(type, slot, oldclass, weapons)
-	local Scale = ScrH()/480
+
+local function createBackpackPicker(title, oldclass, canEquipFn, onEquipFn)
+	if IsValid(BackpackPickerPanel) then
+		BackpackPickerPanel:Remove()
+	end
 
 	local loadout_rect = surface.GetTextureID("vgui/loadout_rect")
 	local loadout_rect_mouseover = surface.GetTextureID("vgui/loadout_rect_mouseover")
-	local color_panel = surface.GetTextureID("hud/color_panel_browner")
-	local c_boxing_gloves = surface.GetTextureID("backpack/weapons/c_models/c_boxing_gloves/c_boxing_gloves")
-	local Frame = vgui.Create("DFrame")
-	Frame:SetTitle("Item Picker")
-	Frame:SetSize(1300, 650)
-	Frame:Center()
-	Frame:SetDraggable(true)
-	Frame:SetMouseInputEnabled(true)
-	Frame:MakePopup()
-	--gui.EnableScreenClicker(true)
 
-	local scroll = vgui.Create("DScrollPanel", Frame)
-	scroll:Dock(FILL)
+	local parent = IsValid(CharInfoPanel) and CharInfoPanel or nil
+	local panel = vgui.Create("EditablePanel", parent)
+	panel:SetSize(ScrW() - 100 * Scale, ScrH() - 110 * Scale)
+	panel:Center()
+	panel:MakePopup()
+	panel:SetKeyboardInputEnabled(true)
+	panel:SetMouseInputEnabled(true)
+	panel:SetZPos(9999)
+	BackpackPickerPanel = panel
+
+	function panel:Paint(w, h)
+		surface.SetDrawColor(18, 17, 16, 245)
+		surface.DrawRect(0, 0, w, h)
+		surface.SetDrawColor(90, 83, 72, 255)
+		surface.DrawOutlinedRect(0, 0, w, h, 2)
+
+		draw.Text{
+			text = title or "BACKPACK",
+			font = "HudFontMediumBold",
+			pos = {20, 18},
+			color = Color(235, 226, 202, 255),
+			xalign = TEXT_ALIGN_LEFT,
+			yalign = TEXT_ALIGN_TOP,
+		}
+
+		draw.Text{
+			text = "All items are shown. Unusable items are dimmed.",
+			font = "HudFontSmall",
+			pos = {20, 48},
+			color = Color(170, 160, 146, 255),
+			xalign = TEXT_ALIGN_LEFT,
+			yalign = TEXT_ALIGN_TOP,
+		}
+	end
+
+	local closeBtn = vgui.Create("TFButton", panel)
+	closeBtn:SetSize(100 * Scale, 25 * Scale)
+	closeBtn:SetPos(panel:GetWide() - 120 * Scale, 15 * Scale)
+	closeBtn.labelText = "CLOSE"
+	closeBtn.font = "HudFontSmallBold"
+	function closeBtn:DoClick()
+		if IsValid(panel) then panel:Remove() end
+	end
+
+	local scroll = vgui.Create("DScrollPanel", panel)
+	scroll:SetPos(18 * Scale, 78 * Scale)
+	scroll:SetSize(panel:GetWide() - 36 * Scale, panel:GetTall() - 96 * Scale)
 
 	local itemicons = vgui.Create("DIconLayout", scroll)
 	itemicons:Dock(FILL)
+	itemicons:SetSpaceX(6)
+	itemicons:SetSpaceY(6)
 
-	local att = vgui.Create("ItemAttributePanel")
-	att:SetSize(168*Scale,300*Scale)
-	att:SetPos(0, 0)
-	att.text_ypos = 20
-	att:SetMouseInputEnabled(false)
+	local allItems = {}
+	for _, item in pairs(tf_items.Items or {}) do
+		if istable(item) and isnumber(item.id) and isstring(item.item_slot) then
+			allItems[#allItems + 1] = item
+		end
+	end
+	table.sort(allItems, function(a, b) return (a.id or 0) < (b.id or 0) end)
 
-	local attributes_xoffset1 = 30
-	local attributes_xoffset2 = -168
-	local attributes_yoffset = 120
-	local xoffset, yoffset = attributes_xoffset1 * Scale, attributes_yoffset * Scale
+	for _, item in ipairs(allItems) do
+		local model = vgui.Create("ItemModelPanel", itemicons)
+		model:SetSize(140 * Scale, 75 * Scale)
+		itemicons:Add(model)
 
-	--Frame.OnClose = function() gui.EnableScreenClicker(false) att:Remove() end
+		model.activeImage = loadout_rect_mouseover
+		model.inactiveImage = loadout_rect
+		model.model_xpos = 0
+		model.model_ypos = 5
+		model.model_tall = 55
+		model.text_xpos = -5
+		model.text_wide = 150
+		model.text_ypos = 60
+		model.itemImage_low = nil
+		model.text = tf_lang.GetRaw(item.item_name) or item.name or "UNKNOWN ITEM"
+		model.centerytext = true
 
-	-- ugly code ahead
-	for k, v in pairs(weapons) do
-		if v and istable(v) and (v["item_class"] == "tf_wearable_item") and v["equip_region"] != "medal" then
-			local t = vgui.Create("ItemModelPanel", Frame)
-			t:SetSize(140 * Scale, 75 * Scale)
-			itemicons:Add(t)
-			t.activeImage = loadout_rect_mouseover
-			t.inactiveImage = loadout_rect
+		local quality = 0
+		if item.item_quality then
+			quality = string.upper(string.sub(item.item_quality, 1, 1)) .. string.sub(item.item_quality, 2)
+		end
+		model:SetQuality(quality)
 
-			t.RealName = v["item_name"]
-			t.centerytext = true
-			t.disabled = false
-			if !isstring(v["image_inventory"]) or Material(v["image_inventory"]):IsError() then
-				t.FallbackModel = v["model_player"]
-				t.itemImage = surface.GetTextureID("backpack/weapons/c_models/c_bat")
-			elseif isstring(v["image_inventory"]) then
-				-- t.FallbackModel = v["model_player"]
-				t.itemImage = surface.GetTextureID(v["image_inventory"])
-			end
+		local invMat
+		if isstring(item.image_inventory) and item.image_inventory ~= "" then
+			invMat = Material(item.image_inventory)
+		end
+		if (not invMat) or invMat:IsError() then
+			model.FallbackModel = item.model_player
+			model.itemImage = surface.GetTextureID("backpack/weapons/c_models/c_bat")
+		else
+			model.itemImage = surface.GetTextureID(item.image_inventory)
+		end
 
-			--[[if v["item_class"] ~= "tf_wearable_item" and tonumber(v["id"]) > 6000 then
-				t.FallbackModel = v["model_player"]
-			end]]
+		if item.attributes and item.attributes["material override"] and item.attributes["material override"].value then
+			model.overridematerial = item.attributes["material override"].value
+		end
 
-			if v["attributes"] and v["attributes"]["material override"] and v["attributes"]["material override"]["value"] then
-				t.overridematerial = v["attributes"]["material override"]["value"]
-			end
+		if istable(item.attributes) then
+			model.attributes = item.attributes
+		end
 
-			t.itemImage_low = nil
+		local canEquip = classCanUseItem(item, oldclass) and canEquipFn(item)
+		model.disabled = not canEquip
+		if not canEquip then
+			model:SetAlpha(95)
+		end
 
-			t.text = tf_lang.GetRaw(v["item_name"]) or v["name"]
-			--t.text = tf_lang.GetRaw(v["item_name"]) or v["name"]
-			local quality = 0
-			if v["item_quality"] then
-				quality = string.upper(string.sub(v["item_quality"], 1, 1)) .. string.sub(v["item_quality"], 2)
-			end
-			t:SetQuality(quality)
+		model.DoClick = function()
+			if not canEquip then return end
+			onEquipFn(item)
+			if IsValid(panel) then panel:Remove() end
+		end
+	end
+end
 
-			t.model_xpos = 0
-			t.model_ypos = 5
-			t.model_tall = 55
-			t.text_xpos = -5
-			t.text_wide = 150
-			t.text_ypos = 60
-			t.DoClick = function() 
-				updateLoadout(slot, v.id, true, oldclass)
-				timer.Simple(0.1, function()
-				
-					CharInfoLoadoutSubPanel:SelectClassLoadout2(GetConVar("tf_hud_loadout_class"):GetInt())	
-	
-				end)
-				surface.PlaySound(v["mouse_pressed_sound"] or "ui/item_hat_pickup.wav") 
-				Frame:Close() 
-			end
-			t:SetCursor("hand")
+local function getTargetWeaponSlot(type, className)
+	local swapped = className == "demoman" or className == "spy"
+	if type == 1 then
+		return swapped and "secondary" or "primary"
+	elseif type == 2 then
+		return swapped and "primary" or "secondary"
+	elseif type == 3 then
+		return "melee"
+	end
+	return nil
+end
 
-			if istable(v["attributes"]) then
-				t.attributes = v["attributes"]
-			end
+local function mapItemToLoadoutSlot(item, className)
+	if not istable(item) then return nil end
 
-			if v["item_slot"] == "primary" then
-				t.number = 1
-			elseif v["item_slot"] == "secondary" then
-				t.number = 2
-			elseif v["item_slot"] == "melee" then
-				t.number = 3
+	if item.item_class == "tf_wearable_item" then
+		return 4
+	end
+
+	if item.item_slot == "melee" then
+		return 3
+	end
+
+	local swapped = className == "demoman" or className == "spy"
+	if item.item_slot == "primary" then
+		return swapped and 2 or 1
+	elseif item.item_slot == "secondary" then
+		return swapped and 1 or 2
+	end
+
+	return nil
+end
+
+function TF_OpenClassBackpack(className, classIndex)
+	local cls = className or "scout"
+	local classId = classIndex or GetConVar("tf_hud_loadout_class"):GetInt()
+	TF_OpenStandaloneBackpack(cls, classId)
+end
+
+local TFStandaloneBackpackPanel
+
+local classIndexToName = {
+	[1] = "scout",
+	[2] = "soldier",
+	[3] = "pyro",
+	[4] = "demoman",
+	[5] = "heavy",
+	[6] = "engineer",
+	[7] = "medic",
+	[8] = "sniper",
+	[9] = "spy",
+}
+
+local function getSteamInventorySet()
+	local raw = file.Read("tf_loadout.json", "DATA")
+	if not isstring(raw) or raw == "" then return nil, "missing_file" end
+	raw = string.gsub(raw, "^\239\187\191", "")
+	raw = string.Trim(raw)
+
+	local parsed = util.JSONToTable(raw)
+	if not istable(parsed) then
+		local wrapped = string.match(raw, "(%b{})")
+		if isstring(wrapped) and wrapped ~= "" then
+			parsed = util.JSONToTable(wrapped)
+		end
+	end
+	if not istable(parsed) then
+		return nil, "invalid_json"
+	end
+
+	local container = parsed.result
+	if not istable(container) then
+		container = parsed.response
+	end
+	if not istable(container) then
+		container = parsed
+	end
+
+	local items = container and container.items
+	if not istable(items) then
+		return nil, "missing_items", tonumber(container and container.status)
+	end
+
+	local set = {}
+	for _, invItem in pairs(items) do
+		if istable(invItem) then
+			local defindex = tonumber(invItem.defindex or invItem.itemdefid or invItem.item_def_index)
+			if defindex then
+				set[defindex] = true
 			end
 		end
 	end
 
-	att:MoveToFront()
+	return set, nil, tonumber(container and container.status)
+end
+
+local function getWearableTargetSlot(className, itemId)
+	local convar = GetConVar("loadout_" .. className)
+	if not convar then return 4 end
+
+	local split = string.Split(convar:GetString(), ",")
+	for i = 4, 6 do
+		if tonumber(split[i]) == itemId then
+			return i
+		end
+	end
+	for i = 4, 6 do
+		if tonumber(split[i]) == -1 then
+			return i
+		end
+	end
+	return 4
+end
+
+CreateClientConVar("tf_backpack_page_size", "50", true, false, "Backpack items per page (TF2-Gamemode)")
+CreateClientConVar("tf_backpack_dedupe", "1", true, false, "Collapse duplicate backpack entries by defindex (TF2-Gamemode)")
+
+function TF_OpenStandaloneBackpack(initialClassName, initialClassIndex, forcedLoadoutSlot)
+	if IsValid(TFStandaloneBackpackPanel) then
+		TFStandaloneBackpackPanel:Remove()
+	end
+
+	local Scale = ScrH() / 480
+	local loadout_rect = surface.GetTextureID("vgui/loadout_rect")
+	local loadout_rect_mouseover = surface.GetTextureID("vgui/loadout_rect_mouseover")
+	local activeClass = initialClassName or classIndexToName[initialClassIndex or 1] or "scout"
+	local steamSet
+	local steamErr
+	local steamStatus
+	local currentPage = 1
+	local pageSizeConVar = GetConVar("tf_backpack_page_size")
+	local dedupeConVar = GetConVar("tf_backpack_dedupe")
+	local pageSize = math.Clamp((pageSizeConVar and pageSizeConVar:GetInt()) or 50, 10, 50)
+	local dedupeEnabled = (not dedupeConVar) or dedupeConVar:GetBool()
+	local columns = 10
+	local rows = 5
+
+	local panel = vgui.Create("EditablePanel")
+	panel:SetSize(ScrW(), ScrH())
+	panel:SetPos(0, 0)
+	panel:MakePopup()
+	panel:SetKeyboardInputEnabled(true)
+	panel:SetMouseInputEnabled(true)
+	panel.ForcedLoadoutSlot = tonumber(forcedLoadoutSlot)
+	TFStandaloneBackpackPanel = panel
+
+	function panel:OnKeyCodePressed(key)
+		if key == KEY_ESCAPE and IsValid(self) then
+			self:Remove()
+		end
+	end
+
+	function panel:Paint(w, h)
+		surface.SetDrawColor(24, 21, 20, 248)
+		surface.DrawRect(0, 0, w, h)
+		surface.SetDrawColor(44, 38, 34, 255)
+		surface.DrawRect(0, 0, w, 98)
+		surface.DrawRect(0, h - 72, w, 72)
+		surface.SetDrawColor(112, 100, 86, 255)
+		surface.DrawRect(0, 96, w, 2)
+		surface.DrawRect(0, h - 74, w, 2)
+	end
+
+	local titleLoadout = vgui.Create("DLabel", panel)
+	titleLoadout:SetPos(32, 18)
+	titleLoadout:SetSize(230, 28)
+	titleLoadout:SetFont("HudFontMediumBold")
+	titleLoadout:SetTextColor(Color(235, 226, 202, 255))
+	titleLoadout:SetText("LOADOUT")
+
+	local titleBackpack = vgui.Create("DLabel", panel)
+	titleBackpack:SetPos(208, 18)
+	titleBackpack:SetSize(260, 28)
+	titleBackpack:SetFont("HudFontMediumBold")
+	titleBackpack:SetTextColor(Color(170, 160, 146, 255))
+	titleBackpack:SetText("BACKPACK")
+
+	local searchLabel = vgui.Create("DLabel", panel)
+	searchLabel:SetPos(panel:GetWide() - 410, 56)
+	searchLabel:SetSize(72, 22)
+	searchLabel:SetText("SEARCH:")
+	searchLabel:SetTextColor(Color(205, 193, 167, 255))
+	searchLabel:SetFont("HudFontSmallBold")
+
+	local searchEntry = vgui.Create("DTextEntry", panel)
+	searchEntry:SetPos(panel:GetWide() - 326, 54)
+	searchEntry:SetSize(296, 26)
+	searchEntry:SetFont("HudFontSmall")
+	searchEntry:SetUpdateOnType(true)
+
+	local infoLabel = vgui.Create("DLabel", panel)
+	infoLabel:SetPos(30, 58)
+	infoLabel:SetSize(panel:GetWide() - 60, 22)
+	infoLabel:SetTextColor(Color(190, 178, 155, 255))
+	infoLabel:SetFont("HudFontSmall")
+
+	local gridPanel = vgui.Create("EditablePanel", panel)
+	gridPanel:SetPos(30, 86)
+	gridPanel:SetSize(panel:GetWide() - 60, panel:GetTall() - 172)
+	function gridPanel:Paint(w, h)
+		surface.SetDrawColor(29, 25, 22, 255)
+		surface.DrawRect(0, 0, w, h)
+		surface.SetDrawColor(110, 98, 84, 255)
+		surface.DrawOutlinedRect(0, 0, w, h, 1)
+	end
+
+	local itemicons = vgui.Create("DIconLayout", gridPanel)
+	itemicons:Dock(FILL)
+	itemicons:SetBorder(10)
+	itemicons:SetSpaceX(6)
+	itemicons:SetSpaceY(6)
+
+	local pageBar = vgui.Create("DIconLayout", panel)
+	pageBar:SetPos(164, panel:GetTall() - 38)
+	pageBar:SetSize(panel:GetWide() - 328, 26)
+	pageBar:SetSpaceX(6)
+	pageBar:SetSpaceY(0)
+
+	local backBtn = vgui.Create("TFButton", panel)
+	backBtn:SetSize(120, 30)
+	backBtn:SetPos(30, panel:GetTall() - 40)
+	backBtn.labelText = "BACK"
+	backBtn.font = "HudFontSmallBold"
+	function backBtn:DoClick()
+		if IsValid(panel) then panel:Remove() end
+	end
+
+	local closeBtn = vgui.Create("TFButton", panel)
+	closeBtn:SetSize(120, 30)
+	closeBtn:SetPos(panel:GetWide() - 150, panel:GetTall() - 40)
+	closeBtn.labelText = "CLOSE"
+	closeBtn.font = "HudFontSmallBold"
+	function closeBtn:DoClick()
+		if IsValid(panel) then panel:Remove() end
+	end
+
+	local matValidity = {}
+	local function hasValidInventoryImage(item)
+		if not istable(item) or not isstring(item.image_inventory) or item.image_inventory == "" then
+			return false
+		end
+		if matValidity[item.image_inventory] ~= nil then
+			return matValidity[item.image_inventory]
+		end
+		local mat = Material(item.image_inventory)
+		local ok = mat ~= nil and (not mat:IsError())
+		matValidity[item.image_inventory] = ok
+		return ok
+	end
+
+	local function getItemDisplayName(item)
+		return tf_lang.GetRaw(item.item_name) or item.name or "UNKNOWN ITEM"
+	end
+
+	local function getInspectModelPath(item, className)
+		if not istable(item) then return nil end
+
+		local perClass = item.model_player_per_class
+		if istable(perClass) then
+			local resolved = perClass[className] or perClass[(className == "demoman" and "demo" or className)] or perClass.basename
+			if isstring(resolved) and resolved ~= "" then
+				resolved = string.Replace(resolved, "%s", className)
+				if className == "demoman" and not file.Exists(resolved, "GAME") then
+					local demoResolved = string.Replace(resolved, "demoman", "demo")
+					if file.Exists(demoResolved, "GAME") then
+						resolved = demoResolved
+					end
+				end
+				return resolved
+			end
+		elseif isstring(perClass) and perClass ~= "" then
+			local resolved = string.Replace(perClass, "%s", className)
+			if className == "demoman" and not file.Exists(resolved, "GAME") then
+				local demoResolved = string.Replace(perClass, "%s", "demo")
+				if file.Exists(demoResolved, "GAME") then
+					resolved = demoResolved
+				end
+			end
+			return resolved
+		end
+
+		if isstring(item.model_player) and item.model_player ~= "" then
+			return string.Replace(item.model_player, "%s", className)
+		end
+		if isstring(item.model_world) and item.model_world ~= "" then
+			return item.model_world
+		end
+
+		return nil
+	end
+
+	local function openBackpackInspect(item, className)
+		local mdl = getInspectModelPath(item, className)
+		if not isstring(mdl) or mdl == "" or not util.IsValidModel(mdl) then
+			chat.AddText(Color(220, 120, 80), "[TF2-Gamemode] Inspect preview unavailable for this item.")
+			return
+		end
+
+		local frame = vgui.Create("DFrame")
+		frame:SetSize(math.floor(ScrW() * 0.46), math.floor(ScrH() * 0.62))
+		frame:Center()
+		frame:SetTitle("Inspect: " .. getItemDisplayName(item))
+		frame:ShowCloseButton(true)
+		frame:SetDraggable(true)
+		frame:MakePopup()
+
+		local modelPanel = vgui.Create("DModelPanel", frame)
+		modelPanel:Dock(FILL)
+		modelPanel:SetModel(mdl)
+		modelPanel:SetFOV(42)
+		modelPanel:SetCamPos(Vector(82, 18, 44))
+		modelPanel:SetLookAt(Vector(0, 0, 40))
+		modelPanel.LayoutEntity = function(self, ent)
+			if IsValid(ent) then
+				ent:SetAngles(Angle(0, RealTime() * 18 % 360, 0))
+			end
+		end
+	end
+
+	local slotOrder = {
+		primary = 1,
+		secondary = 2,
+		melee = 3,
+		head = 4,
+		misc = 4,
+	}
+
+	searchEntry.OnValueChange = function()
+		currentPage = 1
+		panel:BuildItems()
+	end
+
+	if TFDebugBridge and TFDebugBridge.Emit then
+		TFDebugBridge.Emit("backpack_open", {
+			class = activeClass,
+			slot = panel.ForcedLoadoutSlot,
+			page = currentPage,
+			query = searchEntry:GetValue() or "",
+		}, false)
+	end
+
+	function panel:BuildItems()
+		steamSet, steamErr, steamStatus = getSteamInventorySet()
+
+		for _, child in ipairs(itemicons:GetChildren()) do
+			child:Remove()
+		end
+		for _, child in ipairs(pageBar:GetChildren()) do
+			child:Remove()
+		end
+
+		local rawCandidates = {}
+		for _, item in pairs(tf_items.Items or {}) do
+			local defindex = istable(item) and tonumber(item.id) or nil
+			if istable(item) and defindex and isstring(item.item_slot) then
+				if item.item_slot == "primary" or item.item_slot == "secondary" or item.item_slot == "melee" or item.item_slot == "head" or item.item_slot == "misc" then
+					if steamSet and steamSet[defindex] then
+						rawCandidates[#rawCandidates + 1] = item
+					end
+				end
+			end
+		end
+
+		if not steamSet then
+			local detail = ""
+			if steamErr == "missing_file" then
+				detail = "No Steam inventory cache found. Run 'tf_merge_loadout' first."
+			elseif steamErr == "invalid_json" then
+				detail = "Steam inventory cache is invalid JSON. Run 'tf_merge_loadout' again. Raw response is in data/tf_loadout_last_response.txt."
+			elseif steamErr == "missing_items" then
+				if steamStatus then
+					detail = "Steam inventory response had no item list (status " .. tostring(steamStatus) .. "). Check privacy/API response, then run 'tf_merge_loadout' again."
+				else
+					detail = "Steam inventory response had no item list. Run 'tf_merge_loadout' again."
+				end
+			else
+				detail = "Steam inventory unavailable. Run 'tf_merge_loadout' first."
+			end
+			infoLabel:SetText(detail)
+			if TFDebugBridge and TFDebugBridge.SetBackpackState then
+				local snapshot = {
+					event = "backpack_state_error",
+					class = activeClass,
+					slot = panel.ForcedLoadoutSlot,
+					page = currentPage,
+					query = searchEntry:GetValue() or "",
+					error = steamErr or "unknown",
+					status = steamStatus,
+					owned_count = 0,
+					dedup_count = 0,
+					visible_count = 0,
+				}
+				TFDebugBridge.SetBackpackState(snapshot)
+				if TFDebugBridge.Emit then
+					TFDebugBridge.Emit("backpack_rebuild", snapshot, false)
+				end
+			end
+			return
+		end
+
+		local sourceItems = rawCandidates
+		local ownedCount = #rawCandidates
+		if dedupeEnabled then
+			local dedupById = {}
+			local dedupByFallback = {}
+			for _, item in ipairs(rawCandidates) do
+				local id = tonumber(item.id)
+				local key
+				if id then
+					key = "id:" .. tostring(id)
+				else
+					local nameKey = string.lower(getItemDisplayName(item))
+					key = "fallback:" .. nameKey .. "|" .. tostring(item.image_inventory or "")
+				end
+
+				local existing = dedupById[key] or dedupByFallback[key]
+				if not existing then
+					if id then dedupById[key] = item else dedupByFallback[key] = item end
+				else
+					local scoreA = 0
+					local scoreB = 0
+					if hasValidInventoryImage(item) then scoreA = scoreA + 2 end
+					if hasValidInventoryImage(existing) then scoreB = scoreB + 2 end
+					if tf_lang.GetRaw(item.item_name) then scoreA = scoreA + 1 end
+					if tf_lang.GetRaw(existing.item_name) then scoreB = scoreB + 1 end
+					if scoreA > scoreB then
+						if id then dedupById[key] = item else dedupByFallback[key] = item end
+					end
+				end
+			end
+
+			sourceItems = {}
+			for _, item in pairs(dedupById) do sourceItems[#sourceItems + 1] = item end
+			for _, item in pairs(dedupByFallback) do sourceItems[#sourceItems + 1] = item end
+		end
+		local dedupCount = #sourceItems
+
+		table.sort(sourceItems, function(a, b)
+			local sa = slotOrder[a.item_slot] or 99
+			local sb = slotOrder[b.item_slot] or 99
+			if sa ~= sb then return sa < sb end
+
+			local na = string.lower(getItemDisplayName(a))
+			local nb = string.lower(getItemDisplayName(b))
+			if na ~= nb then return na < nb end
+
+			return (tonumber(a.id) or 0) < (tonumber(b.id) or 0)
+		end)
+
+		local query = string.Trim(string.lower(searchEntry:GetValue() or ""))
+		if query ~= "" then
+			local filtered = {}
+			for _, item in ipairs(sourceItems) do
+				local name = string.lower(getItemDisplayName(item))
+				local rawName = string.lower(item.name or "")
+				if string.find(name, query, 1, true) or string.find(rawName, query, 1, true) then
+					filtered[#filtered + 1] = item
+				end
+			end
+			sourceItems = filtered
+		end
+
+		local forcedSlot = panel.ForcedLoadoutSlot
+		local slotText = ""
+		if forcedSlot then
+			slotText = "  |  Slot: " .. tostring(forcedSlot)
+		end
+		if forcedSlot then
+			local slotFiltered = {}
+			for _, item in ipairs(sourceItems) do
+				local slotCompatible = true
+				if forcedSlot >= 4 then
+					slotCompatible = item.item_class == "tf_wearable_item" and (item.item_slot == "head" or item.item_slot == "misc")
+				else
+					slotCompatible = mapItemToLoadoutSlot(item, activeClass) == forcedSlot
+				end
+				if slotCompatible then
+					slotFiltered[#slotFiltered + 1] = item
+				end
+			end
+			sourceItems = slotFiltered
+		end
+
+		local visibleCount = #sourceItems
+		local totalPages = math.max(1, math.ceil(visibleCount / pageSize))
+		currentPage = math.Clamp(currentPage, 1, totalPages)
+
+		infoLabel:SetText("Owned: " .. tostring(visibleCount) .. "  |  Class: " .. string.upper(activeClass) .. slotText .. "  |  Page " .. tostring(currentPage) .. "/" .. tostring(totalPages) .. "  |  Incompatible items are disabled")
+
+		if TFDebugBridge and TFDebugBridge.SetBackpackState then
+			local snapshot = {
+				event = "backpack_state",
+				class = activeClass,
+				slot = panel.ForcedLoadoutSlot,
+				page = currentPage,
+				query = searchEntry:GetValue() or "",
+				owned_count = ownedCount,
+				dedup_count = dedupCount,
+				visible_count = visibleCount,
+			}
+			TFDebugBridge.SetBackpackState(snapshot)
+			if TFDebugBridge.Emit then
+				TFDebugBridge.Emit("backpack_rebuild", snapshot, false)
+			end
+		end
+
+		for p = 1, totalPages do
+			local btn = vgui.Create("DButton", pageBar)
+			btn:SetSize(30, 26)
+			btn:SetText("")
+			btn.Paint = function(self, w, h)
+				if p == currentPage then
+					surface.SetDrawColor(140, 85, 70, 255)
+				else
+					surface.SetDrawColor(120, 112, 98, 225)
+				end
+				surface.DrawRect(0, 0, w, h)
+				surface.SetDrawColor(90, 84, 76, 255)
+				surface.DrawOutlinedRect(0, 0, w, h, 1)
+				draw.SimpleText(tostring(p), "HudFontSmallBold", w * 0.5, h * 0.5, Color(245, 236, 214, 255), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+			end
+			btn.DoClick = function()
+				currentPage = p
+				panel:BuildItems()
+			end
+			pageBar:Add(btn)
+		end
+
+		local startIndex = ((currentPage - 1) * pageSize) + 1
+		local endIndex = math.min(#sourceItems, startIndex + pageSize - 1)
+		local split = {}
+		local convar = GetConVar("loadout_" .. activeClass)
+		if convar then
+			split = string.Split(convar:GetString(), ",")
+		end
+
+		local spaceX, spaceY = 6, 6
+		local gridW, gridH = gridPanel:GetWide() - 20, gridPanel:GetTall() - 20
+		local tileW = math.max(96, math.floor((gridW - ((columns - 1) * spaceX)) / columns))
+		local tileH = math.max(74, math.floor((gridH - ((rows - 1) * spaceY)) / rows))
+
+		for idx = startIndex, endIndex do
+			local item = sourceItems[idx]
+			local model = vgui.Create("ItemModelPanel", itemicons)
+			model:SetSize(tileW, tileH)
+			itemicons:Add(model)
+
+			model.activeImage = loadout_rect_mouseover
+			model.inactiveImage = loadout_rect
+			model.model_xpos = 0
+			model.model_ypos = 4
+			model.model_tall = math.max(30, math.floor(tileH * 0.5))
+			model.text_xpos = -5
+			model.text_wide = tileW + 10
+			model.text_ypos = tileH - 15
+			model.itemImage_low = nil
+			model.text = getItemDisplayName(item)
+			model.centerytext = true
+
+			local quality = 0
+			if item.item_quality then
+				quality = string.upper(string.sub(item.item_quality, 1, 1)) .. string.sub(item.item_quality, 2)
+			end
+			model:SetQuality(quality)
+
+			local invMat
+			if isstring(item.image_inventory) and item.image_inventory ~= "" then
+				invMat = Material(item.image_inventory)
+			end
+			if (not invMat) or invMat:IsError() then
+				model.FallbackModel = item.model_player
+				model.itemImage = surface.GetTextureID("backpack/weapons/c_models/c_bat")
+			else
+				model.itemImage = surface.GetTextureID(item.image_inventory)
+			end
+
+			local compatible = classCanUseItem(item, activeClass)
+			local slotCompatible = forcedSlot == nil or forcedSlot == false
+			if forcedSlot then
+				slotCompatible = true
+			end
+			compatible = compatible and slotCompatible
+			model.disabled = not compatible
+			if not compatible then
+				model:SetAlpha(95)
+			end
+
+			local equipped = false
+			local itemId = tonumber(item.id)
+			if itemId and #split >= 6 then
+				if forcedSlot then
+					equipped = tonumber(split[forcedSlot]) == itemId
+				else
+					for s = 1, 6 do
+						if tonumber(split[s]) == itemId then
+							equipped = true
+							break
+						end
+					end
+				end
+			end
+			if equipped then
+				model.PaintOver = function(self, w, h)
+					draw.SimpleText("Equipped", "HudFontSmallBold", w - 6, h - 4, Color(238, 131, 84, 255), TEXT_ALIGN_RIGHT, TEXT_ALIGN_BOTTOM)
+				end
+			end
+
+			model.DoClick = function()
+				if not compatible then return end
+
+				local slot = mapItemToLoadoutSlot(item, activeClass)
+				if forcedSlot then
+					slot = forcedSlot
+				end
+				if item.item_class == "tf_wearable_item" then
+					slot = forcedSlot or getWearableTargetSlot(activeClass, item.id)
+				end
+				if not slot then return end
+
+				updateLoadout(slot, item.id, true, activeClass)
+				surface.PlaySound(item.mouse_pressed_sound or "ui/item_hat_pickup.wav")
+				if TFDebugBridge and TFDebugBridge.Emit then
+					TFDebugBridge.Emit("backpack_select_item", {
+						class = activeClass,
+						slot = slot,
+						item_id = tonumber(item.id),
+						item_name = getItemDisplayName(item),
+						page = currentPage,
+						query = searchEntry:GetValue() or "",
+					}, false)
+				end
+			end
+
+			model.DoRightClick = function()
+				local menu = DermaMenu()
+				menu:AddOption("Inspect", function()
+					openBackpackInspect(item, activeClass)
+					if TFDebugBridge and TFDebugBridge.Emit then
+						TFDebugBridge.Emit("backpack_inspect_item", {
+							class = activeClass,
+							item_id = tonumber(item.id),
+							item_name = getItemDisplayName(item),
+							page = currentPage,
+						}, false)
+					end
+				end):SetIcon("icon16/magnifier.png")
+				menu:Open()
+			end
+		end
+	end
+
+	panel:BuildItems()
+
+	local refreshHookId = "TFStandaloneBackpackRefresh_" .. tostring(panel)
+	hook.Add("TFInventoryCacheUpdated", refreshHookId, function()
+		if IsValid(panel) then
+			panel:BuildItems()
+		else
+			hook.Remove("TFInventoryCacheUpdated", refreshHookId)
+		end
+	end)
+
+	panel.OnRemove = function()
+		hook.Remove("TFInventoryCacheUpdated", refreshHookId)
+		if TFDebugBridge and TFDebugBridge.Emit then
+			TFDebugBridge.Emit("backpack_close", {
+				class = activeClass,
+				slot = panel.ForcedLoadoutSlot,
+			}, false)
+		end
+	end
+end
+
+function itemSelector(type, weapons, parent, classid, oldclass)
+	local classIndex = classid or GetConVar("tf_hud_loadout_class"):GetInt()
+	local className = oldclass or classIndexToName[classIndex] or "scout"
+	TF_OpenStandaloneBackpack(className, classIndex, type)
+end
+
+function hatSelector(type, slot, oldclass, weapons)
+	local classIndex = GetConVar("tf_hud_loadout_class"):GetInt()
+	local className = oldclass or classIndexToName[classIndex] or "scout"
+	TF_OpenStandaloneBackpack(className, classIndex, slot)
 end

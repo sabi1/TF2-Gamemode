@@ -22,8 +22,10 @@ local function LeadBot_S_Add_Zombie(team,class,pos,ent)
 		return
 	end
 
-	local name = string.upper(string.sub(class,1,1))..string.sub(class,2)
 	local nickname = ent.PrintName
+	if isfunction(GetNextBotName) then
+		nickname = GetNextBotName()
+	end
 	if (ent.PreferredName ~= nil) then
 		nickname = ent.PreferredName
 	end
@@ -43,7 +45,7 @@ local function LeadBot_S_Add_Zombie(team,class,pos,ent)
 	bot.LastPath = nil
 	bot.CurSegment = 2
 	bot.TFBot = true
-	bot.IsL4DZombie = true
+	bot.IsL4DZombie = false
 	bot.BotStrategy = math.random(0, 1)
 
     --timer.Simple(1, function()
@@ -95,18 +97,27 @@ function ENT:Initialize()
     self:SetModel(npc:GetModel())
 	self:ResetSequence(self:SelectWeightedSequence(ACT_MP_STAND_MELEE))
 	timer.Simple(0.3, function()
+		if not IsValid(self) or not IsValid(npc) then return end
 		
 		if (self.Team == "BLU") then
 	
 			npc:SetSkin(1)
 				
 		end
-		//RandomWeapon2(npc, "primary")
-		//RandomWeapon2(npc, "secondary")
-		//RandomWeapon2(npc, "melee")
-		//RandomCosmetic(npc, "misc")
-		//RandomCosmetic(npc, "misc")
-		//RandomCosmetic(npc, table.Random({"head","hat"}))			
+		local function TryApplyMercLoadout()
+			if not IsValid(npc) then return false end
+			if not isfunction(TFBot_ApplyRandomLoadout) then return false end
+			return TFBot_ApplyRandomLoadout(npc, { initial_spawn = true, cooldown = 0.05 }) == true
+		end
+
+		if not TryApplyMercLoadout() then
+			timer.Simple(0.3, function()
+				if TryApplyMercLoadout() then return end
+				timer.Simple(0.4, function()
+					TryApplyMercLoadout()
+				end)
+			end)
+		end
 		local class = npc:GetPlayerClass()
 		if (class != "scout" and 
 			class != "soldier" and 
@@ -155,37 +166,10 @@ end
 
 function ENT:OnRemove()
 	if SERVER then
-		self.Bot:Kick()
-	end
-end
-
-
-function RandomWeapon2(ply, wepslot)
-	local weps = tf_items.ItemsByID
-	local class = ply:GetPlayerClass()
-	local validweapons = {}
-	for k, v in pairs(weps) do
-		if v and istable(v) and isstring(wepslot) and v["name"] and v["item_slot"] == wepslot and !string.find(v["name"], "Jumper") and v["prefab"] and v["prefab"] != "weapon_melee_allclass" and v["used_by_classes"] and v["used_by_classes"][class] and v["craft_class"] == "weapon" then
-			table.insert(validweapons, v["name"])
+		if IsValid(self.Bot) then
+			self.Bot:Kick()
 		end
 	end
-
-	local wep = table.Random(validweapons)
-	ply:EquipInLoadout(wep)
-end
-
-function RandomCosmetic(ply, wepslot)
-	local weps = tf_items.ReturnItems()
-	local class = ply:GetPlayerClass()
-	local validweapons = {}
-	for k, v in pairs(weps) do
-		if v and istable(v) and isstring(wepslot) and v["name"] and v["item_slot"] == wepslot and v["used_by_classes"] and v["used_by_classes"][class] and v["prefab"] != "tournament_medal" and !string.find(v["item_name"], "Taunt") and v["equip_region"] != "medal" and (v["item_class"] == "tf_wearable" || !IsValid(v["item_class"]) ) then
-			table.insert(validweapons, v["name"])
-		end
-	end
-
-	local wep = table.Random(validweapons)
-	ply:EquipInLoadout(wep)
 end
 
 function ENT:SpawnFunction( ply, tr, ClassName )

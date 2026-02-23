@@ -69,7 +69,12 @@ function SWEP:CanPrimaryAttack(ent)
 end
 
 function SWEP:PreDrawViewModel(vm, vpn, ply)
-	self.Owner:GetHands():SetBodygroup(1, 1)
+	if IsValid(self.Owner) and self.Owner.GetHands then
+		local hands = self.Owner:GetHands()
+		if IsValid(hands) then
+			hands:SetBodygroup(1, 1)
+		end
+	end
 end
 
 function SWEP:Deploy()
@@ -86,8 +91,13 @@ function SWEP:Holster()
 			self.Owner:SetBodygroup(2, 1)
 		end
 	end
-	
-	self.Owner:GetHands():SetBodygroup(1, 0)
+
+	if IsValid(self.Owner) and self.Owner.GetHands then
+		local hands = self.Owner:GetHands()
+		if IsValid(hands) then
+			hands:SetBodygroup(1, 0)
+		end
+	end
 	return self.BaseClass.Holster(self)
 end
 

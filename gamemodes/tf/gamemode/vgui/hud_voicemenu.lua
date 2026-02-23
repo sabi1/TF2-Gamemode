@@ -41,6 +41,12 @@ local VoiceMenuList = {
 }
 
 concommand.Add("voicemenu", function(pl, cmd, args)
+	local lp = LocalPlayer()
+	if IsValid(lp) and lp:Team() == TEAM_SPECTATOR then
+		if HudVoiceMenu then HudVoiceMenu:Hide() end
+		return
+	end
+
 	local a, b = tonumber(args[1]), tonumber(args[2])
 	if not a or not b then return end
 	
@@ -166,14 +172,29 @@ if HudVoiceMenu then HudVoiceMenu:Remove() end
 HudVoiceMenu = vgui.CreateFromTable(vgui.RegisterTable(PANEL, "DPanel"))
 
 concommand.Add("voice_menu_1", function()
+	local lp = LocalPlayer()
+	if IsValid(lp) and lp:Team() == TEAM_SPECTATOR then
+		if HudVoiceMenu then HudVoiceMenu:Hide() end
+		return
+	end
 	HudVoiceMenu:SelectMenu(1)
 end)
 
 concommand.Add("voice_menu_2", function()
+	local lp = LocalPlayer()
+	if IsValid(lp) and lp:Team() == TEAM_SPECTATOR then
+		if HudVoiceMenu then HudVoiceMenu:Hide() end
+		return
+	end
 	HudVoiceMenu:SelectMenu(2)
 end)
 
 concommand.Add("voice_menu_3", function()
+	local lp = LocalPlayer()
+	if IsValid(lp) and lp:Team() == TEAM_SPECTATOR then
+		if HudVoiceMenu then HudVoiceMenu:Hide() end
+		return
+	end
 	HudVoiceMenu:SelectMenu(3)
 end)
 

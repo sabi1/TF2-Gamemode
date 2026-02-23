@@ -90,6 +90,7 @@ if CLIENT then
 	include("cl_pac.lua")
 
 	include("cl_loadout.lua")
+	include("cl_joinflow.lua")
 end  
 
 sound.Add( {
@@ -1530,6 +1531,7 @@ include("shd_ragdolls2.lua")
 
 include("shd_items_game.lua")    
 include("shd_conflict.lua") 
+include("shd_mvm_shop.lua")
 if (IsMounted("tf")) then 
 	player_manager.AddValidModel("!tf_scout","models/player/scout.mdl")
 	player_manager.AddValidModel("!tf_soldier","models/player/soldier.mdl")
@@ -1695,11 +1697,27 @@ CreateConVar( "tf_muselk_zombies", "0", {FCVAR_SERVER_CAN_EXECUTE, FCVAR_NOTIFY,
 CreateConVar( "tf_enable_revive_markers", "0", {FCVAR_SERVER_CAN_EXECUTE, FCVAR_NOTIFY, FCVAR_ARCHIVE}, "Enable/Disable Revive Markers" )
 CreateConVar( "tf_crossover_mode", "0", {FCVAR_SERVER_CAN_EXECUTE, FCVAR_NOTIFY, FCVAR_ARCHIVE}, "Enable/Disable Crossover Mode" )
 CreateConVar( "tf_disable_nonred_mvm", "1", {FCVAR_SERVER_CAN_EXECUTE, FCVAR_NOTIFY, FCVAR_ARCHIVE}, "Disable BLU and neutral" )
+CreateConVar( "tf_motd_url", "https://example.com/tf2gm-motd", {FCVAR_SERVER_CAN_EXECUTE, FCVAR_REPLICATED, FCVAR_NOTIFY, FCVAR_ARCHIVE}, "URL opened by the TF2-style MOTD panel on initial join." )
+CreateConVar( "tf_mapintro_url", "", {FCVAR_SERVER_CAN_EXECUTE, FCVAR_REPLICATED, FCVAR_NOTIFY, FCVAR_ARCHIVE}, "Optional map intro web URL. Supports {map} placeholder." )
+CreateConVar( "tf_mapintro_video_url", "", {FCVAR_SERVER_CAN_EXECUTE, FCVAR_REPLICATED, FCVAR_NOTIFY, FCVAR_ARCHIVE}, "Optional map intro video URL (mp4/webm). Supports {map} placeholder." )
 CreateConVar('tf_talkicon_computablecolor', 1, FCVAR_ARCHIVE + FCVAR_REPLICATED + FCVAR_SERVER_CAN_EXECUTE, 'Compute color from location brightness.')
 CreateConVar('tf_bot_mvm_max_deaths', 20, FCVAR_ARCHIVE + FCVAR_REPLICATED + FCVAR_SERVER_CAN_EXECUTE, 'Maximum Deaths. Not Functional.')
 CreateConVar('tf_grapplinghook_enable', 0, FCVAR_ARCHIVE + FCVAR_REPLICATED + FCVAR_SERVER_CAN_EXECUTE, 'When Enabled: TF2 Players get the Grappling Hook.')
 CreateConVar('tf_bot_mvm_has_bots', 0, FCVAR_ARCHIVE + FCVAR_REPLICATED + FCVAR_SERVER_CAN_EXECUTE, 'Automatically set by Lua')
 CreateConVar('tf_bot_mvm_giant_max_deaths', 3, FCVAR_ARCHIVE + FCVAR_REPLICATED + FCVAR_SERVER_CAN_EXECUTE, 'Maximum Deaths. Not Functional.')
+CreateConVar('tf_bot_perf_enable', 1, FCVAR_ARCHIVE + FCVAR_REPLICATED + FCVAR_SERVER_CAN_EXECUTE, 'Enable bot performance throttling and caches.')
+CreateConVar('tf_bot_perf_debug', 0, FCVAR_ARCHIVE + FCVAR_REPLICATED + FCVAR_SERVER_CAN_EXECUTE, 'Enable bot performance debug output.')
+CreateConVar('tf_bot_sense_interval', 0.25, FCVAR_ARCHIVE + FCVAR_REPLICATED + FCVAR_SERVER_CAN_EXECUTE, 'Bot sensory refresh interval in seconds.')
+CreateConVar('tf_bot_objective_interval', 0.75, FCVAR_ARCHIVE + FCVAR_REPLICATED + FCVAR_SERVER_CAN_EXECUTE, 'Global objective cache refresh interval in seconds.')
+CreateConVar('tf_bot_avoidance_interval', 0.10, FCVAR_ARCHIVE + FCVAR_REPLICATED + FCVAR_SERVER_CAN_EXECUTE, 'Bot local avoidance refresh interval in seconds.')
+CreateConVar('tf_bot_repath_interval', 1.75, FCVAR_ARCHIVE + FCVAR_REPLICATED + FCVAR_SERVER_CAN_EXECUTE, 'Minimum path recompute interval in seconds.')
+CreateConVar('tf_bot_nav_budget_ms', 2.5, FCVAR_ARCHIVE + FCVAR_REPLICATED + FCVAR_SERVER_CAN_EXECUTE, 'Maximum nav path compute budget per tick in milliseconds.')
+CreateConVar('tf_bot_perf_scale_start', 12, FCVAR_ARCHIVE + FCVAR_REPLICATED + FCVAR_SERVER_CAN_EXECUTE, 'Bot count where adaptive throttling starts.')
+CreateConVar('tf_bot_perf_scale_max', 3.0, FCVAR_ARCHIVE + FCVAR_REPLICATED + FCVAR_SERVER_CAN_EXECUTE, 'Maximum adaptive throttling multiplier.')
+CreateConVar('tf_bot_breakable_check_interval', 0.20, FCVAR_ARCHIVE + FCVAR_REPLICATED + FCVAR_SERVER_CAN_EXECUTE, 'Breakable overlap checks interval in seconds.')
+CreateConVar('tf_bot_sound_awareness', 0, FCVAR_ARCHIVE + FCVAR_REPLICATED + FCVAR_SERVER_CAN_EXECUTE, 'Enable sound-driven bot awareness.')
+CreateConVar('tf_bot_sound_awareness_radius', 900, FCVAR_ARCHIVE + FCVAR_REPLICATED + FCVAR_SERVER_CAN_EXECUTE, 'Radius for sound-driven awareness checks.')
+CreateConVar('tf_bot_sound_awareness_interval', 0.25, FCVAR_ARCHIVE + FCVAR_REPLICATED + FCVAR_SERVER_CAN_EXECUTE, 'Minimum interval per emitter for sound awareness processing.')
 CreateConVar('tf_talkicon_showtextchat', 1, FCVAR_ARCHIVE + FCVAR_REPLICATED + FCVAR_SERVER_CAN_EXECUTE, 'Show icon on using text chat.')
 CreateConVar('tf_talkicon_ignoreteamchat', 1, FCVAR_ARCHIVE + FCVAR_REPLICATED + FCVAR_SERVER_CAN_EXECUTE, 'Disable over-head icon on using team chat.')
 CreateConVar("tf_unlimited_buildings", 0, {FCVAR_NOTIFY, FCVAR_SERVER_CAN_EXECUTE, FCVAR_REPLICATED, FCVAR_ARCHIVE, FCVAR_CHEAT})

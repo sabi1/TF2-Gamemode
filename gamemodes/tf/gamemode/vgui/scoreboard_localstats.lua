@@ -136,21 +136,39 @@ end
 
 function PANEL:Paint()
 	local w, h = self:GetSize()
+	local isMvM = string.find(game.GetMap(), "mvm_", 1, true) ~= nil
 	
-	KillsLabel.text = tf_lang.GetRaw("#TF_ScoreBoard_KillsLabel")
-	DeathsLabel.text = tf_lang.GetRaw("#TF_ScoreBoard_DeathsLabel")
-	AssistsLabel.text = tf_lang.GetRaw("#TF_ScoreBoard_AssistsLabel")
-	DestructionLabel.text = tf_lang.GetRaw("#TF_ScoreBoard_DestructionLabel")
-	CapturesLabel.text = tf_lang.GetRaw("#TF_ScoreBoard_CapturesLabel")
-	DefensesLabel.text = tf_lang.GetRaw("#TF_ScoreBoard_DefensesLabel")
-	DominationLabel.text = tf_lang.GetRaw("#TF_ScoreBoard_DominationLabel")
-	RevengeLabel.text = tf_lang.GetRaw("#TF_ScoreBoard_RevengeLabel")
-	HealingLabel.text = tf_lang.GetRaw("#TF_ScoreBoard_HealingLabel")
-	InvulnLabel.text = tf_lang.GetRaw("#TF_ScoreBoard_InvulnLabel")
-	TeleportsLabel.text = tf_lang.GetRaw("#TF_ScoreBoard_TeleportsLabel")
-	HeadshotsLabel.text = tf_lang.GetRaw("#TF_ScoreBoard_HeadshotsLabel")
-	BackstabsLabel.text = tf_lang.GetRaw("#TF_ScoreBoard_BackstabsLabel")
-	BonusLabel.text = tf_lang.GetRaw("#TF_ScoreBoard_BonusLabel")
+	if isMvM then
+		KillsLabel.text = "Kills"
+		DeathsLabel.text = "Deaths"
+		AssistsLabel.text = "Assists"
+		DestructionLabel.text = "Damage"
+		CapturesLabel.text = "Credits"
+		DefensesLabel.text = "Support"
+		DominationLabel.text = "Revives"
+		RevengeLabel.text = "Wave"
+		HealingLabel.text = "Healing"
+		InvulnLabel.text = "Buybacks"
+		TeleportsLabel.text = "Upgrades"
+		HeadshotsLabel.text = "Headshots"
+		BackstabsLabel.text = "Backstabs"
+		BonusLabel.text = "Bonus"
+	else
+		KillsLabel.text = tf_lang.GetRaw("#TF_ScoreBoard_KillsLabel")
+		DeathsLabel.text = tf_lang.GetRaw("#TF_ScoreBoard_DeathsLabel")
+		AssistsLabel.text = tf_lang.GetRaw("#TF_ScoreBoard_AssistsLabel")
+		DestructionLabel.text = tf_lang.GetRaw("#TF_ScoreBoard_DestructionLabel")
+		CapturesLabel.text = tf_lang.GetRaw("#TF_ScoreBoard_CapturesLabel")
+		DefensesLabel.text = tf_lang.GetRaw("#TF_ScoreBoard_DefensesLabel")
+		DominationLabel.text = tf_lang.GetRaw("#TF_ScoreBoard_DominationLabel")
+		RevengeLabel.text = tf_lang.GetRaw("#TF_ScoreBoard_RevengeLabel")
+		HealingLabel.text = tf_lang.GetRaw("#TF_ScoreBoard_HealingLabel")
+		InvulnLabel.text = tf_lang.GetRaw("#TF_ScoreBoard_InvulnLabel")
+		TeleportsLabel.text = tf_lang.GetRaw("#TF_ScoreBoard_TeleportsLabel")
+		HeadshotsLabel.text = tf_lang.GetRaw("#TF_ScoreBoard_HeadshotsLabel")
+		BackstabsLabel.text = tf_lang.GetRaw("#TF_ScoreBoard_BackstabsLabel")
+		BonusLabel.text = tf_lang.GetRaw("#TF_ScoreBoard_BonusLabel")
+	end
 	
 	draw.Text(KillsLabel)
 	draw.Text(DeathsLabel)
@@ -170,14 +188,31 @@ function PANEL:Paint()
 	Kills.text = LocalPlayer():Kills()
 	Deaths.text = LocalPlayer():Deaths()
 	Assists.text = LocalPlayer():Assists()
-	Destruction.text = LocalPlayer():Destructions()
-	Captures.text = LocalPlayer():Captures()
-	Defenses.text = LocalPlayer():Defenses()
-	Domination.text = LocalPlayer():Dominations()
-	Revenge.text = LocalPlayer():Revenges()
+	if isMvM then
+		Destruction.text = LocalPlayer():Frags() * 100
+		Captures.text = LocalPlayer():GetNWInt("TF_MVM_Credits", 0)
+		Defenses.text = LocalPlayer():Assists()
+		Domination.text = LocalPlayer():Revenges()
+		local wave = 1
+		if WaveManager and WaveManager.CurrentWave then
+			wave = math.max(1, tonumber(WaveManager.CurrentWave) or 1)
+		end
+		Revenge.text = wave
+	else
+		Destruction.text = LocalPlayer():Destructions()
+		Captures.text = LocalPlayer():Captures()
+		Defenses.text = LocalPlayer():Defenses()
+		Domination.text = LocalPlayer():Dominations()
+		Revenge.text = LocalPlayer():Revenges()
+	end
 	Healing.text = LocalPlayer():Healing()
-	Invuln.text = LocalPlayer():Invulns()
-	Teleports.text = LocalPlayer():Teleports()
+	if isMvM then
+		Invuln.text = 0
+		Teleports.text = 0
+	else
+		Invuln.text = LocalPlayer():Invulns()
+		Teleports.text = LocalPlayer():Teleports()
+	end
 	Headshots.text = LocalPlayer():Headshots()
 	Backstabs.text = LocalPlayer():Backstabs()
 	Bonus.text = LocalPlayer():Bonus()
@@ -198,7 +233,11 @@ function PANEL:Paint()
 	draw.Text(Bonus)
 	
 	MapName.text = game.GetMap()
-	GameType.text = ""
+	if isMvM then
+		GameType.text = "Mann vs Machine"
+	else
+		GameType.text = ""
+	end
 	draw.Text(MapName)
 	draw.Text(GameType)
 end

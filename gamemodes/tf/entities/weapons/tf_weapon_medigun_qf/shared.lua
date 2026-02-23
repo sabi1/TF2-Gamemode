@@ -575,7 +575,9 @@ function SWEP:Think()
 						self.Owner:SetNWInt("Ubercharge", ch)
 						if ch>=100 then
 							self.Owner:Speak("TLK_PLAYER_CHARGEREADY")
-							self.ChargedLoop:Play()
+							if self.ChargedLoop then
+								self.ChargedLoop:Play()
+							end
 							self:SetMedigunMuzzleEffect(1)
 						end
 					end
@@ -603,9 +605,14 @@ function SWEP:Deploy()
 	if not self.SoundsCreated then
 		self:CreateSounds()
 	end
+	if not IsValid(self.Owner) then
+		return self:CallBaseFunction("Deploy")
+	end
 	
 	if self.Owner:GetNWInt("Ubercharge")>=100 then
-		self.ChargedLoop:Play()
+		if self.ChargedLoop then
+			self.ChargedLoop:Play()
+		end
 		if SERVER then
 			self:SetMedigunMuzzleEffect(1)
 		end

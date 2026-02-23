@@ -44,6 +44,7 @@ function PANEL:GetFormattedTime()
 end
 
 function PANEL:Paint()
+	if string.find(game.GetMap(), "mvm_", 1, true) then return end
 	if not GAMEMODE.RoundTimeReference and not GAMEMODE.RoundTimePaused then return end
 	
 	surface.SetDrawColor(255,255,255,255)

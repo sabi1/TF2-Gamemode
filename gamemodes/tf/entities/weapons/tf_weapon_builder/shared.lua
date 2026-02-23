@@ -1434,8 +1434,9 @@ end)
 function SWEP:Holster()
 	if self:CallBaseFunction("Holster") == false then return false end
 	
-	if self.Owner:GetPlayerClass() == "spy" and self:GetItemData().model_player == "models/weapons/c_models/c_p2rec/c_p2rec.mdl" then
-		self.Owner:EmitSoundEx("PSap.Holster")
+	local owner = self.Owner
+	if IsValid(owner) and owner.GetPlayerClass and owner.GetPlayerClass(owner) == "spy" and self:GetItemData().model_player == "models/weapons/c_models/c_p2rec/c_p2rec.mdl" then
+		owner:EmitSoundEx("PSap.Holster")
 		
 
 	end
