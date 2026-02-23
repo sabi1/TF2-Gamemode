@@ -25,9 +25,6 @@ local function ApplyNoWeaponDrawState(wep, hide)
 	if IsValid(wep.WModel2) then wep.WModel2:SetNoDraw(hide) end
 	if IsValid(wep.AttachedWModel) then wep.AttachedWModel:SetNoDraw(hide) end
 	if IsValid(wep.ExtraWModel) then wep.ExtraWModel:SetNoDraw(hide) end
-	if IsValid(wep.CModel) then wep.CModel:SetNoDraw(hide) end
-	if IsValid(wep.ExtraCModel) then wep.ExtraCModel:SetNoDraw(hide) end
-	if IsValid(wep.AttachedVModel) then wep.AttachedVModel:SetNoDraw(hide) end
 end
 local defaultdeployspeed = CreateConVar( "tf_default_deploy_speed", "1.34", {FCVAR_SERVER_CAN_EXECUTE, FCVAR_REPLICATED, FCVAR_NOTIFY, FCVAR_ARCHIVE}, "LEGS!" )
 -- Sounds
@@ -134,6 +131,155 @@ function SWEP:TFFlipViewmodel()
 		self.ViewModelFlip = false
 	else
 		self.ViewModelFlip = true
+	end
+end
+
+if CLIENT then
+	function SWEP:GetOffhandProjectileModel()
+		if self.OffhandProjectileModel then
+			return self.OffhandProjectileModel
+		end
+
+		local class = self:GetClass()
+		if class == "tf_weapon_bat_giftwrap" then
+			return "models/weapons/c_models/c_xms_festive_ornament.mdl"
+		end
+		if string.find(class, "bat_wood", 1, true) or string.find(class, "bot_wood", 1, true) then
+			return "models/weapons/w_models/w_baseball.mdl"
+		end
+		if class == "tf_weapon_cleaver" then
+			return "models/weapons/c_models/c_sd_cleaver/c_sd_cleaver.mdl"
+		end
+		if string.find(class, "tf_weapon_jar", 1, true) then
+			local item = self:GetItemData()
+			return (item and item.model_player) or self.WorldModel
+		end
+
+		return nil
+	end
+
+	function SWEP:ShouldDrawOffhandProjectile()
+		local model = self:GetOffhandProjectileModel()
+		if not model or model == "" then return false end
+		if not IsValid(self.Owner) then return false end
+		if self.Owner ~= LocalPlayer() then return false end
+		if self.Owner:GetActiveWeapon() ~= self then return false end
+
+		if isfunction(self.OffhandProjectileReady) then
+			return self:OffhandProjectileReady()
+		end
+
+		local ammoType = self.Primary and self.Primary.Ammo
+		if ammoType and ammoType ~= "none" then
+			return self:Ammo1() >= 1
+		end
+
+		local nextSecondary = self.GetNextSecondaryFire and self:GetNextSecondaryFire() or 0
+		return CurTime() >= (nextSecondary or 0)
+	end
+
+	function SWEP:RemoveOffhandProjectileModel()
+		if IsValid(self.OffhandProjectileCModel) then
+			self.OffhandProjectileCModel:Remove()
+		end
+		self.OffhandProjectileCModel = nil
+	end
+
+	function SWEP:DrawOffhandProjectileModel(drawLocalViewModel, hideForTaunt)
+		if hideForTaunt or not drawLocalViewModel or not self:ShouldDrawOffhandProjectile() then
+			self:RemoveOffhandProjectileModel()
+			return
+		end
+
+		local vm = self.Owner:GetViewModel()
+		if not IsValid(vm) then
+			self:RemoveOffhandProjectileModel()
+			return
+		end
+
+		local model = self:GetOffhandProjectileModel()
+		if not model or model == "" then
+			self:RemoveOffhandProjectileModel()
+			return
+		end
+
+		if not IsValid(self.OffhandProjectileCModel) then
+			self.OffhandProjectileCModel = ClientsideModel(model)
+			if not IsValid(self.OffhandProjectileCModel) then return end
+			self.OffhandProjectileCModel:SetNoDraw(true)
+			self.OffhandProjectileCModel:Spawn()
+			self.OffhandProjectileCModel:Activate()
+		elseif self.OffhandProjectileCModel:GetModel() ~= model then
+			self.OffhandProjectileCModel:SetModel(model)
+		end
+
+		local pos, ang
+		local hostModels = {}
+		if IsValid(self.CModel) then
+			table.insert(hostModels, self.CModel)
+		end
+		table.insert(hostModels, vm)
+
+		local attachmentNames = {
+			self.OffhandProjectileAttachment,
+			"effect_hand_L",
+			"hand_L",
+			"weapon_bone_L",
+			"anim_attachment_LH",
+		}
+		local boneNames = {
+			self.OffhandProjectileBone,
+			"ValveBiped.Bip01_L_Hand",
+			"L_Hand",
+			"bip_hand_L",
+			"hand_L",
+		}
+
+		for _, host in ipairs(hostModels) do
+			if not IsValid(host) then continue end
+
+			for _, attachmentName in ipairs(attachmentNames) do
+				if isstring(attachmentName) and attachmentName ~= "" then
+					local attID = host:LookupAttachment(attachmentName)
+					if attID and attID > 0 then
+						local att = host:GetAttachment(attID)
+						if att and att.Pos and att.Ang then
+							pos, ang = att.Pos, att.Ang
+							break
+						end
+					end
+				end
+			end
+			if pos and ang then break end
+
+			for _, boneName in ipairs(boneNames) do
+				if isstring(boneName) and boneName ~= "" then
+					local bone = host:LookupBone(boneName)
+					if bone then
+						local matrix = host:GetBoneMatrix(bone)
+						if matrix then
+							pos, ang = matrix:GetTranslation(), matrix:GetAngles()
+						else
+							pos, ang = host:GetBonePosition(bone)
+						end
+						if pos and ang then break end
+					end
+				end
+			end
+			if pos and ang then break end
+		end
+
+		if not pos or not ang then return end
+
+		local offsetPos = self.OffhandProjectileOffset or Vector(2.2, 1.4, -1.3)
+		local offsetAng = self.OffhandProjectileAngle or Angle(-10, 65, -95)
+		pos, ang = LocalToWorld(offsetPos, offsetAng, pos, ang)
+
+		self.OffhandProjectileCModel:SetRenderOrigin(pos)
+		self.OffhandProjectileCModel:SetRenderAngles(ang)
+		self.OffhandProjectileCModel:SetMaterial(self.OffhandProjectileMaterial or "")
+		self.OffhandProjectileCModel:SetupBones()
+		self.OffhandProjectileCModel:DrawModel()
 	end
 end
 -- View/World model
@@ -1246,6 +1392,9 @@ function SWEP:Holster()
 			if IsValid(self.ExtraWModel) then
 				self.ExtraWModel:Remove()
 			end
+			if IsValid(self.OffhandProjectileCModel) then
+				self.OffhandProjectileCModel:Remove()
+			end
 		end
 	end
 	
@@ -1275,6 +1424,9 @@ end
  
 function SWEP:OnRemove()
 	self:StopTimers()
+	if CLIENT and IsValid(self.OffhandProjectileCModel) then
+		self.OffhandProjectileCModel:Remove()
+	end
 	if (IsValid(self:GetOwner())) then
 		local VModel = self:GetOwner():GetViewModel()
 		if (IsValid(VModel)) then
@@ -1536,10 +1688,18 @@ function SWEP:Think()
 	if CLIENT then
 		local hideForTaunt = ShouldHideWeaponModels(self)
 		ApplyNoWeaponDrawState(self, hideForTaunt)
+		local lp = LocalPlayer()
+		local drawLocalViewModel = IsValid(lp)
+			and self.Owner == lp
+			and not lp:ShouldDrawLocalPlayer()
+			and lp:Alive()
+			and lp:GetObserverMode() == OBS_MODE_NONE
+			and not lp.FrozenScreen
+			and (not IsValid(GetViewEntity()) or GetViewEntity() == lp)
 		if (self:GetItemData().item_name) then
 			self.PrintName = self:GetItemData().name
 		end
-		if not hideForTaunt and IsValid(self.CModel) then
+		if not hideForTaunt and drawLocalViewModel and IsValid(self.CModel) then
 			self.CModel:DrawModel()
 			self.CModel:SetSkin(self.WeaponSkin or self.Owner:GetSkin())
 		end
@@ -1561,11 +1721,12 @@ function SWEP:Think()
 				self.WModel:SetMaterial(self.WeaponMaterial)
 			end
 		end
-		if not hideForTaunt and IsValid(self.ExtraCModel) then
+		if not hideForTaunt and drawLocalViewModel and IsValid(self.ExtraCModel) then
 			self.ExtraCModel:DrawModel()
 			self.ExtraCModel:SetParent(self.CModel)
 			self.CModel:AddEffects(bit.bor(EF_BONEMERGE,EF_BONEMERGE_FASTCULL))
 		end
+		self:DrawOffhandProjectileModel(drawLocalViewModel, hideForTaunt)
 	end
 	
 	local hold = self.HoldType

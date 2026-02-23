@@ -42,7 +42,7 @@ include("proxies/weapon_invis.lua")
 include("shd_gravitygun.lua")
 
 
-hook.Add( "PopulateToolMenu", "Civ2Settings1", function()
+	hook.Add( "PopulateToolMenu", "Civ2Settings1", function()
 	spawnmenu.AddToolMenuOption( "Options", "Team Fortress 2 Gamemode", "TF2GMCiv2Options", "#Settings", "", "", function( panel )
 		panel:ClearControls()
 		panel:CheckBox( "TF2 CLASSES: Use Minimized Viewmodels", "tf_use_min_viewmodels" )
@@ -60,6 +60,15 @@ hook.Add( "PopulateToolMenu", "Civ2Settings1", function()
 		panel:NumSlider( "SPECIAL: Voice DSP Type", "tf_special_dsp_type", 1, 135 )
 		panel:CheckBox( "Right Handed", "tf_righthand" )
 		panel:CheckBox( "Fast Weapon Switch", "tf_fastweaponswitch" )
+		panel:Help( "Inspect Weapon Key (hold to inspect, default: I)" )
+		local inspectBinder = vgui.Create("DBinder", panel)
+		local inspectKeyCVar = GetConVar("tf_inspect_key")
+		inspectBinder:SetValue((inspectKeyCVar and inspectKeyCVar:GetInt()) or KEY_I)
+		function inspectBinder:OnChange(keyCode)
+			RunConsoleCommand("tf_inspect_key", tostring(math.max(0, math.floor(tonumber(keyCode) or KEY_I))))
+		end
+		panel:AddItem(inspectBinder)
+		panel:Button("Reset Inspect Key to I", "tf_inspect_key", tostring(KEY_I))
 		-- Add stuff here
 	end )
 	spawnmenu.AddToolMenuOption( "Options", "Team Fortress 2 Gamemode", "TF2GMCiv2Customization", "#Customization Settings", "", "", function( panel )
@@ -120,6 +129,7 @@ CreateClientConVar( "tf_dingalingaling_sound", "", {FCVAR_CLIENTCMD_CAN_EXECUTE,
 CreateClientConVar( "tf_dingalingaling_killsound", "", {FCVAR_CLIENTCMD_CAN_EXECUTE, FCVAR_ARCHIVE}, "Diiinnng...." )
 CreateClientConVar( "civ2_playermodel_reference_pose_prevention", "0", {FCVAR_CLIENTCMD_CAN_EXECUTE, FCVAR_ARCHIVE}, "Use Animated Props for fixing broken playermodel animations." )
 CreateClientConVar( "tf_fastweaponswitch", "0", {FCVAR_CLIENTCMD_CAN_EXECUTE, FCVAR_ARCHIVE}, "Instantly switch weapons when selecting slots or cycling." )
+CreateClientConVar( "tf_inspect_key", tostring(KEY_I), {FCVAR_CLIENTCMD_CAN_EXECUTE, FCVAR_ARCHIVE}, "Key code used to hold inspect weapon." )
 
 
 concommand.Add("tf_upgradewep03clientonly", function(ply)
@@ -165,6 +175,85 @@ hook.Add("PlayerBindPress", "TF2Gamemode_EVoiceMenu_ShiftUse", function(ply, bin
 
 	RunConsoleCommand("voicemenu", "0", "0")
 	return true -- block +use when pressing E without shift
+end)
+
+local TF2InspectHeld = false
+local TF2InspectSentReload = false
+
+local function TF2CanInspectFromReload(wep)
+	if not IsValid(wep) then return false end
+
+	local maxClip = wep:GetMaxClip1()
+	if maxClip <= 0 then return true end
+
+	local clip = wep:Clip1()
+	if clip < 0 then return true end
+
+	return clip >= maxClip
+end
+
+hook.Add("Think", "TF2Gamemode_InspectBind", function()
+	local lp = LocalPlayer()
+	if not IsValid(lp) then
+		TF2InspectHeld = false
+		TF2InspectSentReload = false
+		return
+	end
+
+	local inspectKey = KEY_I
+	local inspectKeyConVar = GetConVar("tf_inspect_key")
+	if inspectKeyConVar then
+		inspectKey = math.max(0, inspectKeyConVar:GetInt())
+	end
+
+	local shouldBlock = inspectKey == KEY_NONE or gui.IsGameUIVisible() or vgui.CursorVisible()
+	local isDown = (not shouldBlock) and input.IsKeyDown(inspectKey)
+	local canInspect = TF2CanInspectFromReload(lp:GetActiveWeapon())
+
+	if isDown and not TF2InspectHeld and canInspect then
+		TF2InspectHeld = true
+		RunConsoleCommand("+inspect")
+		RunConsoleCommand("+reload")
+		TF2InspectSentReload = true
+	elseif TF2InspectHeld and (not isDown or not canInspect) then
+		TF2InspectHeld = false
+		RunConsoleCommand("-inspect")
+		if TF2InspectSentReload then
+			RunConsoleCommand("-reload")
+			TF2InspectSentReload = false
+		end
+	end
+end)
+
+hook.Add("PlayerBindPress", "TF2Gamemode_InspectBind_BlockOriginalBind", function(ply, bind, pressed, code)
+	if not pressed then return end
+	if not IsValid(ply) or ply ~= LocalPlayer() then return end
+
+	local inspectKey = KEY_I
+	local inspectKeyConVar = GetConVar("tf_inspect_key")
+	if inspectKeyConVar then
+		inspectKey = math.max(0, inspectKeyConVar:GetInt())
+	end
+
+	local isInspectKey = code == inspectKey
+	local loweredBind = isstring(bind) and string.lower(bind) or ""
+	local isKnownInspectSpam = string.find(loweredBind, "tf_itempicker", 1, true) ~= nil
+
+	-- Let UI/menu/chat key usage pass through untouched.
+	if gui.IsGameUIVisible() or vgui.CursorVisible() then return end
+	local focus = vgui.GetKeyboardFocus()
+	if IsValid(focus) then return end
+
+	if isInspectKey or (isKnownInspectSpam and input.IsKeyDown(inspectKey)) then
+		return true
+	end
+end)
+
+hook.Add("InitPostEntity", "TF2Gamemode_InspectKeyInit", function()
+	local inspectKeyConVar = GetConVar("tf_inspect_key")
+	if inspectKeyConVar and inspectKeyConVar:GetInt() == KEY_N then
+		RunConsoleCommand("tf_inspect_key", tostring(KEY_I))
+	end
 end)
 concommand.Add("tf_open_backpack", function(ply)
 	if IsValid(ply) and ply ~= LocalPlayer() then return end
@@ -525,6 +614,152 @@ net.Receive("TFRagdollCreate", function()
 	TransferBones(ply,ragdoll)
 	gamemode.Call("SetupPlayerRagdoll", ply, ragdoll)
 end)
+
+local TFGargoyleNotifyPanel = nil
+local TFGargoyleNotifyCloseDown = false
+
+local function CloseTFGargoyleNotification()
+	if IsValid(TFGargoyleNotifyPanel) then
+		TFGargoyleNotifyPanel:Remove()
+	end
+	TFGargoyleNotifyPanel = nil
+	TFGargoyleNotifyCloseDown = false
+end
+
+local function ShowTFGargoyleNotification(message)
+	CloseTFGargoyleNotification()
+
+	local width, height = 360, 106
+	local panel = vgui.Create("DPanel")
+	panel:SetSize(width, height)
+	panel:SetPos(ScrW() - width - 22, math.floor((ScrH() * 0.5) - (height * 0.5)))
+	panel.Message = message
+	panel.ExpireAt = CurTime() + 8
+	panel.Paint = function(self, w, h)
+		draw.RoundedBox(10, 0, 0, w, h, Color(44, 40, 41, 240))
+		surface.SetDrawColor(219, 197, 157, 255)
+		surface.DrawOutlinedRect(0, 0, w, h, 2)
+
+		draw.DrawText(self.Message or "", "Trebuchet18", 12, 10, Color(243, 241, 232, 255), TEXT_ALIGN_LEFT)
+
+		draw.SimpleText("Press [ K ] to", "Trebuchet18", 12, h - 28, Color(235, 73, 73, 255), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+		draw.SimpleText("CLOSE.", "Trebuchet18", 128, h - 28, Color(148, 220, 106, 255), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+	end
+
+	TFGargoyleNotifyPanel = panel
+end
+
+hook.Add("Think", "TF_GargoyleNotificationCloseKey", function()
+	if not IsValid(TFGargoyleNotifyPanel) then return end
+
+	if CurTime() >= (TFGargoyleNotifyPanel.ExpireAt or 0) then
+		CloseTFGargoyleNotification()
+		return
+	end
+
+	local isDown = input.IsKeyDown(KEY_K)
+	if isDown and not TFGargoyleNotifyCloseDown then
+		CloseTFGargoyleNotification()
+		return
+	end
+
+	TFGargoyleNotifyCloseDown = isDown
+end)
+
+net.Receive("TF_HalloweenGargoyleNotify", function()
+	local _eventName = net.ReadString()
+	local message = net.ReadString()
+	if message == "" then return end
+
+	ShowTFGargoyleNotification(message)
+end)
+
+local TFHalloweenSoulBursts = {}
+local TFHalloweenSoulBurstMat = Material("sprites/light_glow02_add")
+
+net.Receive("TF_HalloweenSoulBurst", function()
+	local collector = net.ReadEntity()
+	local origin = net.ReadVector()
+	local now = CurTime()
+
+	for i = 1, 20 do
+		TFHalloweenSoulBursts[#TFHalloweenSoulBursts + 1] = {
+			start = origin + VectorRand() * math.Rand(6, 18),
+			collector = collector,
+			born = now + (i * 0.012),
+			dur = 0.75 + math.Rand(0.1, 0.35),
+			seed = math.Rand(0.0, 200.0),
+		}
+	end
+end)
+
+hook.Add("PostDrawTranslucentRenderables", "TF_HalloweenSoulBurstDraw", function()
+	if #TFHalloweenSoulBursts == 0 then return end
+
+	local now = CurTime()
+	render.SetMaterial(TFHalloweenSoulBurstMat)
+
+	for i = #TFHalloweenSoulBursts, 1, -1 do
+		local burst = TFHalloweenSoulBursts[i]
+		local age = now - burst.born
+		if age >= 0 then
+			local frac = age / burst.dur
+			if frac >= 1 then
+				table.remove(TFHalloweenSoulBursts, i)
+			else
+				local target = burst.start + Vector(0, 0, 60)
+				local ply = burst.collector
+				if IsValid(ply) then
+					target = ply:GetPos() + (ply:GetForward() * -8) + Vector(0, 0, 58)
+				end
+
+				local basePos = LerpVector(frac, burst.start, target)
+				local wobble = Vector(
+					math.sin((now * 8) + burst.seed) * (1 - frac) * 6,
+					math.cos((now * 7) + burst.seed * 1.3) * (1 - frac) * 6,
+					math.sin((now * 11) + burst.seed * 0.7) * (1 - frac) * 4
+				)
+				local pos = basePos + wobble
+				local alpha = math.floor(220 * (1 - frac))
+				local size = 8 + (1 - frac) * 6
+
+				render.DrawSprite(pos, size, size * 1.4, Color(120, 255, 140, alpha))
+			end
+		end
+	end
+end)
+
+hook.Add("HUDPaint", "TF_HalloweenGargoyleLocator", function()
+	local lp = LocalPlayer()
+	if not IsValid(lp) then return end
+	if not lp:GetNWBool("TFShowGargoyleLocator", false) then return end
+	if not lp:GetNWBool("TFHasMapGargoyle", false) then return end
+	if not lp:Alive() then return end
+
+	local pos = lp:GetNWVector("TFMapGargoylePos", vector_origin)
+	if pos == vector_origin then return end
+
+	local dist = math.floor(lp:GetPos():Distance(pos) / 52.49)
+	local scr = pos:ToScreen()
+	local x = math.Clamp(scr.x, 36, ScrW() - 36)
+	local y = math.Clamp(scr.y, 36, ScrH() - 36)
+
+	local bgW, bgH = 190, 34
+	draw.RoundedBox(8, x - (bgW * 0.5), y - bgH, bgW, bgH, Color(22, 28, 22, 200))
+	surface.SetDrawColor(140, 255, 170, 220)
+	surface.DrawOutlinedRect(x - (bgW * 0.5), y - bgH, bgW, bgH, 2)
+	draw.SimpleText("SOUL GARGOYLE", "Trebuchet18", x, y - 29, Color(190, 255, 205), TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP)
+	draw.SimpleText(dist .. "m", "Trebuchet18", x, y - 14, Color(240, 255, 240), TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP)
+
+	surface.SetDrawColor(120, 255, 150, 220)
+	draw.NoTexture()
+	surface.DrawPoly({
+		{x = x, y = y + 6},
+		{x = x - 8, y = y - 10},
+		{x = x + 8, y = y - 10}
+	})
+end)
+
 usermessage.Hook("PlayerHealthBonusEffect", function(um)
 	local ent = GetPlayerByUserID(um:ReadLong())
 	local positive = um:ReadBool()
@@ -812,7 +1047,11 @@ local function StartClassSelectMusic()
 	PlayMenuUISound(isMVM and "music/mvm_class_menu_bg.wav" or "music/class_menu_bg.wav")
 end
 
+if IsValid(TFClassSelectionFrame) then
+	TFClassSelectionFrame:Remove()
+end
 local ClassFrame = vgui.Create("DFrame") --create a frame
+TFClassSelectionFrame = ClassFrame
 ClassFrame:SetSize(ScrW() * 1, ScrH() * 1 ) --set its size
 ClassFrame:Center() --position it at the center of the screen
 ClassFrame:SetTitle("") --set the title of the menu 
@@ -820,13 +1059,44 @@ ClassFrame:SetDraggable(true) --can you move it around
 ClassFrame:SetSizable(true) --can you resize it?
 ClassFrame:ShowCloseButton(false)
 ClassFrame:MakePopup() --make it appear
+ClassFrame:SetKeyboardInputEnabled(true)
+ClassFrame:SetMouseInputEnabled(true)
+gui.EnableScreenClicker(true)
 	local self = ClassFrame
 	local WScale = ScrW()/640
 	local Scale = ScrH()/480
+
+local function ReleaseClassSelectionInput()
+	local keepClicker = false
+	if TFJoinFlow then
+		if IsValid(TFJoinFlow.MOTDPanel) and TFJoinFlow.MOTDPanel:IsVisible() then keepClicker = true end
+		if IsValid(TFJoinFlow.TeamPanel) and TFJoinFlow.TeamPanel:IsVisible() then keepClicker = true end
+	end
+	if not keepClicker then
+		gui.EnableScreenClicker(false)
+	end
+end
+
 ClassFrame.OnClose = function()
+	if ClassFrame._closedHandled then return end
+	ClassFrame._closedHandled = true
 	StopClassSelectMusic()
 	if string.find(game.GetMap(), "mvm_") then 
 		PlayMenuUISound("music/mvm_class_select.wav")
+	end
+	ReleaseClassSelectionInput()
+	if TFClassSelectionFrame == ClassFrame then
+		TFClassSelectionFrame = nil
+	end
+end
+ClassFrame.OnRemove = ClassFrame.OnClose
+ClassFrame.Think = function(pnl)
+	if not pnl:IsVisible() then return end
+	if not pnl._nextInputFix or pnl._nextInputFix <= CurTime() then
+		pnl._nextInputFix = CurTime() + 0.25
+		pnl:SetKeyboardInputEnabled(true)
+		pnl:SetMouseInputEnabled(true)
+		gui.EnableScreenClicker(true)
 	end
 end
 StartClassSelectMusic()

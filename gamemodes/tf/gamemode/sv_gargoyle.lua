@@ -7,6 +7,616 @@ local ENT_ID_CURRENT = 1
 local tf_ragdoll_gravity_boost = CreateConVar("tf_ragdoll_gravity_boost", "220", {FCVAR_ARCHIVE, FCVAR_NOTIFY}, "Additional downward velocity for all player ragdolls.")
 local tf_ragdoll_gravity_ticks = CreateConVar("tf_ragdoll_gravity_ticks", "12", {FCVAR_ARCHIVE, FCVAR_NOTIFY}, "How many boost ticks are applied to each ragdoll.")
 local tf_ragdoll_gravity_tick_interval = CreateConVar("tf_ragdoll_gravity_tick_interval", "0.05", {FCVAR_ARCHIVE, FCVAR_NOTIFY}, "Delay between ragdoll gravity boost ticks.")
+local TFIsHalloweenMapCached = false
+
+local HALLOWEEN_MAP_HINTS = {
+	"_event",
+	"halloween",
+	"hell",
+	"haunt",
+	"ghost",
+	"mann_manor",
+	"eyeaduct",
+	"merasmus",
+	"soul",
+}
+
+local NON_HALLOWEEN_EVENT_HINTS = {
+	"xmas",
+	"smissmas",
+	"winter",
+	"snow",
+	"christmas",
+}
+
+local function IsHalloweenMapName(mapName)
+	if not mapName or mapName == "" then return false end
+	mapName = string.lower(mapName)
+
+	for _, token in ipairs(HALLOWEEN_MAP_HINTS) do
+		if string.find(mapName, token, 1, true) then
+			for _, blocked in ipairs(NON_HALLOWEEN_EVENT_HINTS) do
+				if string.find(mapName, blocked, 1, true) then
+					return false
+				end
+			end
+			return true
+		end
+	end
+
+	return false
+end
+
+local function RefreshHalloweenMapCache()
+	TFIsHalloweenMapCached = IsHalloweenMapName(game.GetMap())
+end
+
+hook.Add("InitPostEntity", "TF_HalloweenMapCache_Init", RefreshHalloweenMapCache)
+hook.Add("PostCleanupMap", "TF_HalloweenMapCache_Cleanup", RefreshHalloweenMapCache)
+timer.Simple(0, RefreshHalloweenMapCache)
+
+local function SpawnDeathDrop(victim, dmginfo, className)
+	local item = ents.Create(className)
+	if not IsValid(item) then return end
+
+	local a, b = victim:WorldSpaceAABB()
+	item:SetPos((a + b) * 0.5)
+	item.RespawnTime = -1
+	item:Spawn()
+
+	if dmginfo then
+		local vel = dmginfo:GetDamageForce()
+		local ang = vel:Angle()
+		ang.p = math.min(ang.p, -20)
+		vel = math.min(0.01 * vel:Length(), 400) * ang:Forward()
+		item:DropWithGravity(vel)
+	end
+end
+
+local tf_halloween_map_gargoyle_enable = CreateConVar("tf_halloween_map_gargoyle_enable", "1", {FCVAR_ARCHIVE, FCVAR_NOTIFY}, "Enable random Soul Gargoyle map spawns on Halloween maps.")
+local tf_halloween_map_gargoyle_min_time = CreateConVar("tf_halloween_map_gargoyle_min_time", "50", {FCVAR_ARCHIVE, FCVAR_NOTIFY}, "Minimum seconds before the next random Soul Gargoyle spawn/move.")
+local tf_halloween_map_gargoyle_max_time = CreateConVar("tf_halloween_map_gargoyle_max_time", "120", {FCVAR_ARCHIVE, FCVAR_NOTIFY}, "Maximum seconds before the next random Soul Gargoyle spawn/move.")
+local tf_halloween_map_gargoyle_lifetime = CreateConVar("tf_halloween_map_gargoyle_lifetime", "600", {FCVAR_ARCHIVE, FCVAR_NOTIFY}, "Seconds a random Soul Gargoyle stays before disappearing.")
+local tf_halloween_gargoyle_require_nav = CreateConVar("tf_halloween_gargoyle_require_nav", "1", {FCVAR_ARCHIVE, FCVAR_NOTIFY}, "Require Soul Gargoyle spawn positions to be near nav areas when navmesh is loaded.")
+local tf_halloween_gargoyle_min_player_dist = CreateConVar("tf_halloween_gargoyle_min_player_dist", "220", {FCVAR_ARCHIVE, FCVAR_NOTIFY}, "Minimum distance from alive players for random Soul Gargoyle positions.")
+local tf_halloween_gargoyle_max_player_dist = CreateConVar("tf_halloween_gargoyle_max_player_dist", "1800", {FCVAR_ARCHIVE, FCVAR_NOTIFY}, "Maximum distance from alive players for random Soul Gargoyle positions.")
+local tf_halloween_gargoyle_debug = CreateConVar("tf_halloween_gargoyle_debug", "0", {FCVAR_ARCHIVE}, "Print Soul Gargoyle spawn rejection reasons.")
+
+local TFActiveMapGargoyle = nil
+local TFNextMapGargoyleAction = 0
+local TFNextMapGargoyleTrackUpdate = 0
+
+local function UpdateMapGargoyleTracking(ent)
+	local active = IsValid(ent)
+	local pos = active and ent:GetPos() or vector_origin
+
+	for _, ply in ipairs(player.GetAll()) do
+		if IsValid(ply) and ply:IsPlayer() then
+			ply:SetNWBool("TFHasMapGargoyle", active)
+			ply:SetNWVector("TFMapGargoylePos", pos)
+		end
+	end
+end
+
+local function GetRandomGargoyleDelay()
+	local minDelay = math.max(tf_halloween_map_gargoyle_min_time:GetFloat(), 5)
+	local maxDelay = math.max(tf_halloween_map_gargoyle_max_time:GetFloat(), minDelay)
+	return math.Rand(minDelay, maxDelay)
+end
+
+local function QueueNextGargoyleAction()
+	TFNextMapGargoyleAction = CurTime() + GetRandomGargoyleDelay()
+end
+
+local function AnnounceGargoyleMessage(eventName, message)
+	net.Start("TF_HalloweenGargoyleNotify")
+	net.WriteString(eventName or "")
+	net.WriteString(message or "")
+	net.Broadcast()
+end
+
+function GM:AnnounceHalloweenGargoyle(eventName, overrideMessage)
+	if not TFIsHalloweenMapCached then return end
+
+	local voice = "sf15.Merasmus.Gargoyle.Spawn"
+	local spooky = "ui/halloween_loot_spawn.wav"
+	local message = overrideMessage or "A gargoyle is somewhere on the map!"
+
+	if eventName == "moved" then
+		voice = "sf15.Merasmus.Gargoyle.Moved"
+		spooky = "ui/halloween_loot_spawn.wav"
+		message = overrideMessage or "The Soul Gargoyle moved to a new location!"
+	elseif eventName == "got" then
+		voice = "sf15.Merasmus.Gargoyle.Got"
+		spooky = "ui/halloween_loot_found.wav"
+		message = overrideMessage or "Someone found the Soul Gargoyle!"
+	elseif eventName == "gone" then
+		voice = "sf15.Merasmus.Gargoyle.Gone"
+		spooky = "ui/halloween_loot_found.wav"
+		message = overrideMessage or "The Soul Gargoyle has disappeared."
+	end
+
+	for _, ply in ipairs(player.GetAll()) do
+		if IsValid(ply) and ply:IsPlayer() then
+			ply:EmitSound(voice, 100, 100, 1, CHAN_VOICE)
+			ply:EmitSound(spooky, 80, 100, 1, CHAN_STATIC)
+		end
+	end
+
+	AnnounceGargoyleMessage(eventName, message)
+end
+
+local function BuildGargoyleSpawnPointList()
+	local points = {}
+	local classes = {
+		"info_player_teamspawn",
+		"info_player_start",
+		"info_player_deathmatch",
+		"info_observer_point",
+	}
+
+	for _, className in ipairs(classes) do
+		for _, ent in ipairs(ents.FindByClass(className)) do
+			if IsValid(ent) then
+				points[#points + 1] = ent:GetPos()
+			end
+		end
+	end
+
+	if #points == 0 then
+		for _, pl in ipairs(player.GetAll()) do
+			if IsValid(pl) and pl:IsPlayer() and pl:Alive() then
+				points[#points + 1] = pl:GetPos() + VectorRand() * math.Rand(200, 500)
+			end
+		end
+	end
+
+	return points
+end
+
+local function BuildGargoyleTeamSpawnPointList()
+	local points = {}
+	local classes = {
+		"info_player_teamspawn",
+		"info_player_start",
+		"info_player_deathmatch",
+	}
+
+	for _, className in ipairs(classes) do
+		for _, ent in ipairs(ents.FindByClass(className)) do
+			if IsValid(ent) then
+				points[#points + 1] = ent:GetPos()
+			end
+		end
+	end
+
+	return points
+end
+
+local function GargoyleDebug(msg)
+	if not tf_halloween_gargoyle_debug:GetBool() then return end
+	print("[TF2-Gamemode] [GargoyleSpawn] " .. tostring(msg))
+end
+
+local function GetAlivePlayers()
+	local alivePlayers = {}
+	for _, pl in ipairs(player.GetAll()) do
+		if IsValid(pl) and pl:IsPlayer() and pl:Alive() then
+			alivePlayers[#alivePlayers + 1] = pl
+		end
+	end
+	return alivePlayers
+end
+
+local function BuildRespawnVolumeCache()
+	local volumes = {}
+	for _, className in ipairs({"func_respawnroomvisualizer", "func_respawnroom"}) do
+		for _, room in ipairs(ents.FindByClass(className)) do
+			if IsValid(room) then
+				local mins, maxs = room:WorldSpaceAABB()
+				volumes[#volumes + 1] = {
+					mins = mins,
+					maxs = maxs,
+				}
+			end
+		end
+	end
+	return volumes
+end
+
+local function IsInsideRespawnVolumes(pos, volumes)
+	volumes = volumes or BuildRespawnVolumeCache()
+	for _, volume in ipairs(volumes) do
+		local mins, maxs = volume.mins, volume.maxs
+		if pos.x >= mins.x and pos.x <= maxs.x
+		and pos.y >= mins.y and pos.y <= maxs.y
+		and pos.z >= mins.z and pos.z <= maxs.z then
+			return true
+		end
+	end
+	return false
+end
+
+local function ProjectToGround(basePos)
+	if not basePos then return nil end
+
+	local tr = util.TraceLine({
+		start = basePos + Vector(0, 0, 768),
+		endpos = basePos - Vector(0, 0, 4096),
+		mask = MASK_PLAYERSOLID_BRUSHONLY
+	})
+
+	if not tr.Hit then
+		return nil
+	end
+
+	return tr.HitPos + Vector(0, 0, 12), tr
+end
+
+local function DistanceToNearestAlivePlayer(pos, alivePlayers)
+	local nearest = math.huge
+	for _, pl in ipairs(alivePlayers) do
+		local d = pl:GetPos():Distance(pos)
+		if d < nearest then
+			nearest = d
+		end
+	end
+	return nearest
+end
+
+local function NavDistanceAtPos(pos)
+	if not navmesh or not navmesh.IsLoaded or not navmesh.GetNearestNavArea then return nil end
+	if not navmesh.IsLoaded() then return nil end
+
+	local ok, area = pcall(navmesh.GetNearestNavArea, pos, false, 2500, false, true)
+	if not ok or not area then return math.huge end
+	if not area.GetCenter then return 0 end
+
+	local center = area:GetCenter()
+	if not center then return 0 end
+	return center:Distance(pos)
+end
+
+local function IsPlayableCandidate(pos, alivePlayers, volumes)
+	if not pos then return false end
+	if not util.IsInWorld(pos) then
+		GargoyleDebug("reject: out of world")
+		return false
+	end
+
+	if IsInsideRespawnVolumes(pos, volumes) then
+		GargoyleDebug("reject: inside respawn volume")
+		return false
+	end
+
+	local floor = util.TraceLine({
+		start = pos + Vector(0, 0, 20),
+		endpos = pos - Vector(0, 0, 80),
+		mask = MASK_PLAYERSOLID_BRUSHONLY
+	})
+
+	if not floor.Hit then
+		GargoyleDebug("reject: no floor hit")
+		return false
+	end
+
+	if floor.HitNormal and floor.HitNormal.z < 0.6 then
+		GargoyleDebug("reject: slope too steep")
+		return false
+	end
+
+	local hull = util.TraceHull({
+		start = pos + Vector(0, 0, 2),
+		endpos = pos + Vector(0, 0, 2),
+		mins = Vector(-16, -16, 0),
+		maxs = Vector(16, 16, 72),
+		mask = MASK_PLAYERSOLID_BRUSHONLY
+	})
+	if hull.Hit then
+		GargoyleDebug("reject: hull blocked")
+		return false
+	end
+
+	local headroom = util.TraceHull({
+		start = pos + Vector(0, 0, 72),
+		endpos = pos + Vector(0, 0, 80),
+		mins = Vector(-14, -14, 0),
+		maxs = Vector(14, 14, 8),
+		mask = MASK_PLAYERSOLID_BRUSHONLY
+	})
+	if headroom.Hit then
+		GargoyleDebug("reject: no headroom")
+		return false
+	end
+
+	if tf_halloween_gargoyle_require_nav:GetBool() then
+		local navDist = NavDistanceAtPos(pos)
+		if navDist and navDist == math.huge then
+			GargoyleDebug("reject: no nearby nav")
+			return false
+		end
+		if navDist and navDist > 450 then
+			GargoyleDebug("reject: nav too far")
+			return false
+		end
+	end
+
+	if not alivePlayers or #alivePlayers == 0 then
+		GargoyleDebug("reject: no alive players")
+		return false
+	end
+
+	local minDist = math.max(tf_halloween_gargoyle_min_player_dist:GetFloat(), 0)
+	local maxDist = math.max(tf_halloween_gargoyle_max_player_dist:GetFloat(), minDist + 1)
+	local nearest = DistanceToNearestAlivePlayer(pos, alivePlayers)
+	if nearest < minDist then
+		GargoyleDebug("reject: too close to player")
+		return false
+	end
+	if nearest > maxDist then
+		GargoyleDebug("reject: too far from players")
+		return false
+	end
+
+	return true
+end
+
+local function TryFindValidCandidate(basePos, alivePlayers, volumes)
+	local candidate = ProjectToGround(basePos)
+	if not candidate then
+		GargoyleDebug("reject: project-to-ground failed")
+		return nil
+	end
+
+	if IsPlayableCandidate(candidate, alivePlayers, volumes) then
+		return candidate
+	end
+
+	return nil
+end
+
+local function GetRandomGargoylePosFromPlayerFront(alivePlayers, volumes)
+	if not alivePlayers or #alivePlayers == 0 then return nil end
+
+	for _ = 1, 24 do
+		local pl = table.Random(alivePlayers)
+		if IsValid(pl) then
+			local basePos = pl:GetPos() + pl:GetForward() * math.Rand(140, 420)
+			local candidate = TryFindValidCandidate(basePos, alivePlayers, volumes)
+			if candidate then
+				return candidate
+			end
+		end
+	end
+
+	return nil
+end
+
+local function GetNearestValidTeamSpawnPos(alivePlayers, volumes)
+	local spawnPoints = BuildGargoyleTeamSpawnPointList()
+	if #spawnPoints == 0 then return nil end
+	if not alivePlayers or #alivePlayers == 0 then return nil end
+
+	table.sort(spawnPoints, function(a, b)
+		return DistanceToNearestAlivePlayer(a, alivePlayers) < DistanceToNearestAlivePlayer(b, alivePlayers)
+	end)
+
+	for _, point in ipairs(spawnPoints) do
+		local candidate = TryFindValidCandidate(point, alivePlayers, volumes)
+		if candidate then
+			return candidate
+		end
+	end
+
+	return nil
+end
+
+local function FindNearbyValidPos(origin, alivePlayers, volumes)
+	local direct = TryFindValidCandidate(origin, alivePlayers, volumes)
+	if direct then return direct end
+
+	local radii = {96, 144, 200, 280, 360}
+	for _, radius in ipairs(radii) do
+		for i = 1, 16 do
+			local ang = (i / 16) * math.pi * 2
+			local offset = Vector(math.cos(ang) * radius, math.sin(ang) * radius, 0)
+			local candidate = TryFindValidCandidate(origin + offset, alivePlayers, volumes)
+			if candidate then
+				return candidate
+			end
+		end
+	end
+
+	return nil
+end
+
+local function GetRandomGargoylePos()
+	local points = BuildGargoyleSpawnPointList()
+	if #points == 0 then return nil end
+
+	local alivePlayers = GetAlivePlayers()
+	local volumes = BuildRespawnVolumeCache()
+
+	for _ = 1, 80 do
+		local basePos
+		if #alivePlayers > 0 and math.random() < 0.65 then
+			local pl = table.Random(alivePlayers)
+			local ang = math.Rand(0, math.pi * 2)
+			local dist = math.Rand(220, 700)
+			basePos = pl:GetPos() + Vector(math.cos(ang) * dist, math.sin(ang) * dist, 0)
+		else
+			basePos = table.Random(points)
+		end
+
+		if basePos then
+			local candidate = TryFindValidCandidate(basePos, alivePlayers, volumes)
+			if candidate then
+				return candidate
+			end
+		end
+	end
+
+	local fallbackFront = GetRandomGargoylePosFromPlayerFront(alivePlayers, volumes)
+	if fallbackFront then
+		GargoyleDebug("fallback: player-front")
+		return fallbackFront
+	end
+
+	local fallbackSpawn = GetNearestValidTeamSpawnPos(alivePlayers, volumes)
+	if fallbackSpawn then
+		GargoyleDebug("fallback: teamspawn")
+		return fallbackSpawn
+	end
+
+	GargoyleDebug("no valid random gargoyle position found this cycle")
+	return nil
+end
+
+local function SpawnOrMoveMapGargoyle()
+	if not TFIsHalloweenMapCached then return end
+	if not tf_halloween_map_gargoyle_enable:GetBool() then return end
+
+	local pos = GetRandomGargoylePos()
+	if not pos then
+		QueueNextGargoyleAction()
+		return
+	end
+
+	local lifetime = math.max(tf_halloween_map_gargoyle_lifetime:GetFloat(), 8)
+
+	if IsValid(TFActiveMapGargoyle) then
+		TFActiveMapGargoyle:SetPos(pos)
+		TFActiveMapGargoyle:SetAngles(Angle(0, math.random(0, 359), 0))
+		TFActiveMapGargoyle.MapGargoyleExpires = CurTime() + lifetime
+		UpdateMapGargoyleTracking(TFActiveMapGargoyle)
+		GAMEMODE:AnnounceHalloweenGargoyle("moved", "A gargoyle is somewhere on the map!")
+		QueueNextGargoyleAction()
+		return
+	end
+
+	local garg = ents.Create("item_halloween_soul")
+	if not IsValid(garg) then
+		QueueNextGargoyleAction()
+		return
+	end
+
+	garg:SetPos(pos)
+	garg:SetAngles(Angle(0, math.random(0, 359), 0))
+	garg.RespawnTime = -1
+	garg.MapGargoyle = true
+	garg.MapGargoyleExpires = CurTime() + lifetime
+	garg:Spawn()
+
+	TFActiveMapGargoyle = garg
+	TFNextMapGargoyleTrackUpdate = 0
+	UpdateMapGargoyleTracking(garg)
+	GAMEMODE:AnnounceHalloweenGargoyle("spawn", "A gargoyle is somewhere on the map!")
+	QueueNextGargoyleAction()
+end
+
+hook.Add("EntityRemoved", "TF_HalloweenMapGargoyleRemoved", function(ent)
+	if ent ~= TFActiveMapGargoyle then return end
+	TFActiveMapGargoyle = nil
+	UpdateMapGargoyleTracking(nil)
+	if not ent.GargoyleCollected and TFIsHalloweenMapCached and tf_halloween_map_gargoyle_enable:GetBool() then
+		GAMEMODE:AnnounceHalloweenGargoyle("gone")
+	end
+	QueueNextGargoyleAction()
+end)
+
+local function ResetHalloweenMapGargoyleState()
+	if IsValid(TFActiveMapGargoyle) then
+		TFActiveMapGargoyle:Remove()
+	end
+	TFActiveMapGargoyle = nil
+	UpdateMapGargoyleTracking(nil)
+	QueueNextGargoyleAction()
+end
+
+hook.Add("InitPostEntity", "TF_HalloweenMapGargoyleInit", ResetHalloweenMapGargoyleState)
+hook.Add("PostCleanupMap", "TF_HalloweenMapGargoyleCleanup", ResetHalloweenMapGargoyleState)
+
+hook.Add("Think", "TF_HalloweenMapGargoyleThink", function()
+	if not TFIsHalloweenMapCached then return end
+	if not tf_halloween_map_gargoyle_enable:GetBool() then return end
+
+	if IsValid(TFActiveMapGargoyle) then
+		if TFActiveMapGargoyle.MapGargoyleExpires and CurTime() >= TFActiveMapGargoyle.MapGargoyleExpires then
+			TFActiveMapGargoyle:Remove()
+			return
+		end
+
+		if CurTime() >= TFNextMapGargoyleTrackUpdate then
+			TFNextMapGargoyleTrackUpdate = CurTime() + 0.5
+			UpdateMapGargoyleTracking(TFActiveMapGargoyle)
+		end
+		return
+	end
+
+	if TFNextMapGargoyleAction <= CurTime() then
+		SpawnOrMoveMapGargoyle()
+	end
+end)
+
+concommand.Add("tf_halloween_gargoyle_bring", function(ply)
+	if IsValid(ply) and not ply:IsAdmin() then return end
+	if not TFIsHalloweenMapCached then return end
+
+	local targetPos
+	if IsValid(ply) and ply:IsPlayer() then
+		targetPos = ply:GetPos() + ply:GetForward() * 140 + Vector(0, 0, 12)
+	elseif #player.GetHumans() > 0 then
+		local hp = player.GetHumans()[1]
+		targetPos = hp:GetPos() + hp:GetForward() * 140 + Vector(0, 0, 12)
+	end
+	if not targetPos then return end
+
+	local alivePlayers = GetAlivePlayers()
+	local volumes = BuildRespawnVolumeCache()
+	local safePos = FindNearbyValidPos(targetPos, alivePlayers, volumes)
+	if not safePos then
+		GargoyleDebug("admin bring: no valid nearby position")
+		return
+	end
+
+	if IsValid(TFActiveMapGargoyle) then
+		TFActiveMapGargoyle:SetPos(safePos)
+		UpdateMapGargoyleTracking(TFActiveMapGargoyle)
+		GAMEMODE:AnnounceHalloweenGargoyle("moved", "A gargoyle is somewhere on the map!")
+	else
+		local garg = ents.Create("item_halloween_soul")
+		if not IsValid(garg) then return end
+		garg:SetPos(safePos)
+		garg:SetAngles(Angle(0, math.random(0, 359), 0))
+		garg.RespawnTime = -1
+		garg.MapGargoyle = true
+		garg.MapGargoyleExpires = CurTime() + math.max(tf_halloween_map_gargoyle_lifetime:GetFloat(), 8)
+		garg:Spawn()
+		TFActiveMapGargoyle = garg
+		UpdateMapGargoyleTracking(garg)
+		GAMEMODE:AnnounceHalloweenGargoyle("spawn", "A gargoyle is somewhere on the map!")
+	end
+
+	QueueNextGargoyleAction()
+end)
+
+concommand.Add("tf_halloween_gargoyle_marker", function(ply, _, args)
+	if not IsValid(ply) or not ply:IsPlayer() or not ply:IsAdmin() then return end
+
+	local enable = nil
+	if args and args[1] ~= nil then
+		enable = tonumber(args[1]) == 1
+	end
+
+	local newValue = (enable ~= nil) and enable or (not ply:GetNWBool("TFShowGargoyleLocator", false))
+	ply:SetNWBool("TFShowGargoyleLocator", newValue)
+
+	if newValue then
+		ply:PrintMessage(HUD_PRINTTALK, "[TF2-Gamemode] Gargoyle marker enabled.")
+	else
+		ply:PrintMessage(HUD_PRINTTALK, "[TF2-Gamemode] Gargoyle marker disabled.")
+	end
+end)
 
 local function ApplyRagdollGravityBoost(ragdoll)
 	if not IsValid(ragdoll) then return end
@@ -691,22 +1301,7 @@ function GM:DoPlayerDeath(ply, attacker, dmginfo)
 	local date = os.date("%b",os.time())
 	if (ply ~= attacker) then
 		if (date == "Dec") then
-			local item = ents.Create("item_ammopack_gift")
-			if (IsValid(item)) then
-				local a, b = ply:WorldSpaceAABB()
-				item:SetPos((a+b) * 0.5)
-				
-				item.RespawnTime = -1
-				item:Spawn()
-				
-				if dmginfo then
-					local vel = dmginfo:GetDamageForce()
-					local ang = vel:Angle()
-					ang.p = math.min(ang.p, -20)
-					vel = math.min(0.01 * vel:Length(), 400) * ang:Forward()
-					item:DropWithGravity(vel)
-				end
-			end
+			SpawnDeathDrop(ply, dmginfo, "item_ammopack_gift")
 		--[[elseif (date == "Oct") then
 			local item = ents.Create("item_ammopack_gift")
 			local a, b = ply:WorldSpaceAABB()
@@ -722,6 +1317,10 @@ function GM:DoPlayerDeath(ply, attacker, dmginfo)
 				vel = math.min(0.01 * vel:Length(), 400) * ang:Forward()
 				item:DropWithGravity(vel)
 			end]]
+		end
+
+		if TFIsHalloweenMapCached then
+			SpawnDeathDrop(ply, dmginfo, "item_halloween_soul")
 		end
 	end
 	timer.Simple(0.02, function()

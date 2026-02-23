@@ -57,6 +57,39 @@ local FleshMaterials = {
 	[MAT_ALIENFLESH] = true,
 }
 
+local function MeleeDecalCallback(attacker, tr, dmginfo)
+	local ent = tr.Entity
+	if not IsValid(ent) then return end
+	if not (ent:IsTFPlayer() or FleshMaterials[tr.MatType]) then return end
+
+	if ent.DispatchBloodEffect then
+		ent:DispatchBloodEffect(tr.HitPos, tr.HitNormal:Angle())
+	end
+
+	return {effects = false}
+end
+
+local function FireMeleeDecalBullet(wep, src, dir)
+	wep:FireBullets{
+		Src = src,
+		Dir = dir,
+		Spread = Vector(0,0,0),
+		Num = 1,
+		Damage = 1,
+		Tracer = 0,
+		Callback = MeleeDecalCallback,
+	}
+end
+
+local function ResolveMeleeVMAnim(anim)
+	if istable(anim) then
+		local count = #anim
+		if count <= 0 then return nil end
+		return anim[math.random(1, count)]
+	end
+	return anim
+end
+
 function SWEP:GetPrimaryFireActivity()
 	if self.UsesLeftRightAnim then
 		return self.VM_HITLEFT
@@ -619,15 +652,8 @@ function SWEP:MeleeAttack(dummy)
 					-- Fire a bullet clientside, just for decals and blood effects
 					
 				if util.TraceLine({start=hitpos,endpos=hitpos+4*dir}).Entity == v then
-					if CLIENT then
-						self:FireBullets{
-							Src=hitpos,
-							Dir=dir,
-							Spread=Vector(0,0,0),
-							Num=1,
-							Damage=1,
-							Tracer=0,
-						}
+					if CLIENT and not v:IsFriendly(self.Owner) then
+						FireMeleeDecalBullet(self, hitpos, dir)
 					end
 				end
 				end
@@ -717,15 +743,8 @@ function SWEP:MeleeAttack(dummy)
 				-- Fire a bullet clientside, just for decals and blood effects
 				
 			if util.TraceLine({start=hitpos,endpos=hitpos+4*dir}).Entity == tr.Entity then
-				if CLIENT then
-					self:FireBullets{
-						Src=hitpos,
-						Dir=dir,
-						Spread=Vector(0,0,0),
-						Num=1,
-						Damage=1,
-						Tracer=0,
-					}
+				if CLIENT and not tr.Entity:IsFriendly(self.Owner) then
+					FireMeleeDecalBullet(self, hitpos, dir)
 				end
 			end
 			end
@@ -755,14 +774,7 @@ function SWEP:MeleeAttack(dummy)
 		if dir and !self.Owner:IsL4D() then
 			if CLIENT then
 				if (!tr.Entity:IsFriendly(self.Owner)) then
-					self:FireBullets{
-						Src=pos,
-						Dir=dir,
-						Spread=Vector(0,0,0),
-						Num=1,
-						Damage=1,
-						Tracer=0,
-					}
+					FireMeleeDecalBullet(self, pos, dir)
 				end
 			end
 		end
@@ -794,14 +806,7 @@ function SWEP:MeleeAttack(dummy)
 		end
 		if dir and !self.Owner:IsL4D() then
 			if CLIENT then
-				self:FireBullets{
-					Src=pos,
-					Dir=dir,
-					Spread=Vector(0,0,0),
-					Num=1,
-					Damage=1,
-					Tracer=0,
-				}
+				FireMeleeDecalBullet(self, pos, dir)
 			end
 		end
 		
@@ -839,10 +844,23 @@ function SWEP:PrimaryAttack()
 		
 		if IsValid(vm) then
 			if SERVER then
-				if (self:SelectWeightedSequence(self.VM_SWINGHARD) != -1) then
-					self:SendWeaponAnimEx(self.VM_SWINGHARD)
+				local swingAnim = ResolveMeleeVMAnim(self.VM_SWINGHARD)
+				local hitAnim = ResolveMeleeVMAnim(self.VM_HITCENTER) or ACT_VM_HITCENTER
+				if isnumber(swingAnim) then
+					if self:SelectWeightedSequence(swingAnim) != -1 then
+						self:SendWeaponAnimEx(swingAnim)
+					else
+						self:SendWeaponAnimEx(hitAnim)
+					end
+				elseif isstring(swingAnim) then
+					local seq = vm:LookupSequence(swingAnim)
+					if seq and seq >= 0 then
+						self:SendWeaponAnimEx(swingAnim)
+					else
+						self:SendWeaponAnimEx(hitAnim)
+					end
 				else
-					self:SendWeaponAnimEx(self.VM_HITCENTER)
+					self:SendWeaponAnimEx(hitAnim)
 				end
 			end
 		end
@@ -870,7 +888,7 @@ function SWEP:PrimaryAttack()
 		else
 			if IsValid(vm) then
 				if SERVER then
-					self:SendWeaponAnimEx(self.VM_HITCENTER)
+					self:SendWeaponAnimEx(ResolveMeleeVMAnim(self.VM_HITCENTER) or ACT_VM_HITCENTER)
 				end
 			end
 		end
@@ -920,7 +938,7 @@ function SWEP:SecondaryAttack()
 				umsg.Bool(true)
 			umsg.End()
 		end]]
-		self:SendWeaponAnimEx(self.VM_SWINGHARD)
+		self:SendWeaponAnimEx(ResolveMeleeVMAnim(self.VM_SWINGHARD) or ResolveMeleeVMAnim(self.VM_HITCENTER) or ACT_VM_HITCENTER)
 		if self.HasThirdpersonCritAnimation then
 			self.Owner:DoAnimationEvent(ACT_MP_ATTACK_STAND_SECONDARYFIRE, true)
 		elseif self.HasThirdpersonCritAnimation2 then

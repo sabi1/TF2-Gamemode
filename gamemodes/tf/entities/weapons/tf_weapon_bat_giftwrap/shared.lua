@@ -36,22 +36,85 @@ SWEP.HasThirdpersonCritAnimation = false
 SWEP.ProjectileShootOffset = Vector(0, 7, -6)
 SWEP.Force = 1500
 SWEP.AddPitch = 1
+if CLIENT then
+	SWEP.OffhandProjectileModel = "models/weapons/c_models/c_xms_festive_ornament.mdl"
+	SWEP.OffhandProjectileAttachment = "effect_hand_L"
+	SWEP.OffhandProjectileBone = "ValveBiped.Bip01_L_Hand"
+	SWEP.OffhandProjectileOffset = Vector(1.2, 1.7, -1.0)
+	SWEP.OffhandProjectileAngle = Angle(-10, 70, -100)
+end
 
-function SWEP:Think()
-	self.BaseClass.Think(self)
+local function SendWBSequence(self, sequenceNames, fallbackAct)
+	local vm = IsValid(self.Owner) and self.Owner:GetViewModel() or nil
+	if not IsValid(vm) then
+		if fallbackAct then
+			self:SendWeaponAnim(fallbackAct)
+		end
+		return 0
+	end
+
+	if isstring(sequenceNames) then
+		sequenceNames = {sequenceNames}
+	end
+
+	for _, sequenceName in ipairs(sequenceNames or {}) do
+		local seq = vm:LookupSequence(sequenceName)
+		if seq and seq >= 0 then
+			self:SendWeaponAnimEx(sequenceName)
+			return vm:SequenceDuration(seq) or 0
+		end
+	end
+
+	if fallbackAct then
+		self:SendWeaponAnim(fallbackAct)
+		return self:SequenceDuration(self:SelectWeightedSequence(fallbackAct)) or 0
+	end
+
+	return 0
+end
+
+local function QueueWBIdle(self, delay)
+	timer.Simple(math.max(0, delay or 0), function()
+		if not IsValid(self) or not IsValid(self.Owner) then return end
+		if self.Owner:GetActiveWeapon() ~= self then return end
+		SendWBSequence(self, "wb_idle", ACT_VM_IDLE_SPECIAL)
+	end)
+end
+
+function SWEP:ApplyWBAnimations()
 	self.VM_DRAW = ACT_VM_DRAW_SPECIAL
 	self.VM_IDLE = ACT_VM_IDLE_SPECIAL
-	self.VM_HITCENTER = ACT_VM_HITCENTER_SPECIAL
-	self.VM_SWINGHARD = ACT_VM_HITCENTER_SPECIAL
+	self.VM_HITCENTER = {"wb_swing_a", "wb_swing_b", "wb_swing_c"}
+	self.VM_SWINGHARD = {"wb_swing_a", "wb_swing_b", "wb_swing_c"}
 	self.VM_INSPECT_START = ACT_MELEE_VM_INSPECT_START
 	self.VM_INSPECT_IDLE = ACT_MELEE_VM_INSPECT_IDLE
 	self.VM_INSPECT_END = ACT_MELEE_VM_INSPECT_END
 end
 
+function SWEP:OffhandProjectileReady()
+	return CurTime() >= (self:GetNextSecondaryFire() or 0)
+end
+
+function SWEP:Think()
+	self.BaseClass.Think(self)
+	self:ApplyWBAnimations()
+end
+
+function SWEP:Deploy()
+	local r = self:CallBaseFunction("Deploy")
+	self:ApplyWBAnimations()
+	local dur = SendWBSequence(self, {"wb_draw", "wb_grab"}, ACT_VM_DRAW_SPECIAL)
+	if dur > 0 then
+		self.NextIdle = CurTime() + dur
+		QueueWBIdle(self, dur)
+	end
+	return r
+end
+
 
 function SWEP:SecondaryAttack()
 	self.Owner:DoAnimationEvent(ACT_MP_ATTACK_STAND_MELEE_SECONDARY)
-	self:SendWeaponAnim(ACT_VM_PRIMARYATTACK_SPECIAL) 
+	local fireDur = SendWBSequence(self, "wb_fire", ACT_VM_PRIMARYATTACK_SPECIAL)
 	self:SetNextSecondaryFire( CurTime() + self.Secondary.Delay )
 	if SERVER then
 		self.Owner:EmitSoundEx("BallBuster.HitBall")
@@ -82,6 +145,8 @@ function SWEP:SecondaryAttack()
 		grenade:GetPhysicsObject():ApplyForceCenter(vel)
 	end
 	
+	self.NextIdle = CurTime() + (fireDur > 0 and fireDur or self:SequenceDuration())
+	QueueWBIdle(self, fireDur)
 	self:StopTimers()
 	self:ShootEffects()
 end

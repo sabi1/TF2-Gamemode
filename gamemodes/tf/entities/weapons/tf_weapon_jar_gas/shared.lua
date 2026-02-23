@@ -229,6 +229,43 @@ end
 function SWEP:PredictCriticalHit()
 end
 
+-- Pyro's ITEM2 locomotion can fail on some models; fall back to SECONDARY2 movement activities.
+function SWEP:TranslateActivity(act)
+	local translated = self.ActivityTranslate and self.ActivityTranslate[act]
+	if translated and translated ~= ACT_INVALID then
+		return translated
+	end
+
+	if IsValid(self.Owner) and self.Owner:GetPlayerClass() == "pyro" then
+		local fallback
+		if act == ACT_MP_STAND_IDLE then
+			fallback = ACT_MP_STAND_SECONDARY2
+		elseif act == ACT_MP_RUN or act == ACT_MP_WALK then
+			fallback = ACT_MP_RUN_SECONDARY2
+		elseif act == ACT_MP_CROUCH_IDLE then
+			fallback = ACT_MP_CROUCH_SECONDARY2
+		elseif act == ACT_MP_CROUCHWALK then
+			fallback = ACT_MP_CROUCHWALK_SECONDARY2
+		elseif act == ACT_MP_SWIM then
+			fallback = ACT_MP_SWIM_SECONDARY2
+		elseif act == ACT_MP_AIRWALK then
+			fallback = ACT_MP_AIRWALK_SECONDARY2
+		elseif act == ACT_MP_JUMP or act == ACT_MP_JUMP_START then
+			fallback = ACT_MP_JUMP_START_SECONDARY2
+		elseif act == ACT_MP_JUMP_FLOAT then
+			fallback = ACT_MP_JUMP_FLOAT_SECONDARY2
+		elseif act == ACT_MP_JUMP_LAND or act == ACT_LAND then
+			fallback = ACT_MP_JUMP_LAND_SECONDARY2
+		end
+
+		if fallback then
+			return fallback
+		end
+	end
+
+	return self.BaseClass.TranslateActivity(self, act)
+end
+
 function SWEP:MeleeAttack()
 	local pos = self.Owner:GetShootPos()
 	

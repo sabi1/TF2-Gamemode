@@ -1751,18 +1751,25 @@ elseif (CLIENT) then
 	local voice_mat2 = Material('effects/speech_voice_blue')
 	local text_mat = Material('effects/speech_typing')
 	local partner_mat = Material('effects/speech_taunt')
+	local medic_bubble_bg_mat = Material("sprites/light_glow02_add_noz")
+	local medic_bubble_duration = 3
 
-	hook.Add('PostPlayerDraw', 'TalkIcon', function(ply)
-		if ply == LocalPlayer() and GetViewEntity() == LocalPlayer() and !LocalPlayer():ShouldDrawLocalPlayer() then return end
-		if not ply:Alive() then return end
-		if not ply:IsSpeaking() then return end
-
+	local function GetTalkBubblePos(ply)
 		local pos = ply:GetPos() + Vector(0, 0, ply:GetModelRadius() + 10)
 		if (ply:LookupBone("bip_head")) then
 			pos = ply:GetBonePosition(ply:LookupBone("bip_head")) + Vector(0, 0, 16)
 		elseif (ply:LookupBone("ValveBiped.Bip01_Head1")) then
 			pos = ply:GetBonePosition(ply:LookupBone("ValveBiped.Bip01_Head1")) + Vector(0, 0, 16)
 		end
+		return pos
+	end
+
+	hook.Add('PostPlayerDraw', 'TalkIcon', function(ply)
+		if ply == LocalPlayer() and GetViewEntity() == LocalPlayer() and !LocalPlayer():ShouldDrawLocalPlayer() then return end
+		if not ply:Alive() then return end
+		if not ply:IsSpeaking() then return end
+
+		local pos = GetTalkBubblePos(ply)
 
 		if ply:Team() == TEAM_BLU then
 			render.SetMaterial(ply:IsSpeaking() and voice_mat2 or voice_mat2)
@@ -1785,12 +1792,7 @@ elseif (CLIENT) then
 		if not ply:Alive() then return end
 		if not ply:IsTyping() then return end
 
-		local pos = ply:GetPos() + Vector(0, 0, ply:GetModelRadius() + 10)
-		if (ply:LookupBone("bip_head")) then
-			pos = ply:GetBonePosition(ply:LookupBone("bip_head")) + Vector(0, 0, 16)
-		elseif (ply:LookupBone("ValveBiped.Bip01_Head1")) then
-			pos = ply:GetBonePosition(ply:LookupBone("ValveBiped.Bip01_Head1")) + Vector(0, 0, 16)
-		end
+		local pos = GetTalkBubblePos(ply)
 
 		render.SetMaterial(Material("effects/speech_typing"))
 
@@ -1810,12 +1812,7 @@ elseif (CLIENT) then
 		if not ply:Alive() then return end
 		if not ply:GetNWBool("Congaing") then return end
 
-		local pos = ply:GetPos() + Vector(0, 0, ply:GetModelRadius() + 10)
-		if (ply:LookupBone("bip_head")) then
-			pos = ply:GetBonePosition(ply:LookupBone("bip_head")) + Vector(0, 0, 16)
-		elseif (ply:LookupBone("ValveBiped.Bip01_Head1")) then
-			pos = ply:GetBonePosition(ply:LookupBone("ValveBiped.Bip01_Head1")) + Vector(0, 0, 16)
-		end
+		local pos = GetTalkBubblePos(ply)
 
 		render.SetMaterial(partner_mat)
 
@@ -1853,6 +1850,20 @@ elseif (CLIENT) then
 		end
 
 		render.DrawSprite(pos, 16, 16, Color(color_var, color_var, color_var, 255))
+	end)
+	hook.Add("PostPlayerDraw", "TalkIconMedicHealthBackground", function(ply)
+		if ply == LocalPlayer() and GetViewEntity() == LocalPlayer() and not LocalPlayer():ShouldDrawLocalPlayer() then return end
+		if not ply:Alive() then return end
+
+		local callTime = ply:GetNW2Float("tf_medic_call_time", 0)
+		if callTime <= 0 or callTime + medic_bubble_duration < CurTime() then return end
+
+		local maxHealth = math.max(ply:GetMaxHealth(), 1)
+		local healthRatio = math.Clamp(ply:Health() / maxHealth, 0, 1)
+		local bubbleColor = Color(255, 255 * healthRatio, 255 * healthRatio, 170)
+
+		render.SetMaterial(medic_bubble_bg_mat)
+		render.DrawSprite(GetTalkBubblePos(ply), 20, 20, bubbleColor)
 	end)
 
 
@@ -1954,6 +1965,7 @@ concommand.Add("__svspeak", function(pl,_,args)
 			pl:DoAnimationEvent(VoiceMenuGesture[args[1]], true)
 		end
 		if (args[1] == "TLK_PLAYER_MEDIC") then
+			pl:SetNW2Float("tf_medic_call_time", CurTime())
 			ParticleEffectAttach("speech_mediccall", PATTACH_POINT_FOLLOW,pl,pl:LookupAttachment("head"))
 		end
 		umsg.Start("TFPlayerVoice")

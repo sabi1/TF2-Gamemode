@@ -6,7 +6,7 @@ include("shared.lua")
 include("sv_gamelogic.lua")
 include("sv_hl2replace.lua")
 include("sv_damage.lua")
-include("sv_death.lua")
+include("sv_gargoyle.lua")
 include("shd_gravitygun.lua")
 include("sv_chat.lua")  
 include("sv_loadout.lua")   
@@ -1942,6 +1942,24 @@ function GM:PlayerSpawn(ply)
 		ply.ItemLoadout = table.Copy(c.DefaultLoadout)
 		ply.ItemProperties = {}
 	end
+
+	-- Hard spectator path: never run normal spawn/class/hud setup for spectator team.
+	if ply:Team() == TEAM_SPECTATOR then
+		ply:StripWeapons()
+		ply:StripAmmo()
+		ply.IsSpectating = true
+		ply:SetNWBool("SpawnGlows", false)
+		ply:UnSpectate()
+		ply:Spectate(OBS_MODE_ROAMING)
+		self:PlayerSpawnAsSpectator(ply)
+		timer.Simple(0, function()
+			if IsValid(ply) and ply:Team() == TEAM_SPECTATOR then
+				ply:ConCommand("tf_spectate")
+			end
+		end)
+		return
+	end
+
 	ply:SetNWBool("SpawnGlows",true)
 	timer.Simple(10, function()
 		if not IsValid(ply) then return end
@@ -2754,6 +2772,8 @@ end
 util.AddNetworkString("UpdateLoadout")
 util.AddNetworkString("TF_PlayerSpawn")
 util.AddNetworkString("TF_OpenInitialJoinFlow")
+util.AddNetworkString("TF_HalloweenGargoyleNotify")
+util.AddNetworkString("TF_HalloweenSoulBurst")
 
 function GM:PlayerDroppedWeapon(ply)
 	if IsValid(ply) and ply:IsPlayer() and !ply:IsHL2() then

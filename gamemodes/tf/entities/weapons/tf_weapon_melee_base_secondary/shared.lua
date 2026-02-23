@@ -59,6 +59,30 @@ local FleshMaterials = {
 	[MAT_ALIENFLESH] = true,
 }
 
+local function MeleeDecalCallback(attacker, tr, dmginfo)
+	local ent = tr.Entity
+	if not IsValid(ent) then return end
+	if not (ent:IsTFPlayer() or FleshMaterials[tr.MatType]) then return end
+
+	if ent.DispatchBloodEffect then
+		ent:DispatchBloodEffect(tr.HitPos, tr.HitNormal:Angle())
+	end
+
+	return {effects = false}
+end
+
+local function FireMeleeDecalBullet(wep, src, dir)
+	wep:FireBullets{
+		Src = src,
+		Dir = dir,
+		Spread = Vector(0,0,0),
+		Num = 1,
+		Damage = 1,
+		Tracer = 0,
+		Callback = MeleeDecalCallback,
+	}
+end
+
 function SWEP:GetPrimaryFireActivity()
 	if self.UsesLeftRightAnim then
 		return self.VM_HITLEFT
@@ -262,15 +286,8 @@ function SWEP:MeleeAttack(dummy)
 				end
 			elseif CLIENT then
 				-- Fire a bullet clientside, just for decals and blood effects
-				if util.TraceLine({start=hitpos,endpos=hitpos+4*dir}).Entity == tr.Entity then
-					self:FireBullets{
-						Src=hitpos,
-						Dir=dir,
-						Spread=Vector(0,0,0),
-						Num=1,
-						Damage=1,
-						Tracer=0,
-					}
+				if util.TraceLine({start=hitpos,endpos=hitpos+4*dir}).Entity == tr.Entity and not tr.Entity:IsFriendly(self.Owner) then
+					FireMeleeDecalBullet(self, hitpos, dir)
 				end
 			end
 		end
@@ -304,14 +321,7 @@ function SWEP:MeleeAttack(dummy)
 		
 		if CLIENT then
 			if dir then
-				self:FireBullets{
-					Src=pos,
-					Dir=dir,
-					Spread=Vector(0,0,0),
-					Num=1,
-					Damage=1,
-					Tracer=0,
-				}
+				FireMeleeDecalBullet(self, pos, dir)
 			end
 		end
 		

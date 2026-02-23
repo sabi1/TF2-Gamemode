@@ -153,11 +153,15 @@ end)
 	
 hook.Add("PlayerDeath", "tf_Spectate_", function(ply)
 	if ply.IsSpectating then
+		-- Keep true spectators in spectator state; do not force team changes on death.
+		if ply:Team() == TEAM_SPECTATOR then
+			ply:StripWeapons()
+			ply:StripAmmo()
+			ply:Spectate(OBS_MODE_ROAMING)
+			return
+		end
 		ply:UnSpectate()
 		ply.IsSpectating = false
-		if ply:Team() == TEAM_SPECTATOR then 
-			ply:SetTeam(TEAM_RED)
-		end
 	end
 end)
 

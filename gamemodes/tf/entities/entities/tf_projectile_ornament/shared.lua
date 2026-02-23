@@ -123,7 +123,9 @@ function ENT:Initialize()
 		self.trail = util.SpriteTrail( self, 0, Color( 255, 255, 255 ), false, 9, 0, 0.4, 1 / ( 96 * 1 ), "effects/baseballtrail_blu.vmt" )
 	end
 	timer.Simple(3, function()
-		self.trail:Remove()
+		if IsValid(self) and IsValid(self.trail) then
+			self.trail:Remove()
+		end
 	end)
 
 	if self.critical then
@@ -152,6 +154,8 @@ function ENT:Think()
 end
 
 function ENT:DoExplosion()
+	if self.Dead then return end
+	self.Dead = true
 	self.PhysicsCollide = nil
 	
 	
@@ -182,9 +186,12 @@ function ENT:DoExplosion()
 	self.particle_trail:Spawn()
 	self.particle_trail:Activate()
 
-	self:SetNoDraw(true)
-	self:SetNotSolid(true)
-	self:Fire("kill", "", 0.01)
+	timer.Simple(0, function()
+		if not IsValid(self) then return end
+		self:SetNoDraw(true)
+		self:SetNotSolid(true)
+		self:Fire("kill", "", 0.01)
+	end)
 	
 end
 
@@ -200,9 +207,12 @@ function ENT:Break()
 	util.Effect("Sparks", effectdata)
 	
 	self.Dead = true
-	self:SetNotSolid(true)
-	self:SetNoDraw(true)
-	self:Fire("kill", "", 0.01)
+	timer.Simple(0, function()
+		if not IsValid(self) then return end
+		self:SetNotSolid(true)
+		self:SetNoDraw(true)
+		self:Fire("kill", "", 0.01)
+	end)
 end
 function ENT:Touch(ent)
 	if ent.Base == "npc_tf2base" or ent.Base == "npc_tf2base_mvm" or ent.Base == "npc_demo_red" or ent.Base == "npc_demo_mvm" or ent.Base == "npc_scout_mvm" or ent.Base == "npc_hwg_red" or ent.Base == "npc_heavy_mvm" or ent.Base == "npc_heavy_mvm_shotgun" or ent.Base == "npc_soldier_red" or ent.Base == "npc_sniper_red" or ent.Base == "npc_spy_red" or ent.Base == "npc_scout_red" or ent.Base == "npc_pyro_red" or ent.Base == "npc_medic_red" or ent.Base == "npc_engineer_red" and !ent:IsFriendly(self:GetOwner()) and ent:Health()>0 and self.critical and !ent.IsStunned then

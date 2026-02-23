@@ -1111,6 +1111,83 @@ local function getWearableTargetSlot(className, itemId)
 	return 4
 end
 
+local function collectEquipRegions(item)
+	if not istable(item) then return {} end
+
+	local regions = {}
+	local function addRegion(regionValue)
+		if not isstring(regionValue) then return end
+		local trimmed = string.Trim(string.lower(regionValue))
+		if trimmed == "" then return end
+		for token in string.gmatch(trimmed, "[^,%s;|]+") do
+			if token ~= "" then
+				regions[token] = true
+			end
+		end
+	end
+	local function walkRegions(value)
+		if isstring(value) then
+			addRegion(value)
+		elseif istable(value) then
+			for k, v in pairs(value) do
+				if isstring(k) then
+					addRegion(k)
+				end
+				walkRegions(v)
+			end
+		end
+	end
+
+	walkRegions(item.equip_region)
+	walkRegions(item.equip_regions)
+
+	return regions
+end
+
+local function buildItemsById()
+	local byId = {}
+	for _, item in pairs(tf_items.Items or {}) do
+		if istable(item) then
+			local id = tonumber(item.id)
+			if id and not byId[id] then
+				byId[id] = item
+			end
+		end
+	end
+	return byId
+end
+
+local function hasCosmeticEquipRegionConflict(item, equippedLoadout, itemsById, forcedSlot)
+	if not istable(item) or not istable(equippedLoadout) then return false end
+	if not (item.item_class == "tf_wearable_item" and (item.item_slot == "head" or item.item_slot == "misc")) then
+		return false
+	end
+
+	local candidateRegions = collectEquipRegions(item)
+	if next(candidateRegions) == nil then
+		return false
+	end
+
+	for slot = 4, 6 do
+		if slot ~= forcedSlot then
+			local equippedId = tonumber(equippedLoadout[slot])
+			if equippedId and equippedId > 0 then
+				local equippedItem = itemsById[equippedId]
+				if istable(equippedItem) then
+					local equippedRegions = collectEquipRegions(equippedItem)
+					for regionName in pairs(candidateRegions) do
+						if equippedRegions[regionName] then
+							return true
+						end
+					end
+				end
+			end
+		end
+	end
+
+	return false
+end
+
 CreateClientConVar("tf_backpack_page_size", "50", true, false, "Backpack items per page (TF2-Gamemode)")
 CreateClientConVar("tf_backpack_dedupe", "1", true, false, "Collapse duplicate backpack entries by defindex (TF2-Gamemode)")
 
@@ -1133,6 +1210,7 @@ function TF_OpenStandaloneBackpack(initialClassName, initialClassIndex, forcedLo
 	local dedupeEnabled = (not dedupeConVar) or dedupeConVar:GetBool()
 	local columns = 10
 	local rows = 5
+	local itemsById = buildItemsById()
 
 	local panel = vgui.Create("EditablePanel")
 	panel:SetSize(ScrW(), ScrH())
@@ -1141,6 +1219,7 @@ function TF_OpenStandaloneBackpack(initialClassName, initialClassIndex, forcedLo
 	panel:SetKeyboardInputEnabled(true)
 	panel:SetMouseInputEnabled(true)
 	panel.ForcedLoadoutSlot = tonumber(forcedLoadoutSlot)
+	panel.LoadoutMode = panel.ForcedLoadoutSlot ~= nil
 	TFStandaloneBackpackPanel = panel
 
 	function panel:OnKeyCodePressed(key)
@@ -1187,6 +1266,28 @@ function TF_OpenStandaloneBackpack(initialClassName, initialClassIndex, forcedLo
 	searchEntry:SetFont("HudFontSmall")
 	searchEntry:SetUpdateOnType(true)
 
+	local stockCheckbox = vgui.Create("DCheckBoxLabel", panel)
+	stockCheckbox:SetPos(520, 50)
+	stockCheckbox:SetText("SHOW STOCK ITEMS")
+	stockCheckbox:SetFont("HudFontSmallBold")
+	stockCheckbox:SetTextColor(Color(224, 214, 186, 255))
+	stockCheckbox:SetValue(0)
+	stockCheckbox:SizeToContents()
+
+	local qualityDropdown = vgui.Create("DComboBox", panel)
+	qualityDropdown:SetPos(520, 74)
+	qualityDropdown:SetSize(320, 24)
+	qualityDropdown:SetFont("HudFontSmall")
+	qualityDropdown:SetValue("SHOW QUALITY COLOR BORDERS")
+	qualityDropdown:AddChoice("SHOW QUALITY COLOR BORDERS")
+
+	local sortDropdown = vgui.Create("DComboBox", panel)
+	sortDropdown:SetPos(panel:GetWide() - 326, 82)
+	sortDropdown:SetSize(296, 24)
+	sortDropdown:SetFont("HudFontSmall")
+	sortDropdown:SetValue("SORT BACKPACK")
+	sortDropdown:AddChoice("SORT BACKPACK")
+
 	local infoLabel = vgui.Create("DLabel", panel)
 	infoLabel:SetPos(30, 58)
 	infoLabel:SetSize(panel:GetWide() - 60, 22)
@@ -1194,8 +1295,8 @@ function TF_OpenStandaloneBackpack(initialClassName, initialClassIndex, forcedLo
 	infoLabel:SetFont("HudFontSmall")
 
 	local gridPanel = vgui.Create("EditablePanel", panel)
-	gridPanel:SetPos(30, 86)
-	gridPanel:SetSize(panel:GetWide() - 60, panel:GetTall() - 172)
+	gridPanel:SetPos(30, 110)
+	gridPanel:SetSize(panel:GetWide() - 60, panel:GetTall() - 196)
 	function gridPanel:Paint(w, h)
 		surface.SetDrawColor(29, 25, 22, 255)
 		surface.DrawRect(0, 0, w, h)
@@ -1249,6 +1350,18 @@ function TF_OpenStandaloneBackpack(initialClassName, initialClassIndex, forcedLo
 
 	local function getItemDisplayName(item)
 		return tf_lang.GetRaw(item.item_name) or item.name or "UNKNOWN ITEM"
+	end
+
+	local function refreshLoadoutViewNow()
+		local mappedIndex = (istable(loadoutClassToIndex) and loadoutClassToIndex[activeClass]) or nil
+		local classIndex = initialClassIndex or mappedIndex or GetConVar("tf_hud_loadout_class"):GetInt() or 1
+		timer.Simple(0, function()
+			if IsValid(CharInfoLoadoutSubPanel) and CharInfoLoadoutSubPanel.SelectClassLoadout2 then
+				CharInfoLoadoutSubPanel:SelectClassLoadout2(classIndex)
+			elseif IsValid(CharInfoLoadoutSubPanel) and CharInfoLoadoutSubPanel.PerformLayout then
+				CharInfoLoadoutSubPanel:PerformLayout()
+			end
+		end)
 	end
 
 	local function getInspectModelPath(item, className)
@@ -1473,7 +1586,8 @@ function TF_OpenStandaloneBackpack(initialClassName, initialClassIndex, forcedLo
 				else
 					slotCompatible = mapItemToLoadoutSlot(item, activeClass) == forcedSlot
 				end
-				if slotCompatible then
+				local classCompatible = classCanUseItem(item, activeClass)
+				if slotCompatible and classCompatible then
 					slotFiltered[#slotFiltered + 1] = item
 				end
 			end
@@ -1484,7 +1598,13 @@ function TF_OpenStandaloneBackpack(initialClassName, initialClassIndex, forcedLo
 		local totalPages = math.max(1, math.ceil(visibleCount / pageSize))
 		currentPage = math.Clamp(currentPage, 1, totalPages)
 
-		infoLabel:SetText("Owned: " .. tostring(visibleCount) .. "  |  Class: " .. string.upper(activeClass) .. slotText .. "  |  Page " .. tostring(currentPage) .. "/" .. tostring(totalPages) .. "  |  Incompatible items are disabled")
+		if panel.LoadoutMode and forcedSlot and forcedSlot >= 4 then
+			infoLabel:SetText("Owned: " .. tostring(visibleCount) .. "  |  Class: " .. string.upper(activeClass) .. slotText .. "  |  Page " .. tostring(currentPage) .. "/" .. tostring(totalPages) .. "  |  Region conflicts are disabled")
+		elseif panel.LoadoutMode then
+			infoLabel:SetText("Owned: " .. tostring(visibleCount) .. "  |  Class: " .. string.upper(activeClass) .. slotText .. "  |  Page " .. tostring(currentPage) .. "/" .. tostring(totalPages) .. "  |  Showing equippable items only")
+		else
+			infoLabel:SetText("Owned: " .. tostring(visibleCount) .. "  |  Class: " .. string.upper(activeClass) .. slotText .. "  |  Page " .. tostring(currentPage) .. "/" .. tostring(totalPages) .. "  |  Incompatible items are disabled")
+		end
 
 		if TFDebugBridge and TFDebugBridge.SetBackpackState then
 			local snapshot = {
@@ -1533,7 +1653,7 @@ function TF_OpenStandaloneBackpack(initialClassName, initialClassIndex, forcedLo
 			split = string.Split(convar:GetString(), ",")
 		end
 
-		local spaceX, spaceY = 6, 6
+		local spaceX, spaceY = 8, 8
 		local gridW, gridH = gridPanel:GetWide() - 20, gridPanel:GetTall() - 20
 		local tileW = math.max(96, math.floor((gridW - ((columns - 1) * spaceX)) / columns))
 		local tileH = math.max(74, math.floor((gridH - ((rows - 1) * spaceY)) / rows))
@@ -1547,11 +1667,11 @@ function TF_OpenStandaloneBackpack(initialClassName, initialClassIndex, forcedLo
 			model.activeImage = loadout_rect_mouseover
 			model.inactiveImage = loadout_rect
 			model.model_xpos = 0
-			model.model_ypos = 4
-			model.model_tall = math.max(30, math.floor(tileH * 0.5))
+			model.model_ypos = 2
+			model.model_tall = math.max(22, math.floor(tileH * 0.34))
 			model.text_xpos = -5
 			model.text_wide = tileW + 10
-			model.text_ypos = tileH - 15
+			model.text_ypos = tileH - 13
 			model.itemImage_low = nil
 			model.text = getItemDisplayName(item)
 			model.centerytext = true
@@ -1576,9 +1696,17 @@ function TF_OpenStandaloneBackpack(initialClassName, initialClassIndex, forcedLo
 			local compatible = classCanUseItem(item, activeClass)
 			local slotCompatible = forcedSlot == nil or forcedSlot == false
 			if forcedSlot then
-				slotCompatible = true
+				if forcedSlot >= 4 then
+					slotCompatible = item.item_class == "tf_wearable_item" and (item.item_slot == "head" or item.item_slot == "misc")
+				else
+					slotCompatible = mapItemToLoadoutSlot(item, activeClass) == forcedSlot
+				end
 			end
-			compatible = compatible and slotCompatible
+			local equipRegionCompatible = true
+			if forcedSlot and forcedSlot >= 4 then
+				equipRegionCompatible = not hasCosmeticEquipRegionConflict(item, split, itemsById, forcedSlot)
+			end
+			compatible = compatible and slotCompatible and equipRegionCompatible
 			model.disabled = not compatible
 			if not compatible then
 				model:SetAlpha(95)
@@ -1618,6 +1746,10 @@ function TF_OpenStandaloneBackpack(initialClassName, initialClassIndex, forcedLo
 
 				updateLoadout(slot, item.id, true, activeClass)
 				surface.PlaySound(item.mouse_pressed_sound or "ui/item_hat_pickup.wav")
+				refreshLoadoutViewNow()
+				if panel.LoadoutMode and IsValid(panel) then
+					panel:Remove()
+				end
 				if TFDebugBridge and TFDebugBridge.Emit then
 					TFDebugBridge.Emit("backpack_select_item", {
 						class = activeClass,

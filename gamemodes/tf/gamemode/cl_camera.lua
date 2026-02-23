@@ -186,12 +186,25 @@ hook.Add("CalcView", "TFCalcView", function(pl, pos, ang, fov)
 	end
 	
 	if pl.CameraTest and pl:Alive() then
+		local function safeLookupBone(ent, name)
+			if not IsValid(ent) or not isstring(name) then return nil end
+			local bone = ent:LookupBone(name)
+			if bone == nil or bone < 0 then return nil end
+			return bone
+		end
+		local function safeBonePos(ent, bone, fallback)
+			if not IsValid(ent) or bone == nil then return fallback end
+			local bpos = ent:GetBonePosition(bone)
+			if not bpos then return fallback end
+			return bpos
+		end
 		if pl:IsHL2() then
-			pos = pl:GetBonePosition(pl:LookupBone("ValveBiped.Bip01_Head1"))+(ang:Up()*10)+(ang:Forward()*5)
+			local headBone = safeLookupBone(pl, "ValveBiped.Bip01_Head1")
+			pos = safeBonePos(pl, headBone, pl:EyePos()) + (ang:Up() * 10) + (ang:Forward() * 5)
 			--pl:ManipulateBoneScale(pl:LookupBone("ValveBiped.Bip01_Head1"), Vector(1,1,1))
 		elseif (pl:IsL4D()) then
 			--pl:ManipulateBoneScale(0, Vector(1,1,1))
-			pos = pl:GetBonePosition(0)+(ang:Up()*10)+(ang:Forward()*5) - pl:EyeAngles():Forward()
+			pos = safeBonePos(pl, 0, pl:EyePos()) + (ang:Up() * 10) + (ang:Forward() * 5) - pl:EyeAngles():Forward()
 		else
 			--pl:ManipulateBoneScale(pl:LookupBone("bip_head"), Vector(1,1,1))
 			if (pl:LookupBone( "prp_helmet" ) != nil) then				
@@ -199,7 +212,8 @@ hook.Add("CalcView", "TFCalcView", function(pl, pos, ang, fov)
 			elseif (pl:LookupBone( "prp_hat" ) != nil) then
 				--pl:ManipulateBoneScale(pl:LookupBone("prp_hat"), Vector(1,1,1))
 			end
-			pos = pl:GetBonePosition(pl:LookupBone("bip_head"))+(ang:Up()*10)	+(ang:Forward()*5)
+			local headBone = safeLookupBone(pl, "bip_head")
+			pos = safeBonePos(pl, headBone, pl:EyePos()) + (ang:Up() * 10) + (ang:Forward() * 5)
 		end
 	end
 	
@@ -296,36 +310,62 @@ hook.Add("CalcView", "TFCalcView", function(pl, pos, ang, fov)
 		ang = pl.CameraAngles
 	end
 
+	local function safeLookupBone(ent, name)
+		if not IsValid(ent) or not isstring(name) then return nil end
+		local bone = ent:LookupBone(name)
+		if bone == nil or bone < 0 then return nil end
+		return bone
+	end
+
+	local function safeManipulateBoneScale(ent, bone, scale)
+		if not IsValid(ent) then return end
+		if bone == nil then return end
+		ent:ManipulateBoneScale(bone, scale)
+	end
+
+	local function safeBonePos(ent, bone, fallback)
+		if not IsValid(ent) or bone == nil then return fallback end
+		local bpos = ent:GetBonePosition(bone)
+		if not bpos then return fallback end
+		return bpos
+	end
+
 	if pl.FirstReality and pl:Alive() then
 		if pl:IsHL2() then
-			pos = pl:GetBonePosition(pl:LookupBone("ValveBiped.Bip01_Head1"))+(ang:Up()*10)+(ang:Forward()*5)
-			pl:ManipulateBoneScale(pl:LookupBone("ValveBiped.Bip01_Head1"), Vector(0,0,0))
+			local headBone = safeLookupBone(pl, "ValveBiped.Bip01_Head1")
+			pos = safeBonePos(pl, headBone, pl:EyePos()) + (ang:Up() * 10) + (ang:Forward() * 5)
+			safeManipulateBoneScale(pl, headBone, Vector(0,0,0))
 		elseif (pl:IsL4D()) then
-			pl:ManipulateBoneScale(0, Vector(0,0,0))
-			pos = pl:GetBonePosition(0)+(ang:Up()*10)+(ang:Forward()*5) - pl:EyeAngles():Forward()
+			safeManipulateBoneScale(pl, 0, Vector(0,0,0))
+			pos = safeBonePos(pl, 0, pl:EyePos()) + (ang:Up() * 10) + (ang:Forward() * 5) - pl:EyeAngles():Forward()
 		else
-			pl:ManipulateBoneScale(pl:LookupBone("bip_head"), Vector(0,0,0))
-			if (pl:LookupBone( "prp_helmet" ) != nil) then				
-				pl:ManipulateBoneScale(pl:LookupBone("prp_helmet"), Vector(0,0,0))
-			elseif (pl:LookupBone( "prp_hat" ) != nil) then
-				pl:ManipulateBoneScale(pl:LookupBone("prp_hat"), Vector(0,0,0))
+			local headBone = safeLookupBone(pl, "bip_head")
+			local helmetBone = safeLookupBone(pl, "prp_helmet")
+			local hatBone = safeLookupBone(pl, "prp_hat")
+			safeManipulateBoneScale(pl, headBone, Vector(0,0,0))
+			if helmetBone ~= nil then
+				safeManipulateBoneScale(pl, helmetBone, Vector(0,0,0))
+			elseif hatBone ~= nil then
+				safeManipulateBoneScale(pl, hatBone, Vector(0,0,0))
 			end
-			pos = pl:GetBonePosition(pl:LookupBone("bip_head"))+(ang:Up()*10)	+(ang:Forward()*5)
+			pos = safeBonePos(pl, headBone, pl:EyePos()) + (ang:Up() * 10) + (ang:Forward() * 5)
 		end
 	else
 	
 				if pl:IsHL2() then
-					pl:ManipulateBoneScale(pl:LookupBone("ValveBiped.Bip01_Head1"), Vector(1,1,1)) -- we can't let them see a shrunk head when transferring back!
+					safeManipulateBoneScale(pl, safeLookupBone(pl, "ValveBiped.Bip01_Head1"), Vector(1,1,1)) -- we can't let them see a shrunk head when transferring back!
 				elseif pl:IsL4D() then
-					pl:ManipulateBoneScale(0, Vector(1,1,1)) -- we can't let them see a shrunk head when transferring back!
+					safeManipulateBoneScale(pl, 0, Vector(1,1,1)) -- we can't let them see a shrunk head when transferring back!
 				else
-					pl:ManipulateBoneScale(pl:LookupBone("bip_head"), Vector(1,1,1))
+					safeManipulateBoneScale(pl, safeLookupBone(pl, "bip_head"), Vector(1,1,1))
 				end
 					
-				if (pl:LookupBone( "prp_helmet" ) != nil) then				
-					pl:ManipulateBoneScale(pl:LookupBone("prp_helmet"), Vector(1,1,1))
-				elseif (pl:LookupBone( "prp_hat" ) != nil) then
-					pl:ManipulateBoneScale(pl:LookupBone("prp_hat"), Vector(1,1,1))
+				local helmetBone = safeLookupBone(pl, "prp_helmet")
+				local hatBone = safeLookupBone(pl, "prp_hat")
+				if helmetBone ~= nil then
+					safeManipulateBoneScale(pl, helmetBone, Vector(1,1,1))
+				elseif hatBone ~= nil then
+					safeManipulateBoneScale(pl, hatBone, Vector(1,1,1))
 				end
 				
 	end
@@ -403,6 +443,45 @@ end
 function GM:ShouldDrawLocalPlayer() 
 	if ( LocalPlayer():IsPlayingTaunt() ) then return true end
 	return LocalPlayer().IsThirdperson and !LocalPlayer().CameraTest
+end
+
+function GM:ShouldDrawViewModel(vm, pl, weapon)
+	local lp = LocalPlayer()
+	if not IsValid(lp) then
+		return false
+	end
+
+	if not IsValid(pl) then
+		pl = lp
+	end
+
+	if pl == lp then
+		-- Only draw the first-person viewmodel in true first-person gameplay.
+		if lp:ShouldDrawLocalPlayer() then
+			return false
+		end
+		if tf_thirdperson:GetBool() or lp.IsThirdperson or lp.CameraTest then
+			return false
+		end
+		if not lp:Alive() then
+			return false
+		end
+		if lp:GetObserverMode() ~= OBS_MODE_NONE then
+			return false
+		end
+		if lp.FrozenScreen then
+			return false
+		end
+		if IsValid(GetViewEntity()) and GetViewEntity() ~= lp then
+			return false
+		end
+	end
+
+	if self.BaseClass and self.BaseClass.ShouldDrawViewModel then
+		return self.BaseClass:ShouldDrawViewModel(vm, pl, weapon)
+	end
+
+	return true
 end
 
 function StartThirdperson()

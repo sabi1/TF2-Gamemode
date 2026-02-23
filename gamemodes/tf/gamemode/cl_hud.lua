@@ -182,7 +182,10 @@ end
 
 concommand.Add("tf_selectslot", function(pl, cmd, args)
 	GAMEMODE:ShowWeaponSelection()
-	pl:EmitSound("Player.WeaponSelectionMoveSlot")
+	local fastSwitch = GetConVar("tf_fastweaponswitch")
+	if not (fastSwitch and fastSwitch:GetBool()) then
+		pl:EmitSound("Player.WeaponSelectionMoveSlot")
+	end
 	HudWeaponSelection:Select(tonumber(args[1]))
 end)
 
@@ -196,14 +199,22 @@ local function TFShouldFastSwitch()
 	return cvar and cvar:GetBool()
 end
 
-local function TFAttemptFastSwitch()
+local function TFAttemptFastSwitch(slot)
 	if not TFShouldFastSwitch() then return end
-	if not HudWeaponSelection:CanSelectWeapon() then return end
 
-	local wep = HudWeaponSelection:CurrentWeapon()
-	if not wep or wep == "" then return end
+	-- Defer by one tick so hud selection state is fully updated first.
+	timer.Simple(0, function()
+		if not IsValid(HudWeaponSelection) then return end
+		if slot then
+			HudWeaponSelection:Select(slot)
+		end
+		if not HudWeaponSelection:CanSelectWeapon() then return end
 
-	RunConsoleCommand("tf_useweapon", wep)
+		local wep = HudWeaponSelection:CurrentWeapon()
+		if not wep or wep == "" then return end
+
+		RunConsoleCommand("tf_useweapon", wep)
+	end)
 end
 
 function GM:PlayerSlotSelected(slot)
@@ -232,7 +243,7 @@ function GM:PlayerBindPress(pl, cmd, down)
 			end
 			
 			RunConsoleCommand("tf_selectslot", n)
-			TFAttemptFastSwitch()
+			TFAttemptFastSwitch(n)
 		end
 		
 		return true
@@ -257,7 +268,7 @@ function GM:PlayerBindPress(pl, cmd, down)
 		
 		n = HudWeaponSelection:GetNextSlot(n)
 		RunConsoleCommand("tf_selectslot", n)
-		TFAttemptFastSwitch()
+		TFAttemptFastSwitch(n)
 		return true
 	elseif string.find(cmd, "^invprev") then
 		if not pl:Alive() then return true end
@@ -278,7 +289,7 @@ function GM:PlayerBindPress(pl, cmd, down)
 		
 		n = HudWeaponSelection:GetPreviousSlot(n)
 		RunConsoleCommand("tf_selectslot", n)
-		TFAttemptFastSwitch()
+		TFAttemptFastSwitch(n)
 		return true
 	elseif HudWeaponSelection:IsVisible() and string.find(cmd, "^+attack") then
 		if not pl:Alive() then return true end

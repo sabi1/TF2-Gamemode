@@ -496,6 +496,7 @@ function GM:EntityTakeDamage(  ent, dmginfo )
 	local amount = dmginfo:GetDamage()
 	
 	local att = dmginfo:GetAttacker()
+	local friendlyHit = IsValid(att) and att ~= ent and att:IsFriendly(ent)
 		if ent:GetNWBool("Bonked") == true || ent:IsPlayer() and ent:Team() == TEAM_FRIENDLY then
 			dmginfo:ScaleDamage(0.000001)
 		end
@@ -566,7 +567,7 @@ function GM:EntityTakeDamage(  ent, dmginfo )
 		end
 	end
 	if (!att:IsL4D() and !ent:IsL4D()) then
-		if att~=ent and att:IsTFPlayer() and att:IsFriendly(ent) and !GetConVar("mp_friendlyfire"):GetBool() then
+		if friendlyHit and !GetConVar("mp_friendlyfire"):GetBool() then
 			dmginfo:SetDamageType(DMG_GENERIC)
 			dmginfo:SetDamage(0)
 			dmginfo:SetAttacker(Entity( 0 ))
@@ -575,9 +576,14 @@ function GM:EntityTakeDamage(  ent, dmginfo )
 			end
 			return
 		else
+			if friendlyHit then
+				ent:SetBloodColor(DONT_BLEED)
+			end
 			if (ent:IsPlayer()) then
 				if (!string.find(ent:GetModel(),"/bot_")) then
-					ent:SetBloodColor(BLOOD_COLOR_RED)
+					if not friendlyHit then
+						ent:SetBloodColor(BLOOD_COLOR_RED)
+					end
 				else
 					ent:SetBloodColor(DONT_BLEED)
 					if (dmginfo:IsDamageType(DMG_BULLET) or dmginfo:IsDamageType(DMG_GENERIC)) then
@@ -779,7 +785,7 @@ function GM:EntityTakeDamage(  ent, dmginfo )
 		end
 		
 		-- Force dispatch a blood effect when the entity has been damaged by either fall or direct damage
-		if dmginfo:IsFallDamage() or dmginfo:IsDamageType(DMG_DIRECT) then
+		if (dmginfo:IsFallDamage() or dmginfo:IsDamageType(DMG_DIRECT)) and not friendlyHit then
 			ent:DispatchBloodEffect()
 		end
 		

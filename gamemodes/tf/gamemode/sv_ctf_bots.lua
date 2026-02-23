@@ -1239,6 +1239,13 @@ local function SetLoadoutReason(bot, reason)
 	end
 end
 
+local function IsGmodPlayerBotClass(bot, className)
+	local resolved = string.lower(tostring(className or ""))
+	if resolved == "gmodplayer" then return true end
+	local legacy = string.lower(tostring(IsValid(bot) and bot.playerclass or ""))
+	return legacy == "gmodplayer"
+end
+
 function TFBot_ApplyRandomLoadout(bot, opts)
 	if not IsValid(bot) or not bot.TFBot or bot.IsL4DZombie then return false end
 	if not CVBool(tf_bot_random_loadouts, true) then return false end
@@ -1254,6 +1261,10 @@ function TFBot_ApplyRandomLoadout(bot, opts)
 	if not isstring(className) or className == "" then
 		SetLoadoutReason(bot, "no_class")
 		BotLoadoutDebug(bot, "abort: no class")
+		return false
+	end
+	if IsGmodPlayerBotClass(bot, className) then
+		SetLoadoutReason(bot, "skip_gmodplayer")
 		return false
 	end
 	if not istable(bot.ItemLoadout) or not istable(bot.ItemProperties) then
@@ -1367,6 +1378,23 @@ concommand.Add("tf_bot_print_loadout", function(ply, _, args)
 		MsgN("  [" .. i .. "] slot=" .. tostring(slot) .. " item=" .. tostring(itemName))
 	end
 end)
+
+local function SafeWeaponAmmo1(weapon, owner)
+	if not IsValid(weapon) then return -1 end
+	if isfunction(weapon.Ammo1) then
+		local ok, value = pcall(weapon.Ammo1, weapon)
+		if ok and isnumber(value) then
+			return value
+		end
+	end
+	if IsValid(owner) and isfunction(weapon.GetPrimaryAmmoType) then
+		local ammoType = weapon:GetPrimaryAmmoType()
+		if isnumber(ammoType) and ammoType >= 0 then
+			return owner:GetAmmoCount(ammoType)
+		end
+	end
+	return -1
+end
 
 hook.Add("PlayerSpawn", "LeadBot_S_PlayerSpawn", function(bot)
 	if (IsValid(bot)) then
@@ -1723,7 +1751,7 @@ hook.Add("Move", "LeadBot_Control22", function(bot, mv)
 					return
 				end
 			end
-			if IsValid(bot.intelcarrier) and !IsValid(bot.TargetEnt) and bot:GetPos():Distance(bot.intelcarrier:GetPos()) < 6000 and bot.intelcarrier:Health() > 0 then
+			if bot.shouldFollowIntelCarrier and IsValid(bot.intelcarrier) and !IsValid(bot.TargetEnt) and bot:GetPos():Distance(bot.intelcarrier:GetPos()) < 6000 and bot.intelcarrier:Health() > 0 then
 				if (bot:GetPlayerClass() != "tank_l4d") then
 					if (bot:GetNWBool("Taunting",false) == true) then 
 						return 
@@ -1736,8 +1764,17 @@ hook.Add("Move", "LeadBot_Control22", function(bot, mv)
 				if (!bot.isCarryingIntel) then
 					bot.botPos = bot.intelcarrier:GetPos()
 				end
-				--bot:SetEyeAngles(LerpAngle(FrameTime() * 5 * 1.2, bot:EyeAngles(), mva + (controller.LookAt * 0.5))) 
-				bot:SetEyeAngles(LerpAngle(FrameTime() * 5 * 1.2, bot:EyeAngles(), (controller.LookAt * 0.5))) 
+				local moveDir = bot:GetVelocity()
+				moveDir = Vector(moveDir.x, moveDir.y, 0)
+				if moveDir:LengthSqr() < 64 and bot.botPos then
+					moveDir = bot.botPos - bot:GetPos()
+					moveDir.z = 0
+				end
+				if moveDir:LengthSqr() > 64 then
+					bot:SetEyeAngles(LerpAngle(FrameTime() * 5 * 1.2, bot:EyeAngles(), moveDir:GetNormalized():Angle()))
+				else
+					bot:SetEyeAngles(LerpAngle(FrameTime() * 5 * 1.2, bot:EyeAngles(), (controller.LookAt * 0.5)))
+				end
 			end
 			if (!IsValid(bot.TargetEnt)) then 
 				if (bot.lookingAt) then return end
@@ -1746,8 +1783,17 @@ hook.Add("Move", "LeadBot_Control22", function(bot, mv)
 						return 
 					end 
 				end	 
-				--bot:SetEyeAngles(LerpAngle(FrameTime() * 5 * 1.2, bot:EyeAngles(), mva + (controller.LookAt * 0.5))) 
-				bot:SetEyeAngles(LerpAngle(FrameTime() * 5 * 1.2, bot:EyeAngles(), (controller.LookAt * 0.5))) 
+				local moveDir = bot:GetVelocity()
+				moveDir = Vector(moveDir.x, moveDir.y, 0)
+				if moveDir:LengthSqr() < 64 and bot.botPos then
+					moveDir = bot.botPos - bot:GetPos()
+					moveDir.z = 0
+				end
+				if moveDir:LengthSqr() > 64 then
+					bot:SetEyeAngles(LerpAngle(FrameTime() * 5 * 1.2, bot:EyeAngles(), moveDir:GetNormalized():Angle()))
+				else
+					bot:SetEyeAngles(LerpAngle(FrameTime() * 5 * 1.2, bot:EyeAngles(), (controller.LookAt * 0.5)))
+				end
 			end 
 	end
 end)
@@ -1886,6 +1932,25 @@ hook.Add("SetupMove", "LeadBot_Control", function(bot, mv, cmd)
 		local intelcap
 		local fintelcap
 		local targetpos = Vector(0, 0, 0)
+		bot.shouldFollowIntelCarrier = false
+		local function ShouldFollowIntelCarrier(botPly, carrier, isFriendlyCarrier)
+			if not IsValid(botPly) or not IsValid(carrier) then return false end
+			if botPly:EntIndex() == carrier:EntIndex() then return false end
+
+			local className = string.lower(tostring(botPly:GetPlayerClass() or ""))
+			if isFriendlyCarrier and className == "medic" then
+				return true
+			end
+			if botPly:GetPos():DistToSqr(carrier:GetPos()) < (700 * 700) then
+				return true
+			end
+
+			local hash = (botPly:EntIndex() + carrier:EntIndex()) % 5
+			if isFriendlyCarrier then
+				return hash == 0 or hash == 1
+			end
+			return hash == 0
+		end
 		local canUpdateObjective = true
 		if PerfEnabled() then
 			bot._nextObjective = bot._nextObjective or 0
@@ -1931,11 +1996,23 @@ hook.Add("SetupMove", "LeadBot_Control", function(bot, mv, cmd)
 					targetpos = fintelcap.Pos -- goto friendly cap spot
 					bot.intelcarrier = nil
 				elseif IsValid(intel) and IsValid(intel.Carrier) and bot:EntIndex() != intel.Carrier:EntIndex() then -- or else if we have it already carried
-					targetpos = intel.Carrier:GetPos()
-					bot.intelcarrier = intel.Carrier
+					if ShouldFollowIntelCarrier(bot, intel.Carrier, true) then
+						targetpos = intel.Carrier:GetPos()
+						bot.intelcarrier = intel.Carrier
+						bot.shouldFollowIntelCarrier = true
+					else
+						targetpos = IsValid(fintelcap) and fintelcap.Pos or intel:GetPos()
+						bot.intelcarrier = nil
+					end
 				elseif IsValid(fintel) and fintel.Carrier and bot:EntIndex() != fintel.Carrier:EntIndex() then -- if our intel is being stolen...
-					targetpos = fintel.Carrier:GetPos() -- defend our intel
-					bot.intelcarrier = fintel.Carrier
+					if ShouldFollowIntelCarrier(bot, fintel.Carrier, false) then
+						targetpos = fintel.Carrier:GetPos() -- defend our intel
+						bot.intelcarrier = fintel.Carrier
+						bot.shouldFollowIntelCarrier = true
+					else
+						targetpos = IsValid(fintelcap) and fintelcap.Pos or fintel:GetPos()
+						bot.intelcarrier = nil
+					end
 				elseif IsValid(fintelcap) then
 					targetpos = fintelcap.Pos -- move to the bomb, the flag is currently invalid until a bot gets it
 					bot.intelcarrier = nil
@@ -2343,19 +2420,9 @@ hook.Add("StartCommand", "leadbot_control", function(bot, cmd)
 				end
 			end
 			if (bot.botPos and !bot:GetNWBool("Taunting",false)) then
-				if (bot:GetVelocity():Length() < 50) then
-
-					if (bot:IsOnGround()) then
-						
-						if (math.random(1,5) == 1) then
-							buttons = buttons + IN_JUMP
-						end
-						cmd:SetSideMove(math.Rand(-520,520))
-						cmd:SetForwardMove(math.Rand(-520,520))
-					else
-						buttons = buttons + IN_DUCK
-					end
-					
+				-- Keep airborne bots tucked in, but avoid random ground jump/strafe spam.
+				if (bot:GetVelocity():Length() < 50 and not bot:IsOnGround()) then
+					buttons = buttons + IN_DUCK
 				end
 			end
 			local controller = bot.ControllerBot
@@ -2442,21 +2509,26 @@ hook.Add("StartCommand", "leadbot_control", function(bot, cmd)
 			end
 		end
 
-			if (IsValid(bot:GetActiveWeapon())) then
-					if (bot:GetActiveWeapon():Ammo1() < 0 and bot:GetActiveWeapon():Clip1() < 0 and bot:GetActiveWeapon().Primary.ClipSize ~= -1 && !bot:GetActiveWeapon().IsMeleeWeapon) then
-						if (CurTime() > bot:GetActiveWeapon():GetNextPrimaryFire()) then
-							if (bot:GetActiveWeapon().HoldType == "PRIMARY") then
-								if (IsValid(bot:GetActiveWeapon().Owner:GetWeapons()[2])) then
-									bot:GetActiveWeapon().Owner:SelectWeapon(bot:GetActiveWeapon().Owner:GetWeapons()[2]:GetClass())
-								end
-							elseif ((bot:GetActiveWeapon().HoldType == "SECONDARY" or (bot:GetActiveWeapon():GetClass() == "tf_weapon_jar" or bot:GetActiveWeapon():GetClass() == "tf_weapon_jar_milk")) and bot:GetActiveWeapon().Owner:GetPlayerClass() != "medic") then
-								if (IsValid(bot:GetActiveWeapon().Owner:GetWeapons()[3])) then
-									bot:GetActiveWeapon().Owner:SelectWeapon(bot:GetActiveWeapon().Owner:GetWeapons()[3]:GetClass())
-								end
+			local activeWeapon = bot:GetActiveWeapon()
+			if IsValid(activeWeapon) and not IsGmodPlayerBotClass(bot, bot:GetPlayerClass()) then
+				local ammo1 = SafeWeaponAmmo1(activeWeapon, bot)
+				local clip1 = isfunction(activeWeapon.Clip1) and activeWeapon:Clip1() or -1
+				local primary = activeWeapon.Primary
+				local clipSize = istable(primary) and tonumber(primary.ClipSize) or -1
+				if (ammo1 < 0 and clip1 < 0 and clipSize ~= -1 and not activeWeapon.IsMeleeWeapon) then
+					if (CurTime() > activeWeapon:GetNextPrimaryFire()) then
+						if (activeWeapon.HoldType == "PRIMARY") then
+							if (IsValid(activeWeapon.Owner) and IsValid(activeWeapon.Owner:GetWeapons()[2])) then
+								activeWeapon.Owner:SelectWeapon(activeWeapon.Owner:GetWeapons()[2]:GetClass())
+							end
+						elseif ((activeWeapon.HoldType == "SECONDARY" or (activeWeapon:GetClass() == "tf_weapon_jar" or activeWeapon:GetClass() == "tf_weapon_jar_milk")) and IsValid(activeWeapon.Owner) and activeWeapon.Owner:GetPlayerClass() != "medic") then
+							if (IsValid(activeWeapon.Owner:GetWeapons()[3])) then
+								activeWeapon.Owner:SelectWeapon(activeWeapon.Owner:GetWeapons()[3]:GetClass())
 							end
 						end
 					end
 				end
+			end
 			
 			if (bot:GetPlayerClass() == "samuraidemo") then
 				bot:SetJumpPower(220 * 2.3)
@@ -2865,6 +2937,25 @@ concommand.Add( "test_astar", function( ply )
 end)
 
 local rePathDelay = 1 // How many seconds need to pass before we need to remake the path to keep it updated
+
+local function ShouldForceJumpAtObstacle(ply, targetAng)
+	if not IsValid(ply) or not ply:IsOnGround() then return false end
+	local startPos = ply:GetPos() + Vector(0, 0, 8)
+	local dir = targetAng:Forward()
+	local tr = util.TraceHull({
+		start = startPos,
+		endpos = startPos + dir * 42,
+		filter = ply,
+		mask = MASK_PLAYERSOLID,
+		mins = Vector(-16, -16, 0),
+		maxs = Vector(16, 16, 48),
+	})
+	if not tr.Hit then return false end
+	-- Ignore mostly-flat ground contacts; react to ledges/fences/walls.
+	if tr.HitNormal.z > 0.65 then return false end
+	return true
+end
+
 hook.Add( "StartCommand", "TFBot_Movement", function( ply, cmd )
 
 	// Only run this code on bots, and only if bot_mimic is set to 0
@@ -2973,11 +3064,40 @@ hook.Add( "StartCommand", "TFBot_Movement", function( ply, cmd )
 
 	// We got the target to go to, aim there and MOVE
 	local targetang = ( ply.targetArea:GetCenter() - ply:GetPos() ):GetNormalized():Angle()
+	local distToArea = ply.targetArea:GetCenter():Distance(ply:GetPos())
+
+	-- Deterministic stuck detection: if grounded, far from next area, and barely moving for a short time,
+	-- aggressively repath and apply a brief movement nudge to escape ledges/fences.
+	local speed2D = ply:GetVelocity():Length2D()
+	if ply:IsOnGround() and distToArea > 120 and speed2D < 28 then
+		ply._stuckSince = ply._stuckSince or CurTime()
+		if CurTime() - ply._stuckSince > 0.9 then
+			if not ply._nextUnstuck or ply._nextUnstuck < CurTime() then
+				ply.path = nil
+				ply.targetArea = nil
+				ply.lastRePath = 0
+				ply.lastRePath2 = 0
+				ply._nextUnstuck = CurTime() + 0.45
+
+				local current = cmd:GetButtons()
+				cmd:SetButtons(bit.bor(current, IN_JUMP))
+				cmd:SetForwardMove(280)
+				cmd:SetSideMove((ply:EntIndex() % 2 == 0) and 220 or -220)
+			end
+		end
+	else
+		ply._stuckSince = nil
+	end
+
 	if (ply:GetNWBool("Taunting",false) == true) then 
 		cmd:SetForwardMove( 0 )
 	else
 		cmd:SetForwardMove( 1000 )
 		cmd:SetViewAngles( targetang )
+		if ShouldForceJumpAtObstacle(ply, targetang) then
+			local current = cmd:GetButtons()
+			cmd:SetButtons(bit.bor(current, IN_JUMP))
+		end
 		if (!IsValid(ply.TargetEnt)) then
 			ply:SetEyeAngles(LerpAngle(FrameTime() * 5 * 1.2, ply:EyeAngles(), targetang))
 		end
@@ -2987,15 +3107,17 @@ end )
 
 
 -- CONFIGURABLE WAVE TIMES PER TEAM (seconds)
+local RESPAWN_TEAM_RED = tonumber(rawget(_G, "TEAM_RED")) or 2
+local RESPAWN_TEAM_BLU = tonumber(rawget(_G, "TEAM_BLU")) or 3
 local respawnWaveTimes = {
-    [TEAM_RED] = 20.5,
-    [TEAM_BLU] = 20.5
+    [RESPAWN_TEAM_RED] = 20.5,
+    [RESPAWN_TEAM_BLU] = 20.5
 }
 
 -- Player queues per team
 local respawnQueue = {
-    [TEAM_RED] = {},
-    [TEAM_BLU] = {}
+    [RESPAWN_TEAM_RED] = {},
+    [RESPAWN_TEAM_BLU] = {}
 }
 
 -- Add player to the team's respawn queue

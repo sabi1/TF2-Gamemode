@@ -12,10 +12,18 @@ SWEP.CustomHUD = {HudBowCharge = true}
 function SWEP:ClientStartCharge()
 	self.ClientCharging = true
 	self.ClientChargeStart = CurTime()
+	if not self.ChargeUpSound then
+		self.ChargeUpSound = CreateSound(self, self:GetChargeSoundPath())
+		self.ChargeUpSound:Play()
+	end
 end
 
 function SWEP:ClientEndCharge()
 	self.ClientCharging = false
+	if self.ChargeUpSound then
+		self.ChargeUpSound:Stop()
+		self.ChargeUpSound = nil
+	end
 end
 
 end
@@ -215,9 +223,13 @@ function SWEP:InitOwner()
 end
 
 function SWEP:CreateSounds()
-	self.ChargeUpSound = CreateSound(self, self.ChargeSound)
+	self.ChargeUpSound = CreateSound(self, self:GetChargeSoundPath())
 	
 	self.SoundsCreated = true
+end
+
+function SWEP:GetChargeSoundPath()
+	return string.gsub(self.ChargeSound or "", "^sound/", "")
 end
 
 function SWEP:PrimaryAttack()
@@ -301,7 +313,7 @@ function SWEP:Think()
 			end
 		else
 			if (game.SinglePlayer() or CLIENT) and not self.ChargeUpSound then
-				self.ChargeUpSound = CreateSound(self, self.ChargeSound)
+				self.ChargeUpSound = CreateSound(self, self:GetChargeSoundPath())
 				self.ChargeUpSound:Play()
 			end
 		end
