@@ -322,7 +322,7 @@ RegisterAttribute("milk_duration", {
 		
 		local att = dmginfo:GetAttacker()
 		if ent:IsTFPlayer() and ent~=att and ent:CanReceiveCrits() and att:IsValidEnemy(ent) then
-			ent:AddPlayerState(PLAYERSTATE_MILK, true)
+			ent:AddCond(TF_COND_MAD_MILK, v, att)
 			ent.NextEndMilk = CurTime() + v
 		end
 	end,

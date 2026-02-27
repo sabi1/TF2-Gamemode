@@ -18,7 +18,29 @@ PrecacheParticleSystem( "mvm_levelup3" )
 
 local FlagReturnTime = 60
 
+local function CarrierTimerName(flag, suffix)
+	return "MVMFlag_" .. tostring(flag:EntIndex()) .. "_" .. tostring(suffix)
+end
+
 if SERVER then
+
+function ENT:SetBombUpgradeLevel(level)
+	local lvl = math.Clamp(tonumber(level) or 0, 0, 3)
+	self.BombUpgradeLevel = lvl
+	self:SetNWInt("MVM_BombUpgradeLevel", lvl)
+end
+
+function ENT:ResetBombUpgradeState()
+	self.BombUpgradeStartTime = nil
+	self:SetNWFloat("MVM_BombUpgradeStartedAt", 0)
+	self:SetBombUpgradeLevel(0)
+end
+
+function ENT:StartBombUpgradeState()
+	self.BombUpgradeStartTime = CurTime()
+	self:SetNWFloat("MVM_BombUpgradeStartedAt", self.BombUpgradeStartTime)
+	self:SetBombUpgradeLevel(0)
+end
 
 hook.Add("DoPlayerDeath", "IntelSafeHelp2", function(ply)
 	for _,v in pairs(ents.FindByClass("item_teamflag_mvm")) do
@@ -117,6 +139,7 @@ function ENT:Initialize()
 	self.Trail:SetParent(self)
 	
 	self.PickupLock = {}
+	self:ResetBombUpgradeState()
 	--[[
 	0 : home
 	1 : carried
@@ -228,6 +251,13 @@ end
 
 function ENT:Return(nosound)
 	if self.State~=0 then
+		timer.Remove(CarrierTimerName(self, "DropIfCarrierNotAlive"))
+		timer.Remove(CarrierTimerName(self, "Warning1"))
+		timer.Remove(CarrierTimerName(self, "Warning2"))
+		timer.Remove(CarrierTimerName(self, "Warning3"))
+		timer.Remove(CarrierTimerName(self, "WarningEnd3"))
+		timer.Remove(CarrierTimerName(self, "CarrierGetsHealed"))
+		timer.Remove(CarrierTimerName(self, "CarrierGetsResistance"))
 		self:Drop(true)
 		self.State = 0
 		self:SetNWBool("TimerActive", false)
@@ -250,6 +280,22 @@ end
 
 function ENT:Pickup(ply)
 	if self.State~=1 and not IsValid(self.Carrier) then
+		local dropTimer = CarrierTimerName(self, "DropIfCarrierNotAlive")
+		local warn1Timer = CarrierTimerName(self, "Warning1")
+		local warn2Timer = CarrierTimerName(self, "Warning2")
+		local warn3Timer = CarrierTimerName(self, "Warning3")
+		local warnEnd3Timer = CarrierTimerName(self, "WarningEnd3")
+		local healTimer = CarrierTimerName(self, "CarrierGetsHealed")
+		local resistTimer = CarrierTimerName(self, "CarrierGetsResistance")
+
+		timer.Remove(dropTimer)
+		timer.Remove(warn1Timer)
+		timer.Remove(warn2Timer)
+		timer.Remove(warn3Timer)
+		timer.Remove(warnEnd3Timer)
+		timer.Remove(healTimer)
+		timer.Remove(resistTimer)
+
 		if not self.HomePosition or not self.HomeAngles then
 			self.HomePosition = self:GetPos()
 			self.HomeAngles = self:GetAngles()
@@ -264,6 +310,7 @@ function ENT:Pickup(ply)
 		end
 		self.State = 1
 		self.Carrier = ply
+		self:StartBombUpgradeState()
 		self.Prop:ResetSequence(self.Prop:LookupSequence("idle"))
 		self.Prop:SetPlaybackRate(1)
 		self.Prop:SetCycle(1)
@@ -282,7 +329,11 @@ function ENT:Pickup(ply)
 			end
 		end  
 	
-			timer.Create("DropIfCarrierNotAlive", 0.001, 0, function()
+			timer.Create(dropTimer, 0.1, 0, function()
+				if not IsValid(self) or not IsValid(ply) then
+					timer.Remove(dropTimer)
+					return
+				end
 				if ply:Alive() then
 				if !string.find(ply:GetModel(),"_boss.mdl") then
 					ply:SetClassSpeed(ply:GetPlayerClassTable().Speed * 0.5)		
@@ -299,14 +350,12 @@ function ENT:Pickup(ply)
 					ply:Freeze(false)
 					ply:SetNoDraw(false)
 				self:SetNoDraw(false)
-				timer.Stop("Warning1")
-				timer.Stop("Warning2")
-				timer.Stop("Warning3")
-				timer.Stop("WarningEnd1")
-				timer.Stop("WarningEnd2")
-				timer.Stop("WarningEnd3")
-				timer.Stop("CarrierGetsHealed") 
-				timer.Stop("CarrierGetsResistance") 
+				timer.Remove(warn1Timer)
+				timer.Remove(warn2Timer)
+				timer.Remove(warn3Timer)
+				timer.Remove(warnEnd3Timer)
+				timer.Remove(healTimer)
+				timer.Remove(resistTimer)
 				for k,v in pairs(player.GetAll()) do 
 					if not ply:IsFriendly(v) then
 						v:Speak("TLK_MVM_BOMB_DROPPED")
@@ -314,28 +363,33 @@ function ENT:Pickup(ply)
 				end
 				self:Drop()
 				self.Carrier = nil
-				timer.Stop("DropIfCarrierNotAlive")
+				timer.Remove(dropTimer)
 			end
 		end)
-		timer.Create("Warning1", 10, 1, function()
+		timer.Create(warn1Timer, 10, 1, function()
+			if not IsValid(self) or not IsValid(ply) or self.Carrier ~= ply then return end
+			self:SetBombUpgradeLevel(1)
 			ParticleEffectAttach( "mvm_levelup1", PATTACH_POINT_FOLLOW, ply, ply:LookupAttachment("head") )
 			ply:EmitSound("mvm/mvm_warning.wav", 0, 100)
 			if (!ply:IsMiniBoss()) then
 				ply:TFTaunt(tostring(ply:GetActiveWeapon():GetSlot() + 1))
 			end
-			timer.Create("CarrierGetsHealed", 5.0, 0, function()
+			timer.Create(healTimer, 5.0, 0, function()
 				--ply:SetArmor( 50 )
 			end)
 		
 		end)
 		
-		timer.Create("Warning2", 45, 1, function()
+		timer.Create(warn2Timer, 45, 1, function()
+			if not IsValid(self) or not IsValid(ply) or self.Carrier ~= ply then return end
+			self:SetBombUpgradeLevel(2)
 			ParticleEffectAttach( "mvm_levelup2", PATTACH_POINT_FOLLOW, ply, ply:LookupAttachment("head") )
 			ply:EmitSound("mvm/mvm_warning.wav", 0, 100)
 			if (!ply:IsMiniBoss()) then
 				ply:TFTaunt(tostring(ply:GetActiveWeapon():GetSlot() + 1))
 			end
-			timer.Create("CarrierGetsResistance", 2, 0, function()
+			timer.Create(resistTimer, 2, 0, function()
+				if not IsValid(self) or not IsValid(self.Carrier) then return end
 				GAMEMODE:HealPlayer(self.Carrier, self.Carrier, 5, true, false) 
 			end)
 			for k,v in pairs(player.GetAll()) do
@@ -352,7 +406,9 @@ function ENT:Pickup(ply)
 				end
 			end
 		end)
-		timer.Create("Warning3", 65, 1, function()
+		timer.Create(warn3Timer, 65, 1, function()
+			if not IsValid(self) or not IsValid(ply) or self.Carrier ~= ply then return end
+			self:SetBombUpgradeLevel(3)
 			ParticleEffectAttach( "mvm_levelup3", PATTACH_POINT_FOLLOW, ply, ply:LookupAttachment("head") )
 			ply:EmitSound("mvm/mvm_warning.wav", 0, 100)
 			if (!ply:IsMiniBoss()) then
@@ -372,7 +428,8 @@ function ENT:Pickup(ply)
 				end
 			end
 		end)
-		timer.Create("WarningEnd3", 65 + ply:SequenceDuration(ply:LookupSequence("taunt01")), 1, function() 
+		timer.Create(warnEnd3Timer, 65 + ply:SequenceDuration(ply:LookupSequence("taunt01")), 1, function() 
+			if not IsValid(ply) then return end
 			ply:ConCommand("tf_firstperson")
 			ply:Freeze(false)
 		end)
@@ -381,6 +438,13 @@ end
 
 function ENT:Drop(nosound)
 	if self.State==1 and IsValid(self.Carrier) then
+		timer.Remove(CarrierTimerName(self, "DropIfCarrierNotAlive"))
+		timer.Remove(CarrierTimerName(self, "Warning1"))
+		timer.Remove(CarrierTimerName(self, "Warning2"))
+		timer.Remove(CarrierTimerName(self, "Warning3"))
+		timer.Remove(CarrierTimerName(self, "WarningEnd3"))
+		timer.Remove(CarrierTimerName(self, "CarrierGetsHealed"))
+		timer.Remove(CarrierTimerName(self, "CarrierGetsResistance"))
 		self:SetNWBool("TimerActive", true)
 		self:SetNWFloat("TimeRemaining", FlagReturnTime)
 		self.NextReturn = CurTime() + FlagReturnTime
@@ -389,6 +453,7 @@ function ENT:Drop(nosound)
 		self.PickupLock[ply] = 1 -- Prevent the player who dropped it to pick it up immediately again
 		self.State = 2
 		self.Carrier = nil
+		self:ResetBombUpgradeState()
 		self.Prop:ResetSequence(self.Prop:LookupSequence("spin"))
 		self.Prop:SetPlaybackRate(1)
 		self.Prop:SetCycle(1)

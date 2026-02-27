@@ -223,15 +223,27 @@ function PANEL:Paint()
 		surface.DrawRect(9*Scale, 74*Scale, 582*Scale, 1*Scale)
 		surface.DrawRect(10*Scale, 355*Scale, 580*Scale, 1*Scale)
 
+		local missionName = TF_MVMState and TF_MVMState.Get and tostring(TF_MVMState:Get("mission_name", "")) or ""
+		local missionLower = string.lower(missionName)
+		local difficulty = "NORMAL"
+		if string.find(missionLower, "_intermediate", 1, true) then
+			difficulty = "INTERMEDIATE"
+		elseif string.find(missionLower, "_advanced", 1, true) then
+			difficulty = "ADVANCED"
+		elseif string.find(missionLower, "_expert", 1, true) then
+			difficulty = "EXPERT"
+		end
+		MvMDifficulty.text = "DIFFICULTY: " .. difficulty
+
 		draw.Text(MvMTitle)
 		draw.Text(MvMDifficulty)
 		draw.Text(MvMDefenders)
 
 		local waveCurrent = 1
 		local waveTotal = 1
-		if WaveManager and WaveManager.CurrentWave then
-			waveCurrent = math.max(1, tonumber(WaveManager.CurrentWave) or 1)
-			waveTotal = math.max(waveCurrent, tonumber(#(WaveManager.Waves or {})) or 1)
+		if TF_MVMState and TF_MVMState.Get then
+			waveCurrent = math.max(1, tonumber(TF_MVMState:Get("wave_current", 1)) or 1)
+			waveTotal = math.max(waveCurrent, tonumber(TF_MVMState:Get("wave_total", waveCurrent)) or waveCurrent)
 		end
 		MvMWave.text = "WAVE " .. tostring(waveCurrent) .. " / " .. tostring(waveTotal)
 		draw.Text(MvMWave)

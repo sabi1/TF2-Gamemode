@@ -61,6 +61,10 @@ hook.Add("Move", "TFMove", function(pl, move)
 				
 				pl.Jumps = pl.Jumps + 1
 				pl.DoubleJumping = true
+				
+				if SERVER then
+					ApplyGlobalAttributesFromPlayer(pl, "double_jump", pl)
+				end
 			end
 		end
 		

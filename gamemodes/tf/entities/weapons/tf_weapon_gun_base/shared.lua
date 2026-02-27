@@ -191,6 +191,7 @@ local function TFBulletCallback(attacker, trace, dmginfo)
 	
 	local self = dmginfo:GetInflictor()
 	local dmg = self.TempDamageInfo
+	local suppressDefaultEffects = false
 	if dmg then
 		if trace.Entity and trace.Entity:IsValid() then
 			dmg.HitPos = trace.HitPos
@@ -209,6 +210,11 @@ local function TFBulletCallback(attacker, trace, dmginfo)
 				end
 			end
 		end
+
+		if trace.HitWorld and not trace.HitSky and IsValid(self) and isfunction(self.GetTextureDecal) then
+			self:GetTextureDecal(trace)
+			suppressDefaultEffects = true
+		end
 		
 		if dmg.Tracer>0 and math.random(1,dmg.Tracer)==1 then
 			local tracer = dmg.TracerName
@@ -224,15 +230,40 @@ local function TFBulletCallback(attacker, trace, dmginfo)
 			if dmg.Critical then
 				tracer = tracer.."_crit" 
 			end
+
+			local tracerWeapon = nil
+			if IsValid(self) and self:IsWeapon() then
+				tracerWeapon = self
+			elseif IsValid(attacker) and attacker.GetActiveWeapon then
+				local activeWeapon = attacker:GetActiveWeapon()
+				if IsValid(activeWeapon) then
+					tracerWeapon = activeWeapon
+				end
+			end
+			if not IsValid(tracerWeapon) then
+				if suppressDefaultEffects then
+					return {effects=false}
+				end
+				return {effects=true}
+			end
+
+			local recipients = RecipientFilter()
+			recipients:AddAllPlayers()
+			if IsValid(attacker) and attacker:IsPlayer() then
+				recipients:RemovePlayer(attacker)
+			end
 			
-			umsg.Start("DoBulletTracer")
+			umsg.Start("DoBulletTracer", recipients)
 				umsg.String(tracer)
 				umsg.Vector(trace.HitPos)
-				umsg.Entity(self:GetActiveWeapon())
+				umsg.Entity(tracerWeapon)
 			umsg.End()
 		end
 	end
 	
+	if suppressDefaultEffects then
+		return {effects=false}
+	end
 	return {effects=true}
 end
 
@@ -283,6 +314,12 @@ function SWEP:ShootProjectile(num_bullets, aimcone)
 		TracerName = b.TracerName or "bullet_tracer01",
 		Force = b.Force or 1,
 	}
+	if SERVER then
+		-- The shooter already gets predicted tracers clientside.
+		-- Disable server default tracers and send custom tracers to other clients only.
+		b.Tracer = 0
+		b.TracerName = ""
+	end
 	self.Owner:FireBullets(b)
 	
 	--if b then

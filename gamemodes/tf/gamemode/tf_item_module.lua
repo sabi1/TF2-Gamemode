@@ -396,17 +396,50 @@ function ITEM:InitProjectileAttributes(proj)
 	ApplyAttributesFromEntity(self, "projectile_fired", proj, self, self.Owner)
 end
 
+local function ResolveHandsViewModelForOwner(owner)
+	if not IsValid(owner) then return nil end
+
+	local tried = {}
+	local function tryClassName(className)
+		if not isstring(className) or className == "" then return nil end
+		if className == "demoman" then
+			className = "demo"
+		end
+		if tried[className] then return nil end
+		tried[className] = true
+
+		local mdl = Format("models/weapons/c_models/c_%s_arms.mdl", className)
+		if file.Exists(mdl, "GAME") then
+			return mdl
+		end
+		return nil
+	end
+
+	local classTbl = owner.GetPlayerClassTable and owner:GetPlayerClassTable() or nil
+	local className = owner.GetPlayerClass and owner:GetPlayerClass() or nil
+
+	return
+		tryClassName(classTbl and classTbl.ModelName) or
+		tryClassName(className) or
+		tryClassName("soldier") or
+		tryClassName("demo") or
+		tryClassName("heavy") or
+		"models/weapons/c_models/c_sniper_arms.mdl"
+end
+
 function ITEM:SetupItem(item)
 
 	if SERVER then
 		if self:IsWeapon() and self.SetupCModelActivities then
 			if item.attach_to_hands==1 then
-				local t = self.Owner:GetPlayerClassTable()
-				if t and t.ModelName then
-					self.ViewModelOverride = Format("models/weapons/c_models/c_%s_arms.mdl", t.ModelName)
+				local handsViewModel = ResolveHandsViewModelForOwner(self.Owner)
+				if handsViewModel then
+					self.ViewModelOverride = handsViewModel
 					self.ViewModel = self.ViewModelOverride
 					self:SetModel(self.ViewModelOverride)
-					self.Owner:GetViewModel():SetModel(self.ViewModelOverride)
+					if IsValid(self.Owner:GetViewModel()) then
+						self.Owner:GetViewModel():SetModel(self.ViewModelOverride)
+					end
 					self:SetupCModelActivities(item)
 				end
 			else
@@ -435,9 +468,9 @@ function ITEM:SetupItem(item)
 		
 		if self:IsWeapon() and self.SetupCModelActivities then
 			if item.attach_to_hands==1 then
-				local t = self.Owner:GetPlayerClassTable()
-				if t and t.ModelName then
-					self.ViewModelOverride = Format("models/weapons/c_models/c_%s_arms.mdl", t.ModelName)
+				local handsViewModel = ResolveHandsViewModelForOwner(self.Owner)
+				if handsViewModel then
+					self.ViewModelOverride = handsViewModel
 					self:SetModel(self.ViewModelOverride)
 					self:SetupCModelActivities(item)
 				end

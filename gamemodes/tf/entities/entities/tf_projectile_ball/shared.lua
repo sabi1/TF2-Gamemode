@@ -58,15 +58,10 @@ end
 
 function ENT:CanScoutPickup(ply)
 	if not IsValid(ply) or not ply:IsTFPlayer() or ply:IsNPC() or not ply:Alive() then return false end
-	if ply:GetPlayerClass() ~= "scout" then return false end
 	if self.SpawnTime and CurTime() < self.SpawnTime + ScoutPickupGrace then return false end
-	
+
 	local owner = self:GetOwner()
-	if IsValid(owner) and owner ~= ply and not ply:IsFriendly(owner) then
-		return false
-	end
-	
-	return true
+	return IsValid(owner) and owner == ply
 end
 
 function ENT:RestoreSandmanThrow(ply)

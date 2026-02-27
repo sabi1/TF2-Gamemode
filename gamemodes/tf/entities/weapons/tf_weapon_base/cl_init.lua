@@ -392,8 +392,12 @@ end)
 hook.Add("EntityRemoved", "TFWeaponRemoved", function(ent)
 	if ent.IsTFWeapon then
 		if IsValid(ent.CModel) then ent.CModel:Remove() end
+		if IsValid(ent.WModel) then ent.WModel:Remove() end
 		if IsValid(ent.WModel2) then ent.WModel2:Remove() end
 		if IsValid(ent.AttachedVModel) then ent.AttachedVModel:Remove() end
 		if IsValid(ent.AttachedWModel) then ent.AttachedWModel:Remove() end
+		if IsValid(ent.ExtraCModel) then ent.ExtraCModel:Remove() end
+		if IsValid(ent.ExtraWModel) then ent.ExtraWModel:Remove() end
+		if IsValid(ent.OffhandProjectileCModel) then ent.OffhandProjectileCModel:Remove() end
 	end
 end)

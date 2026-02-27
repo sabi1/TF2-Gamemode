@@ -73,6 +73,64 @@ local function SpawnDeathDrop(victim, dmginfo, className)
 	end
 end
 
+local function ResolveSoulCollector(victim, attacker)
+	if not IsValid(attacker) then return nil end
+
+	if attacker:IsWeapon() then
+		attacker = attacker:GetOwner()
+	end
+
+	if IsValid(attacker) and attacker:IsVehicle() and IsValid(attacker:GetDriver()) then
+		attacker = attacker:GetDriver()
+	end
+
+	if IsValid(attacker) and not attacker:IsPlayer() and attacker.GetOwner then
+		local owner = attacker:GetOwner()
+		if IsValid(owner) then
+			attacker = owner
+		end
+	end
+
+	if not IsValid(attacker) then return nil end
+	if IsValid(victim) and attacker == victim then return nil end
+	if not attacker:IsPlayer() then return nil end
+	if attacker.IsTFPlayer and not attacker:IsTFPlayer() then return nil end
+
+	return attacker
+end
+
+local function AwardHalloweenSoulToPlayer(collector, origin)
+	if not IsValid(collector) or not collector:IsPlayer() then return false end
+	if collector.IsTFPlayer and not collector:IsTFPlayer() then return false end
+
+	net.Start("TF_HalloweenSoulBurst")
+	net.WriteEntity(collector)
+	net.WriteVector(origin or collector:GetPos())
+	net.Broadcast()
+
+	collector:EmitSound("Halloween.spell_pickup", 70, 125)
+	collector:EmitSound("Halloween.spell_pickup_rare", 68, 128)
+	collector:EmitSound("player/souls_receive" .. math.random(1, 3) .. ".wav", 75, math.random(98, 105), 1, CHAN_STATIC)
+	collector:SetNWInt("HalloweenSouls", collector:GetNWInt("HalloweenSouls", 0) + 1)
+
+	return true
+end
+
+local function AwardHalloweenSoulFromDeath(victim, attacker)
+	if not TFIsHalloweenMapCached then return end
+
+	local collector = ResolveSoulCollector(victim, attacker)
+	if not IsValid(collector) then return end
+
+	local origin = collector:GetPos()
+	if IsValid(victim) and victim.WorldSpaceAABB then
+		local a, b = victim:WorldSpaceAABB()
+		origin = (a + b) * 0.5
+	end
+
+	AwardHalloweenSoulToPlayer(collector, origin)
+end
+
 local tf_halloween_map_gargoyle_enable = CreateConVar("tf_halloween_map_gargoyle_enable", "1", {FCVAR_ARCHIVE, FCVAR_NOTIFY}, "Enable random Soul Gargoyle map spawns on Halloween maps.")
 local tf_halloween_map_gargoyle_min_time = CreateConVar("tf_halloween_map_gargoyle_min_time", "50", {FCVAR_ARCHIVE, FCVAR_NOTIFY}, "Minimum seconds before the next random Soul Gargoyle spawn/move.")
 local tf_halloween_map_gargoyle_max_time = CreateConVar("tf_halloween_map_gargoyle_max_time", "120", {FCVAR_ARCHIVE, FCVAR_NOTIFY}, "Maximum seconds before the next random Soul Gargoyle spawn/move.")
@@ -1320,7 +1378,7 @@ function GM:DoPlayerDeath(ply, attacker, dmginfo)
 		end
 
 		if TFIsHalloweenMapCached then
-			SpawnDeathDrop(ply, dmginfo, "item_halloween_soul")
+			AwardHalloweenSoulFromDeath(ply, attacker)
 		end
 	end
 	timer.Simple(0.02, function()
@@ -2117,6 +2175,7 @@ function GM:OnNPCKilled(ent, attacker, inflictor)
 	if (ent:HasDeathFlag(DF_DECAP)) then
 		ent:EmitSound("TFPlayer.Decapitated")
 	end
+	AwardHalloweenSoulFromDeath(ent, attacker)
 	gamemode.Call("DoTFPlayerDeath", ent, attacker, ent.LastDamageInfo)
 	
 	-- for Gran <3

@@ -77,13 +77,14 @@ local function QueueWBIdle(self, delay)
 	timer.Simple(math.max(0, delay or 0), function()
 		if not IsValid(self) or not IsValid(self.Owner) then return end
 		if self.Owner:GetActiveWeapon() ~= self then return end
-		SendWBSequence(self, "wb_idle", ACT_VM_IDLE_SPECIAL)
+		local idleSequence = self.VM_IDLE or "wb_idle"
+		SendWBSequence(self, idleSequence, ACT_VM_IDLE_SPECIAL)
 	end)
 end
 
 function SWEP:ApplyWBAnimations()
 	self.VM_DRAW = ACT_VM_DRAW_SPECIAL
-	self.VM_IDLE = ACT_VM_IDLE_SPECIAL
+	self.VM_IDLE = self:OffhandProjectileReady() and "wb_grab" or "wb_idle"
 	self.VM_HITCENTER = {"wb_swing_a", "wb_swing_b", "wb_swing_c"}
 	self.VM_SWINGHARD = {"wb_swing_a", "wb_swing_b", "wb_swing_c"}
 	self.VM_INSPECT_START = ACT_MELEE_VM_INSPECT_START

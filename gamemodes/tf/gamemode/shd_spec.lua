@@ -42,6 +42,9 @@ local function getNextSpectateTarget(ply, includePlayers, includeNPCs)
 end
 
 concommand.Add("tf_spectate", function(ply, _, args)
+	if ply.TFPreventSpectatorUntil and ply.TFPreventSpectatorUntil > CurTime() then return end
+	-- Camera cycling command; do not let it change teams for active players.
+	if ply:Team() ~= TEAM_SPECTATOR then return end
 	if (!ply:Alive() and ply:Team() != TEAM_SPECTATOR) then return end
 	for k,v in ipairs(player.GetAll()) do
 		if (k < 2 and v:Team() == TEAM_SPECTATOR) then
@@ -75,6 +78,9 @@ concommand.Add("tf_spectate", function(ply, _, args)
 	ply:SetModel("models/weapons/c_arms_animations.mdl") -- anti ragdoll on death
 	end)
 	concommand.Add("tf_spectate2", function(ply, _, args)
+	if ply.TFPreventSpectatorUntil and ply.TFPreventSpectatorUntil > CurTime() then return end
+	-- Alternate spectator camera cycle; never used to enter spectator team.
+	if ply:Team() ~= TEAM_SPECTATOR then return end
 	if args[1] == "2" then ply:Spectate(OBS_MODE_CHASE) ply.SpectateMode = 2  return
 	elseif args[1] == "1" then ply:Spectate(OBS_MODE_IN_EYE) ply.SpectateMode = 1  return
 	elseif args[1] == "3" then ply:Spectate(OBS_MODE_ROAMING) ply.SpectateMode = 3  return

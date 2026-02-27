@@ -53,6 +53,314 @@ local ATT4 = {
 {"Level 42 Shitstorm Generator", 1},
 }
 
+local LOADOUT_SLOT_COUNT = 7
+
+local function forceCloseLoadoutPanels()
+	if IsValid(FullLoadoutPanel) then
+		FullLoadoutPanel:Remove()
+	end
+	if IsValid(CharInfoLoadoutSubPanel) and isfunction(CharInfoLoadoutSubPanel.SelectClassLoadout) then
+		CharInfoLoadoutSubPanel:SelectClassLoadout(0)
+	end
+	if IsValid(CharInfoPanel) and isfunction(CharInfoPanel.Close) then
+		CharInfoPanel:Close()
+	end
+	gui.EnableScreenClicker(false)
+	RunConsoleCommand("hud_showloadout", "0")
+end
+
+local attributeDefsByClass
+
+local function getAttributeDefByClass(attributeClass)
+	if not isstring(attributeClass) or attributeClass == "" then return nil end
+	if not istable(tf_items) or not istable(tf_items.AttributesByID) then return nil end
+
+	if not attributeDefsByClass then
+		attributeDefsByClass = {}
+		for _, def in pairs(tf_items.AttributesByID) do
+			if istable(def) and isstring(def.attribute_class) and def.attribute_class ~= "" and not attributeDefsByClass[def.attribute_class] then
+				attributeDefsByClass[def.attribute_class] = def
+			end
+		end
+	end
+
+	return attributeDefsByClass[attributeClass]
+end
+
+local function getAttributeEffectIndex(effectType)
+	if effectType == "positive" then return 3 end
+	if effectType == "negative" then return 4 end
+	return 2
+end
+
+local function formatAttributeValue(att, def)
+	local value = tonumber(att and att.value)
+	if not value then return nil end
+
+	local formatType = isstring(def and def.description_format) and def.description_format or ""
+	if formatType == "value_is_percentage" then
+		return string.format("%+.0f%%", (value - 1) * 100)
+	elseif formatType == "value_is_inverted_percentage" then
+		return string.format("%+.0f%%", (1 - value) * 100)
+	elseif formatType == "value_is_additive_percentage" then
+		return string.format("%+.0f%%", value * 100)
+	elseif formatType == "value_is_additive" then
+		if math.abs(value - math.floor(value)) < 0.001 then
+			return string.format("%+d", math.floor(value))
+		end
+		return string.format("%+.2f", value)
+	end
+
+	if value ~= 0 and value ~= 1 then
+		if math.abs(value - math.floor(value)) < 0.001 then
+			return string.format("%+d", math.floor(value))
+		end
+		return string.format("%+.2f", value)
+	end
+
+	return nil
+end
+
+local function buildItemTooltipAttributes(item)
+	local lines = {}
+	if not istable(item) then return lines end
+
+	local function addFromContainer(container)
+		if not istable(container) then return end
+		for _, att in pairs(container) do
+			if istable(att) then
+				local def = getAttributeDefByClass(att.attribute_class)
+				local baseText
+				if def and isstring(def.description_string) and def.description_string ~= "" then
+					baseText = tf_lang.GetRaw(def.description_string)
+					if string.sub(def.description_string, 1, 1) == "#" and isstring(baseText) and string.sub(baseText, 1, 1) == "#" then
+						baseText = nil
+					end
+				end
+				baseText = baseText or (def and def.name) or att.name or att.attribute_class
+				if isstring(baseText) and baseText ~= "" then
+					local valueText = formatAttributeValue(att, def)
+					local fullText = baseText
+					if valueText then
+						local replacedCount
+						fullText, replacedCount = string.gsub(fullText, "%%s%d*", valueText)
+						if replacedCount == 0 then
+							fullText = valueText .. " " .. fullText
+						end
+					end
+					fullText = string.Trim(string.gsub(fullText, "%%s%d*", ""))
+					lines[#lines + 1] = {
+						name = fullText,
+						[2] = getAttributeEffectIndex(def and def.effect_type),
+					}
+				end
+			end
+		end
+	end
+
+	addFromContainer(item.attributes)
+	addFromContainer(item.static_attrs)
+
+	if #lines == 0 then
+		lines[1] = { name = "No special attributes", [2] = 2 }
+	end
+
+	return lines
+end
+
+local function getLocalizedTokenText(token)
+	if not isstring(token) or token == "" then return nil end
+	local resolved = tf_lang.GetRaw(token)
+	if not isstring(resolved) or resolved == "" then return nil end
+	if string.sub(token, 1, 1) == "#" and string.sub(resolved, 1, 1) == "#" then
+		return nil
+	end
+	return resolved
+end
+
+local function getTooltipDisplayName(item)
+	if not istable(item) then return "UNKNOWN ITEM" end
+	return getLocalizedTokenText(item.item_name) or item.name or "UNKNOWN ITEM"
+end
+
+local function getTooltipQuality(item)
+	local q = istable(item) and item.item_quality or nil
+	if not isstring(q) or q == "" then
+		return "Unique"
+	end
+	return string.upper(string.sub(q, 1, 1)) .. string.sub(q, 2)
+end
+
+local function getTooltipLevelText(item)
+	if not istable(item) then return nil end
+	local level = tonumber(item.min_ilevel) or tonumber(item.item_level) or tonumber(item.max_ilevel) or 1
+	local typeName = getLocalizedTokenText(item.item_type_name) or (isstring(item.item_slot) and string.upper(string.sub(item.item_slot, 1, 1)) .. string.sub(item.item_slot, 2) .. " Item") or "Item"
+	return string.format("Level %d %s", math.floor(level), typeName)
+end
+
+local function getTooltipDescription(item)
+	if not istable(item) then return nil end
+	return getLocalizedTokenText(item.item_description)
+end
+
+local function makeLoadoutItemEntry(item)
+	if not istable(item) then
+		return {"NONE", "Normal", surface.GetTextureID(""), {}, nil, nil, nil, nil}
+	end
+
+	local tex = surface.GetTextureID(isstring(item.image_inventory) and item.image_inventory or "")
+	return {
+		getTooltipDisplayName(item),
+		getTooltipQuality(item),
+		tex,
+		buildItemTooltipAttributes(item),
+		item,
+		getTooltipLevelText(item),
+		getTooltipDescription(item),
+		nil,
+	}
+end
+
+local function makeLoadoutPlaceholder(label)
+	return {
+		label or "NONE",
+		"Normal",
+		surface.GetTextureID(""),
+		{},
+		nil,
+		nil,
+		nil,
+		nil,
+	}
+end
+
+local function normalizeLoadoutSplit(split)
+	local out = {}
+	for i = 1, LOADOUT_SLOT_COUNT do
+		out[i] = tostring(tonumber(split and split[i]) or -1)
+	end
+	return out
+end
+
+local function isActionSlotItem(item)
+	if not istable(item) then return false end
+	if item.item_slot == "action" then return true end
+	if item.item_class == "tf_powerup_bottle" then return true end
+	if isstring(item.prefab) and string.find(string.lower(item.prefab), "powerup_bottle", 1, true) then
+		return true
+	end
+	if istable(item.tool) and item.tool.type == "powerup_bottle" then
+		return true
+	end
+
+	local itemTypeLocalized = ""
+	if tf_lang and tf_lang.GetRaw then
+		itemTypeLocalized = string.lower(tostring(tf_lang.GetRaw(item.item_type_name) or ""))
+	end
+	if itemTypeLocalized ~= "" and string.find(itemTypeLocalized, "usable", 1, true) then
+		local name = string.lower(tostring(item.name or ""))
+		local localized = ""
+		if tf_lang and tf_lang.GetRaw then
+			localized = string.lower(tostring(tf_lang.GetRaw(item.item_name) or ""))
+		end
+		if string.find(name, "power up canteen", 1, true) or string.find(localized, "canteen", 1, true) then
+			return true
+		end
+	end
+
+	if isstring(item.item_name) and item.item_name == "#TF_Usable_PowerupBottle" then
+		return true
+	end
+
+	return false
+end
+
+local function buildLoadoutItemStatsLines(className, loadoutSplit)
+	local neutralCol = Color(214, 202, 178, 255)
+	local negativeCol = (Colors and Colors.ItemAttribNegative) or Color(235, 80, 80, 255)
+
+	if not isstring(className) or not istable(loadoutSplit) then
+		return {
+			{ text = "Item stats unavailable.", col = neutralCol },
+		}
+	end
+
+	local byId = {}
+	for _, item in pairs(tf_items.Items or {}) do
+		if istable(item) then
+			local id = tonumber(item.id)
+			if id and not byId[id] then
+				byId[id] = item
+			end
+		end
+	end
+
+	local function getSlotLabel(slot)
+		local swapped = className == "demoman" or className == "spy"
+		if slot == 1 then return swapped and "Secondary" or "Primary" end
+		if slot == 2 then return swapped and "Primary" or "Secondary" end
+		if slot == 3 then return "Melee" end
+		if slot == 4 then return "Cosmetic 1" end
+		if slot == 5 then return "Cosmetic 2" end
+		if slot == 6 then return "Cosmetic 3" end
+		if slot == 7 then return "Action" end
+		return "Slot " .. tostring(slot)
+	end
+
+	local function getItemDisplayName(item)
+		return getTooltipDisplayName(item)
+	end
+
+	local function getItemStatSummary(item)
+		if not istable(item) then return nil end
+		local attrs = buildItemTooltipAttributes(item)
+		local out = {}
+		for _, line in ipairs(attrs) do
+			if istable(line) and line[2] == 4 and isstring(line.name) and line.name ~= "" and line.name ~= "No special attributes" then
+				out[#out + 1] = line.name
+			end
+		end
+		if #out == 0 then
+			return nil
+		end
+		if #out > 3 then
+			local trimmed = { out[1], out[2], out[3] }
+			return table.concat(trimmed, ", ") .. " ..."
+		end
+		return table.concat(out, ", ")
+	end
+
+	local lines = {
+		{ text = "EQUIPPED ITEM STATS", col = neutralCol },
+	}
+
+	for slot = 1, LOADOUT_SLOT_COUNT do
+		local itemId = tonumber(loadoutSplit[slot])
+		if itemId and itemId > 0 then
+			local item = byId[itemId]
+			if istable(item) then
+				local negativeSummary = getItemStatSummary(item)
+				if negativeSummary then
+					lines[#lines + 1] = {
+						text = getSlotLabel(slot) .. ": " .. getItemDisplayName(item),
+						col = neutralCol,
+					}
+					lines[#lines + 1] = {
+						text = "  " .. negativeSummary,
+						col = negativeCol,
+					}
+				end
+			end
+		end
+	end
+
+	if #lines <= 1 then
+		lines[#lines + 1] = { text = "No negative equipped item stats.", col = neutralCol }
+	end
+
+	return lines
+end
+
 
 function PANEL:Init()
 	self:SetPaintBackgroundEnabled(true)
@@ -61,22 +369,19 @@ function PANEL:Init()
 end
 
 local function updateLoadout(type, id, update, class)
-    local convar = GetConVar("loadout_" .. class)
-    local split = string.Split(convar:GetString(), ",")
+	local convar = GetConVar("loadout_" .. class)
+	if not convar then return end
+	local slot = tonumber(type)
+	if not slot or slot < 1 or slot > LOADOUT_SLOT_COUNT then return end
 
-    if #split == 6 then
-        split[type] = id
-    else
-        split = {-1, -1, -1, -1, -1, -1}
-        split[type] = id
-    end
-
-    convar:SetString(table.concat(split, ","))
-    if update then
-        timer.Simple(0.3, function()
-            RunConsoleCommand("loadout_update")
-        end)
-    end
+	local split = normalizeLoadoutSplit(string.Split(convar:GetString(), ","))
+	split[slot] = tostring(tonumber(id) or -1)
+	convar:SetString(table.concat(split, ","))
+	if update then
+		timer.Simple(0.3, function()
+			RunConsoleCommand("loadout_update")
+		end)
+	end
 end
 
 function PANEL:PerformLayout()
@@ -105,8 +410,25 @@ function PANEL:PerformLayout()
 		oldclass = "spy"
 	end
 	local convar = GetConVar("loadout_" .. oldclass)
+	if not convar then return end
+
+	local screenW, screenH = ScrW(), ScrH()
+	local layoutScale = math.Clamp(math.min(screenW / 1920, screenH / 1080), 0.78, 1.30)
+	local slotWide = math.floor(306 * layoutScale)
+	local slotTall = math.floor(150 * layoutScale)
+	local slotGapY = math.floor(14 * layoutScale)
+	local slotStartY = math.floor(130 * layoutScale)
+	local leftColumnX = math.floor(screenW * 0.13)
+	local rightColumnX = screenW - leftColumnX - slotWide
+	local tooltipOffsetLeft = math.floor((slotWide / Scale) + 12)
+	local tooltipOffsetRight = -math.floor((slotWide / Scale) + 14)
+	local tooltipOffsetY = math.floor(6 * layoutScale)
+	local classPanelW = math.floor(390 * layoutScale)
+	local classPanelH = math.floor(640 * layoutScale)
+	local classPanelX = math.floor((screenW - classPanelW) * 0.5)
+	local classPanelY = math.floor(74 * layoutScale)
 	
-	local weapons = {{}, {}, {}, {}}
+	local weapons = {{}, {}, {}, {}, {}}
 
 	for id, item in pairs(tf_items.Items) do
 		if istable(item) and item.used_by_classes and item.used_by_classes[oldclass] then
@@ -119,6 +441,8 @@ function PANEL:PerformLayout()
 					weapons[3][id] = item -- weapon3:AddChoice(item.name, item.id)
 				elseif item.item_slot == "head" or item.item_slot == "misc" then
 					weapons[4][id] = item -- weapon3:AddChoice(item.name, item.id)
+				elseif isActionSlotItem(item) then
+					weapons[5][id] = item
 				end
 			else
 				if item.item_slot == "primary" then
@@ -129,18 +453,20 @@ function PANEL:PerformLayout()
 					weapons[3][id] = item -- weapon3:AddChoice(item.name, item.id)
 				elseif item.item_slot == "head" or item.item_slot == "misc" then
 					weapons[4][id] = item -- weapon3:AddChoice(item.name, item.id)
+				elseif isActionSlotItem(item) then
+					weapons[5][id] = item
 				end
 			end
 		end
 	end
 	
-	loadout = string.Split(convar:GetString(), ",")
+	local loadout = normalizeLoadoutSplit(string.Split(convar:GetString(), ","))
 
 	-- The attribute panel, which displays the name and attributes of each item
 	if not self.AttributePanel then
 		local t = vgui.Create("ItemAttributePanel")
 		t:SetParent(self)
-		t:SetSize(168*Scale,300*Scale)
+		t:SetSize(236*Scale,252*Scale)
 		t.text_ypos = 20
 		
 		self.AttributePanel = t
@@ -148,68 +474,111 @@ function PANEL:PerformLayout()
 	
 		
 	local Items = {
-		{"NONE", "Normal", surface.GetTextureID(""), ATT4},
-		{"NONE", "Normal", surface.GetTextureID(""), ATT4},
-		{"NONE", "Normal", surface.GetTextureID(""), ATT4},
-		{"NONE", "Normal", surface.GetTextureID(""), ATT4},
-		{"NONE", "Normal", surface.GetTextureID(""), ATT4},
-		{"NONE", "Normal", surface.GetTextureID(""), ATT4},
+		makeLoadoutPlaceholder("PRIMARY"),
+		makeLoadoutPlaceholder("SECONDARY"),
+		makeLoadoutPlaceholder("MELEE"),
+		makeLoadoutPlaceholder("COSMETIC"),
+		makeLoadoutPlaceholder("COSMETIC"),
+		makeLoadoutPlaceholder("COSMETIC"),
+		makeLoadoutPlaceholder("ACTION"),
 	}
 
 	for name, wep in pairs(tf_items.Items) do
 		if istable(wep) then	
 			if GetConVar("tf_hud_loadout_class"):GetInt() != 4 && GetConVar("tf_hud_loadout_class"):GetInt() != 9 then
 				if wep.id == tonumber(loadout[1]) then
-					Items[1] = {tf_lang.GetRaw(wep.item_name), "Unique", surface.GetTextureID(wep.image_inventory), {}}
+					Items[1] = makeLoadoutItemEntry(wep)
 				elseif wep.id == tonumber(loadout[2]) then
-					Items[2] = {tf_lang.GetRaw(wep.item_name), "Unique", surface.GetTextureID(wep.image_inventory), {}}
+					Items[2] = makeLoadoutItemEntry(wep)
 				elseif wep.id == tonumber(loadout[3]) then
-					Items[3] = {wep.name, "Unique", surface.GetTextureID(wep.image_inventory), {}}
+					Items[3] = makeLoadoutItemEntry(wep)
 				elseif wep.id == tonumber(loadout[4]) then
-					Items[4] = {wep.name, "Unique", surface.GetTextureID(wep.image_inventory), {}}
+					Items[4] = makeLoadoutItemEntry(wep)
 				elseif wep.id == tonumber(loadout[5]) then
-					Items[5] = {wep.name, "Unique", surface.GetTextureID(wep.image_inventory), {}}
+					Items[5] = makeLoadoutItemEntry(wep)
 				elseif wep.id == tonumber(loadout[6]) then
-					Items[6] = {wep.name, "Unique", surface.GetTextureID(wep.image_inventory), {}}
+					Items[6] = makeLoadoutItemEntry(wep)
+				elseif wep.id == tonumber(loadout[7]) then
+					Items[7] = makeLoadoutItemEntry(wep)
 				end
 			else
 				if wep.id == tonumber(loadout[1]) then
-					Items[2] = {tf_lang.GetRaw(wep.item_name), "Unique", surface.GetTextureID(wep.image_inventory), {}}
+					Items[2] = makeLoadoutItemEntry(wep)
 				elseif wep.id == tonumber(loadout[2]) then
-					Items[1] = {tf_lang.GetRaw(wep.item_name), "Unique", surface.GetTextureID(wep.image_inventory), {}}
+					Items[1] = makeLoadoutItemEntry(wep)
 				elseif wep.id == tonumber(loadout[3]) then
-					Items[3] = {wep.name, "Unique", surface.GetTextureID(wep.image_inventory), {}}
+					Items[3] = makeLoadoutItemEntry(wep)
 				elseif wep.id == tonumber(loadout[4]) then
-					Items[4] = {wep.name, "Unique", surface.GetTextureID(wep.image_inventory), {}}
+					Items[4] = makeLoadoutItemEntry(wep)
 				elseif wep.id == tonumber(loadout[5]) then
-					Items[5] = {wep.name, "Unique", surface.GetTextureID(wep.image_inventory), {}}
+					Items[5] = makeLoadoutItemEntry(wep)
 				elseif wep.id == tonumber(loadout[6]) then
-					Items[6] = {wep.name, "Unique", surface.GetTextureID(wep.image_inventory), {}}
+					Items[6] = makeLoadoutItemEntry(wep)
+				elseif wep.id == tonumber(loadout[7]) then
+					Items[7] = makeLoadoutItemEntry(wep)
 				end
 			end
 		end
 	end
+	local function getSlotPanelLayout(slotIndex)
+		if slotIndex <= 3 then
+			local row = slotIndex - 1
+			return leftColumnX, slotStartY + row * (slotTall + slotGapY), tooltipOffsetLeft
+		end
+		local row = slotIndex - 4
+		return rightColumnX, slotStartY + row * (slotTall + slotGapY), tooltipOffsetRight
+	end
+
 	-- The item panels, with the name and a picture of each item currently equipped
+	if self.ItemPanels and #self.ItemPanels ~= #Items then
+		for _, panel in ipairs(self.ItemPanels) do
+			if IsValid(panel) then
+				panel:Remove()
+			end
+		end
+		self.ItemPanels = nil
+	end
+
 	if not self.ItemPanels then
 		self.ItemPanels = {}
-		local x, y = W/2+item_center_xoffset1*Scale, 60*Scale
-		local xoffset, yoffset = attributes_xoffset1*Scale, attributes_yoffset*Scale
-		for k,v in ipairs(Items) do
+		for k = 1, #Items do
 			local t = vgui.Create("ItemModelPanel")
 			t:SetParent(self)
-			t:SetPos(x, y)
-			t:SetSize(140*Scale, 75*Scale)
-			t.model_ypos = 5
-			t.model_tall = 55
 			t.activeImage = loadout_rect_mouseover
 			t.inactiveImage = loadout_rect
+			self.ItemPanels[k] = t
+		end
+	end
+
+	local useSwappedLoadoutSlots = GetConVar("tf_hud_loadout_class"):GetInt() == 4 || GetConVar("tf_hud_loadout_class"):GetInt() == 9
+
+	for k, v in ipairs(Items) do
+		local t = self.ItemPanels[k]
+		if IsValid(t) then
+			local x, y, xoffset = getSlotPanelLayout(k)
+			local unscaledTall = math.max(40, math.floor(slotTall / Scale))
+
+			t:SetPos(x, y)
+			t:SetSize(slotWide, slotTall)
+			t.model_ypos = 5
+			t.model_tall = math.max(30, math.floor(unscaledTall * 0.62))
+			t.text_ypos = math.max(32, math.floor(unscaledTall * 0.78))
+			t.text_xpos = 0
+			t.text_wide = math.max(80, math.floor(slotWide / Scale))
 			t.itemImage = v[3]
 			t.text = v[1]
-			t.text_ypos = 60
-			t.attributes = v[4]
+			t.attributes = nil
+			t.tooltip_attributes = v[4]
+			t.tooltip_name = v[1]
+			t.tooltip_image = v[3]
+			t.tooltip_leveltext = v[6]
+			t.tooltip_description = v[7]
+			t.tooltip_flavor = v[8]
+			t.number = nil
 			t:SetQuality(v[2])
-			
-			if GetConVar("tf_hud_loadout_class"):GetInt() != 4 && GetConVar("tf_hud_loadout_class"):GetInt() != 9 then
+			t:SetAttributePanel(self.AttributePanel, xoffset, tooltipOffsetY)
+
+			if not useSwappedLoadoutSlots then
 				if (k == 1) then
 					t.DoClick = function() itemSelector(1, weapons[1], self:GetParent(), GetConVar("tf_hud_loadout_class"):GetInt(), oldclass) end
 				elseif (k == 2) then
@@ -222,9 +591,11 @@ function PANEL:PerformLayout()
 					t.DoClick = function() hatSelector("hat",5,oldclass,weapons[4]) end
 				elseif (k == 6) then
 					t.DoClick = function() hatSelector("hat",6,oldclass,weapons[4]) end
+				elseif (k == 7) then
+					t.DoClick = function() actionSelector(7, oldclass, weapons[5]) end
 				end
 			else
-				if (k == 2) then 
+				if (k == 2) then
 					t.DoClick = function() itemSelector(1, weapons[2], self:GetParent(), GetConVar("tf_hud_loadout_class"):GetInt(), oldclass) end
 				elseif (k == 1) then
 					t.DoClick = function() itemSelector(2, weapons[1], self:GetParent(), GetConVar("tf_hud_loadout_class"):GetInt(), oldclass) end
@@ -236,18 +607,9 @@ function PANEL:PerformLayout()
 					t.DoClick = function() hatSelector("hat",5,oldclass,weapons[4]) end
 				elseif (k == 6) then
 					t.DoClick = function() hatSelector("hat",6,oldclass,weapons[4]) end
+				elseif (k == 7) then
+					t.DoClick = function() actionSelector(7, oldclass, weapons[5]) end
 				end
-			end
-			
-			--t:SetAttributePanel(self.AttributePanel, xoffset, yoffset)
-			self.ItemPanels[k] = t
-			
-			if k==3 then
-				x = W/2+item_center_xoffset2*Scale
-				xoffset = attributes_xoffset2*Scale
-				y = 60*Scale
-			else
-				y = y + 80*Scale
 			end
 		end
 	end
@@ -260,21 +622,35 @@ function PANEL:PerformLayout()
 	if not self.BackButton then
 		self.BackButton = vgui.Create("TFButton")
 		self.BackButton:SetParent(self)
-		self.BackButton:SetPos(W/2 - 310*Scale,320*Scale) 
-		self.BackButton:SetSize(100*Scale,25*Scale)
 		self.BackButton.labelText = "<< BACK"
 		self.BackButton.font = "HudFontSmallBold"
 		function self.BackButton:DoClick()
 			CharInfoLoadoutSubPanel:SelectClassLoadout(0)
 		end
 	end
+	self.BackButton:SetSize(100 * Scale, 25 * Scale)
+	self.BackButton:SetPos(W/2 - 310*Scale, 320*Scale)
+	self.BackButton:MoveToFront()
+
+	if not self.CloseLoadoutButton then
+		self.CloseLoadoutButton = vgui.Create("TFButton")
+		self.CloseLoadoutButton:SetParent(self)
+		self.CloseLoadoutButton.labelText = "CLOSE"
+		self.CloseLoadoutButton.font = "HudFontSmallBold"
+		function self.CloseLoadoutButton:DoClick()
+			forceCloseLoadoutPanels()
+		end
+	end
+	self.CloseLoadoutButton:SetSize(100 * Scale, 25 * Scale)
+	self.CloseLoadoutButton:SetPos(W/2 + 200*Scale, math.floor(H - self.CloseLoadoutButton:GetTall() - (H * 0.03)))
+	self.CloseLoadoutButton:MoveToFront()
 	local t
 	-- The class panel, shows the current class selected holding the last weapon equipped
 	if not self.ClassPanel then
 		t = vgui.Create("ClassModelPanel")
 		t:SetParent(self)
-		t:SetPos(W/2-100*Scale, 20*Scale)
-		t:SetSize(200*Scale, 340*Scale)
+		t:SetPos(classPanelX, classPanelY)
+		t:SetSize(classPanelW, classPanelH)
 		t.FOV = 50
 		t.spotlight = true
 		self.ClassPanel = t
@@ -467,6 +843,51 @@ function PANEL:PerformLayout()
 			end
 		end
 	end
+
+	if IsValid(self.ClassPanel) then
+		self.ClassPanel:SetPos(classPanelX, classPanelY)
+		self.ClassPanel:SetSize(classPanelW, classPanelH)
+	end
+
+	if IsValid(self.ItemStatsLabel) then
+		self.ItemStatsLabel:Remove()
+		self.ItemStatsLabel = nil
+	end
+
+	if not self.ItemStatsPanel then
+		self.ItemStatsPanel = vgui.Create("DPanel")
+		self.ItemStatsPanel:SetParent(self)
+		self.ItemStatsPanel:SetPos(classPanelX + math.floor(22 * layoutScale), classPanelY + classPanelH - math.floor(126 * layoutScale))
+		self.ItemStatsPanel:SetSize(classPanelW - math.floor(44 * layoutScale), math.floor(120 * layoutScale))
+		self.ItemStatsPanel:SetPaintBackground(false)
+		self.ItemStatsPanel.Lines = {}
+		self.ItemStatsPanel.Paint = function(pnl, w, h)
+			local y = 0
+			for _, line in ipairs(pnl.Lines or {}) do
+				local text = line and line.text or ""
+				if isstring(text) and text ~= "" then
+					local tab = {
+						x = 0,
+						y = y,
+						w = w,
+						h = h - y,
+						font = "ItemFontAttribSmall",
+						text = text,
+						col = line.col or Color(214, 202, 178, 255),
+						align = "north",
+						yspace = 1,
+					}
+					local th = tf_draw.LabelTextWrap(tab, true)
+					if y + th > h then break end
+					tf_draw.LabelTextWrap(tab)
+					y = y + th + 1
+				end
+			end
+		end
+	end
+	self.ItemStatsPanel:SetPos(classPanelX + math.floor(22 * layoutScale), classPanelY + classPanelH - math.floor(126 * layoutScale))
+	self.ItemStatsPanel:SetSize(classPanelW - math.floor(44 * layoutScale), math.floor(120 * layoutScale))
+	self.ItemStatsPanel.Lines = buildLoadoutItemStatsLines(oldclass, loadout)
 end
 
 
@@ -726,15 +1147,19 @@ function PANEL:Init()
 
 			function conflictbut2.DoClick()
 				conflict_help_frame:Close()
-				RunConsoleCommand("loadout_scout","-1,-1,-1,-1,-1,-1")
-				RunConsoleCommand("loadout_soldier","-1,-1,-1,-1,-1,-1")
-				RunConsoleCommand("loadout_pyro","-1,-1,-1,-1,-1,-1")
-				RunConsoleCommand("loadout_demoman","-1,-1,-1,-1,-1,-1")
-				RunConsoleCommand("loadout_heavy","-1,-1,-1,-1,-1,-1")
-				RunConsoleCommand("loadout_engineer","-1,-1,-1,-1,-1,-1")
-				RunConsoleCommand("loadout_medic","-1,-1,-1,-1,-1,-1")
-				RunConsoleCommand("loadout_sniper","-1,-1,-1,-1,-1,-1")
-				RunConsoleCommand("loadout_spy","-1,-1,-1,-1,-1,-1")
+				RunConsoleCommand("loadout_scout","-1,-1,-1,-1,-1,-1,-1")
+				RunConsoleCommand("loadout_soldier","-1,-1,-1,-1,-1,-1,-1")
+				RunConsoleCommand("loadout_pyro","-1,-1,-1,-1,-1,-1,-1")
+				RunConsoleCommand("loadout_demoman","-1,-1,-1,-1,-1,-1,-1")
+				RunConsoleCommand("loadout_heavy","-1,-1,-1,-1,-1,-1,-1")
+				RunConsoleCommand("loadout_engineer","-1,-1,-1,-1,-1,-1,-1")
+				RunConsoleCommand("loadout_medic","-1,-1,-1,-1,-1,-1,-1")
+				RunConsoleCommand("loadout_sniper","-1,-1,-1,-1,-1,-1,-1")
+				RunConsoleCommand("loadout_spy","-1,-1,-1,-1,-1,-1,-1")
+				forceCloseLoadoutPanels()
+				timer.Simple(5, function()
+					forceCloseLoadoutPanels()
+				end)
 			end
 	end
 	
@@ -763,6 +1188,7 @@ function PANEL:Init()
 			TF_OpenStandaloneBackpack(className, classIndex)
 		end
 	end
+
 end
 
 function PANEL:ResetButtons()
@@ -1012,6 +1438,10 @@ end
 local function mapItemToLoadoutSlot(item, className)
 	if not istable(item) then return nil end
 
+	if isActionSlotItem(item) then
+		return 7
+	end
+
 	if item.item_class == "tf_wearable_item" then
 		return 4
 	end
@@ -1211,9 +1641,24 @@ function TF_OpenStandaloneBackpack(initialClassName, initialClassIndex, forcedLo
 	local columns = 10
 	local rows = 5
 	local itemsById = buildItemsById()
+	local showStockItems = false
+	local showQualityBorders = true
+	local sortMode = "default"
+
+	local sw, sh = ScrW(), ScrH()
+	local frameX = math.max(18, math.floor(sw * 0.015))
+	local frameY = math.max(48, math.floor(sh * 0.105))
+	local frameW = sw - (frameX * 2)
+	local frameH = sh - frameY - math.max(18, math.floor(sh * 0.06))
+	local headerH = math.max(116, math.floor(frameH * 0.17))
+	local footerH = math.max(74, math.floor(frameH * 0.11))
+	local tabY = frameY - math.max(42, math.floor(24 * Scale))
+	local tabH = math.max(42, math.floor(24 * Scale))
+	local gridPadding = math.max(9, math.floor(4 * Scale))
+	local gridSpacing = math.max(4, math.floor(2 * Scale))
 
 	local panel = vgui.Create("EditablePanel")
-	panel:SetSize(ScrW(), ScrH())
+	panel:SetSize(sw, sh)
 	panel:SetPos(0, 0)
 	panel:MakePopup()
 	panel:SetKeyboardInputEnabled(true)
@@ -1222,6 +1667,19 @@ function TF_OpenStandaloneBackpack(initialClassName, initialClassIndex, forcedLo
 	panel.LoadoutMode = panel.ForcedLoadoutSlot ~= nil
 	TFStandaloneBackpackPanel = panel
 
+	local classPanelsToRestore = {}
+	local function hideClassPanelFrom(panelRef)
+		if IsValid(panelRef) and IsValid(panelRef.ClassPanel) then
+			classPanelsToRestore[#classPanelsToRestore + 1] = {
+				panel = panelRef.ClassPanel,
+				visible = panelRef.ClassPanel:IsVisible(),
+			}
+			panelRef.ClassPanel:SetVisible(false)
+		end
+	end
+	hideClassPanelFrom(CharInfoLoadoutSubPanel)
+	hideClassPanelFrom(FullLoadoutPanel)
+
 	function panel:OnKeyCodePressed(key)
 		if key == KEY_ESCAPE and IsValid(self) then
 			self:Remove()
@@ -1229,109 +1687,215 @@ function TF_OpenStandaloneBackpack(initialClassName, initialClassIndex, forcedLo
 	end
 
 	function panel:Paint(w, h)
-		surface.SetDrawColor(24, 21, 20, 248)
+		surface.SetDrawColor(14, 12, 11, 232)
 		surface.DrawRect(0, 0, w, h)
-		surface.SetDrawColor(44, 38, 34, 255)
-		surface.DrawRect(0, 0, w, 98)
-		surface.DrawRect(0, h - 72, w, 72)
-		surface.SetDrawColor(112, 100, 86, 255)
-		surface.DrawRect(0, 96, w, 2)
-		surface.DrawRect(0, h - 74, w, 2)
+
+		surface.SetDrawColor(39, 34, 31, 248)
+		surface.DrawRect(frameX, frameY, frameW, frameH)
+
+		surface.SetDrawColor(124, 112, 96, 255)
+		surface.DrawOutlinedRect(frameX, frameY, frameW, frameH, 1)
+
+		draw.RoundedBoxEx(12, frameX + 16, tabY, 280, tabH, Color(55, 49, 44, 255), true, true, false, false)
+		draw.RoundedBoxEx(12, frameX + 300, tabY, 228, tabH, Color(42, 37, 33, 245), true, true, false, false)
+
+		draw.SimpleText("LOADOUT", "HudFontMediumBold", frameX + 44, tabY + tabH * 0.54, Color(234, 224, 201, 255), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+		draw.SimpleText("STATS", "HudFontMediumBold", frameX + 334, tabY + tabH * 0.54, Color(152, 141, 124, 255), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+
+		draw.SimpleText(">>", "HudFontSmallBold", frameX + 76, frameY + 36, Color(200, 80, 60, 255), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+		draw.SimpleText("BACKPACK", "HudFontMediumBold", frameX + 112, frameY + 36, Color(235, 226, 202, 255), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
 	end
 
-	local titleLoadout = vgui.Create("DLabel", panel)
-	titleLoadout:SetPos(32, 18)
-	titleLoadout:SetSize(230, 28)
-	titleLoadout:SetFont("HudFontMediumBold")
-	titleLoadout:SetTextColor(Color(235, 226, 202, 255))
-	titleLoadout:SetText("LOADOUT")
-
-	local titleBackpack = vgui.Create("DLabel", panel)
-	titleBackpack:SetPos(208, 18)
-	titleBackpack:SetSize(260, 28)
-	titleBackpack:SetFont("HudFontMediumBold")
-	titleBackpack:SetTextColor(Color(170, 160, 146, 255))
-	titleBackpack:SetText("BACKPACK")
-
 	local searchLabel = vgui.Create("DLabel", panel)
-	searchLabel:SetPos(panel:GetWide() - 410, 56)
-	searchLabel:SetSize(72, 22)
 	searchLabel:SetText("SEARCH:")
 	searchLabel:SetTextColor(Color(205, 193, 167, 255))
 	searchLabel:SetFont("HudFontSmallBold")
 
 	local searchEntry = vgui.Create("DTextEntry", panel)
-	searchEntry:SetPos(panel:GetWide() - 326, 54)
-	searchEntry:SetSize(296, 26)
-	searchEntry:SetFont("HudFontSmall")
+	searchEntry:SetFont("HudFontSmallBold")
 	searchEntry:SetUpdateOnType(true)
+	searchEntry:SetTextColor(Color(34, 31, 26, 255))
+	searchEntry:SetDrawBackground(false)
+	searchEntry.Paint = function(self, w, h)
+		draw.RoundedBox(4, 0, 0, w, h, Color(228, 219, 191, 255))
+		surface.SetDrawColor(85, 75, 63, 255)
+		surface.DrawOutlinedRect(0, 0, w, h, 1)
+		self:DrawTextEntryText(Color(37, 34, 28, 255), Color(37, 34, 28, 255), Color(37, 34, 28, 255))
+	end
+
+	local helpButton = vgui.Create("DButton", panel)
+	helpButton:SetText("?")
+	helpButton:SetFont("HudFontMediumBold")
+	helpButton:SetTextColor(Color(241, 232, 210, 255))
+	helpButton.Paint = function(self, w, h)
+		draw.RoundedBox(4, 0, 0, w, h, self:IsHovered() and Color(152, 142, 124, 255) or Color(124, 113, 97, 255))
+		surface.SetDrawColor(85, 75, 63, 255)
+		surface.DrawOutlinedRect(0, 0, w, h, 1)
+	end
+	helpButton.DoClick = function()
+		chat.AddText(Color(214, 202, 178), "[TF2-Gamemode] Use search/sort to filter backpack items. Right click any item for Inspect.")
+	end
 
 	local stockCheckbox = vgui.Create("DCheckBoxLabel", panel)
-	stockCheckbox:SetPos(520, 50)
 	stockCheckbox:SetText("SHOW STOCK ITEMS")
 	stockCheckbox:SetFont("HudFontSmallBold")
 	stockCheckbox:SetTextColor(Color(224, 214, 186, 255))
 	stockCheckbox:SetValue(0)
 	stockCheckbox:SizeToContents()
+	if IsValid(stockCheckbox.Button) then
+		stockCheckbox.Button:SetSize(26, 26)
+		stockCheckbox.Button.Paint = function(btn, w, h)
+			draw.RoundedBox(0, 0, 0, w, h, Color(26, 23, 20, 255))
+			surface.SetDrawColor(232, 222, 196, 255)
+			surface.DrawOutlinedRect(0, 0, w, h, 2)
+			if stockCheckbox:GetChecked() then
+				surface.SetDrawColor(238, 228, 203, 255)
+				surface.DrawRect(6, 6, w - 12, h - 12)
+			end
+		end
+	end
+	stockCheckbox.OnChange = function(_, val)
+		showStockItems = val == true
+		currentPage = 1
+		panel:BuildItems()
+	end
+
+	local function styleCombo(combo)
+		combo:SetTextColor(Color(233, 223, 198, 255))
+		combo:SetFont("HudFontSmallBold")
+		combo.Paint = function(self, w, h)
+			draw.RoundedBox(0, 0, 0, w, h, Color(45, 40, 35, 255))
+			surface.SetDrawColor(208, 196, 168, 255)
+			surface.DrawOutlinedRect(0, 0, w, h, 1)
+			draw.SimpleText(self:GetValue() or "", "HudFontSmallBold", 8, h * 0.5, Color(234, 224, 201, 255), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+			local cx, cy = w - 18, h * 0.5 + 1
+			draw.NoTexture()
+			surface.SetDrawColor(232, 222, 195, 255)
+			surface.DrawPoly({
+				{x = cx - 7, y = cy - 4},
+				{x = cx + 7, y = cy - 4},
+				{x = cx, y = cy + 5},
+			})
+		end
+		if IsValid(combo.DropButton) then
+			combo.DropButton:SetText("")
+			combo.DropButton.Paint = function() end
+		end
+	end
 
 	local qualityDropdown = vgui.Create("DComboBox", panel)
-	qualityDropdown:SetPos(520, 74)
-	qualityDropdown:SetSize(320, 24)
-	qualityDropdown:SetFont("HudFontSmall")
+	styleCombo(qualityDropdown)
+	qualityDropdown:AddChoice("SHOW QUALITY COLOR BORDERS", true)
+	qualityDropdown:AddChoice("HIDE QUALITY COLOR BORDERS", false)
 	qualityDropdown:SetValue("SHOW QUALITY COLOR BORDERS")
-	qualityDropdown:AddChoice("SHOW QUALITY COLOR BORDERS")
+	qualityDropdown.OnSelect = function(_, _, _, data)
+		showQualityBorders = data ~= false
+		panel:BuildItems()
+	end
 
 	local sortDropdown = vgui.Create("DComboBox", panel)
-	sortDropdown:SetPos(panel:GetWide() - 326, 82)
-	sortDropdown:SetSize(296, 24)
-	sortDropdown:SetFont("HudFontSmall")
+	styleCombo(sortDropdown)
+	sortDropdown:AddChoice("SORT BACKPACK", "default")
+	sortDropdown:AddChoice("SORT BY QUALITY", "quality")
+	sortDropdown:AddChoice("SORT BY TYPE", "type")
+	sortDropdown:AddChoice("SORT BY CLASS", "class")
+	sortDropdown:AddChoice("SORT BY LOADOUT SLOT", "slot")
+	sortDropdown:AddChoice("SORT BY DATE", "date")
 	sortDropdown:SetValue("SORT BACKPACK")
-	sortDropdown:AddChoice("SORT BACKPACK")
+	sortDropdown.OnSelect = function(_, _, _, data)
+		sortMode = isstring(data) and data or "default"
+		currentPage = 1
+		panel:BuildItems()
+	end
 
 	local infoLabel = vgui.Create("DLabel", panel)
-	infoLabel:SetPos(30, 58)
-	infoLabel:SetSize(panel:GetWide() - 60, 22)
 	infoLabel:SetTextColor(Color(190, 178, 155, 255))
 	infoLabel:SetFont("HudFontSmall")
 
+	local backpackAttributePanel = vgui.Create("ItemAttributePanel")
+	backpackAttributePanel:SetParent(panel)
+	backpackAttributePanel:SetSize(320 * Scale, 340 * Scale)
+	backpackAttributePanel.text_ypos = 24
+	backpackAttributePanel:SetMouseInputEnabled(false)
+
 	local gridPanel = vgui.Create("EditablePanel", panel)
-	gridPanel:SetPos(30, 110)
-	gridPanel:SetSize(panel:GetWide() - 60, panel:GetTall() - 196)
 	function gridPanel:Paint(w, h)
-		surface.SetDrawColor(29, 25, 22, 255)
+		surface.SetDrawColor(36, 31, 28, 255)
 		surface.DrawRect(0, 0, w, h)
-		surface.SetDrawColor(110, 98, 84, 255)
+		surface.SetDrawColor(112, 99, 85, 255)
 		surface.DrawOutlinedRect(0, 0, w, h, 1)
 	end
 
 	local itemicons = vgui.Create("DIconLayout", gridPanel)
 	itemicons:Dock(FILL)
-	itemicons:SetBorder(10)
-	itemicons:SetSpaceX(6)
-	itemicons:SetSpaceY(6)
+	itemicons:SetBorder(gridPadding)
+	itemicons:SetSpaceX(gridSpacing)
+	itemicons:SetSpaceY(gridSpacing)
 
 	local pageBar = vgui.Create("DIconLayout", panel)
-	pageBar:SetPos(164, panel:GetTall() - 38)
-	pageBar:SetSize(panel:GetWide() - 328, 26)
-	pageBar:SetSpaceX(6)
-	pageBar:SetSpaceY(0)
+	pageBar:SetSpaceX(5)
+	pageBar:SetSpaceY(5)
 
 	local backBtn = vgui.Create("TFButton", panel)
-	backBtn:SetSize(120, 30)
-	backBtn:SetPos(30, panel:GetTall() - 40)
-	backBtn.labelText = "BACK"
+	backBtn:SetSize(200, 36)
+	backBtn.labelText = "<< BACK"
 	backBtn.font = "HudFontSmallBold"
 	function backBtn:DoClick()
 		if IsValid(panel) then panel:Remove() end
 	end
 
 	local closeBtn = vgui.Create("TFButton", panel)
-	closeBtn:SetSize(120, 30)
-	closeBtn:SetPos(panel:GetWide() - 150, panel:GetTall() - 40)
+	closeBtn:SetSize(170, 36)
 	closeBtn.labelText = "CLOSE"
 	closeBtn.font = "HudFontSmallBold"
 	function closeBtn:DoClick()
 		if IsValid(panel) then panel:Remove() end
+	end
+
+	local function layoutBackpackUI()
+		local rightControlW = math.Clamp(math.floor(frameW * 0.18), 220, 360)
+		local rightX = frameX + frameW - rightControlW - 18
+		local centerX = frameX + math.floor(frameW * 0.44)
+
+		searchLabel:SetPos(rightX, frameY + 18)
+		searchLabel:SetSize(120, 24)
+
+		searchEntry:SetPos(rightX + 70, frameY + 14)
+		searchEntry:SetSize(rightControlW - 116, 34)
+
+		helpButton:SetPos(rightX + rightControlW - 36, frameY + 15)
+		helpButton:SetSize(30, 30)
+
+		stockCheckbox:SetPos(centerX, frameY + 16)
+		stockCheckbox:SizeToContents()
+
+		qualityDropdown:SetPos(centerX - 2, frameY + 56)
+		qualityDropdown:SetSize(math.Clamp(math.floor(frameW * 0.31), 280, 380), 32)
+
+		sortDropdown:SetPos(rightX, frameY + 56)
+		sortDropdown:SetSize(rightControlW, 32)
+
+		infoLabel:SetPos(frameX + 20, frameY + 92)
+		infoLabel:SetSize(frameW - 40, 24)
+
+		local gridY = frameY + headerH
+		local gridH = frameH - headerH - footerH
+		gridPanel:SetPos(frameX + 12, gridY)
+		gridPanel:SetSize(frameW - 24, gridH)
+
+		local buttonY = frameY + frameH - footerH + math.floor((footerH - backBtn:GetTall()) * 0.5)
+		backBtn:SetPos(frameX + 16, buttonY)
+		closeBtn:SetPos(frameX + frameW - closeBtn:GetWide() - 16, buttonY)
+
+		local pageX = backBtn:GetX() + backBtn:GetWide() + 12
+		local pageW = math.max(120, closeBtn:GetX() - pageX - 12)
+		pageBar:SetPos(pageX, frameY + frameH - footerH + 9)
+		pageBar:SetSize(pageW, footerH - 18)
+	end
+
+	layoutBackpackUI()
+	panel.OnSizeChanged = function()
+		layoutBackpackUI()
 	end
 
 	local matValidity = {}
@@ -1435,7 +1999,62 @@ function TF_OpenStandaloneBackpack(initialClassName, initialClassIndex, forcedLo
 		melee = 3,
 		head = 4,
 		misc = 4,
+		action = 5,
 	}
+
+	local function sortSlotName(item)
+		if isActionSlotItem(item) then
+			return "action"
+		end
+		return item and item.item_slot or nil
+	end
+
+	local qualitySortRank = {
+		normal = 1,
+		unique = 2,
+		vintage = 3,
+		genuine = 4,
+		strange = 5,
+		haunted = 6,
+		collectors = 7,
+		unusual = 8,
+	}
+
+	local function isStockItem(item)
+		if not istable(item) then return false end
+		local q = string.lower(tostring(item.item_quality or ""))
+		if q == "normal" then return true end
+		return item.baseitem == true or item.default == true
+	end
+
+	local function qualityName(item)
+		local q = string.lower(tostring(item and item.item_quality or ""))
+		if q == "" then
+			q = "unique"
+		end
+		return q
+	end
+
+	local function qualityRank(item)
+		return qualitySortRank[qualityName(item)] or 0
+	end
+
+	local function getQualityDisplayName(item)
+		local q = qualityName(item)
+		return string.upper(string.sub(q, 1, 1)) .. string.sub(q, 2)
+	end
+
+	local function getQualityBorderColor(item)
+		if not showQualityBorders then
+			return Color(141, 130, 112, 255)
+		end
+
+		local qualityKey = "QualityColor" .. getQualityDisplayName(item)
+		if Colors and Colors[qualityKey] then
+			return Colors[qualityKey]
+		end
+		return Color(238, 210, 68, 255)
+	end
 
 	searchEntry.OnValueChange = function()
 		currentPage = 1
@@ -1464,9 +2083,10 @@ function TF_OpenStandaloneBackpack(initialClassName, initialClassIndex, forcedLo
 		local rawCandidates = {}
 		for _, item in pairs(tf_items.Items or {}) do
 			local defindex = istable(item) and tonumber(item.id) or nil
-			if istable(item) and defindex and isstring(item.item_slot) then
-				if item.item_slot == "primary" or item.item_slot == "secondary" or item.item_slot == "melee" or item.item_slot == "head" or item.item_slot == "misc" then
-					if steamSet and steamSet[defindex] then
+			if istable(item) and defindex then
+				if item.item_slot == "primary" or item.item_slot == "secondary" or item.item_slot == "melee" or item.item_slot == "head" or item.item_slot == "misc" or item.item_slot == "action" or isActionSlotItem(item) then
+					local owned = steamSet and steamSet[defindex]
+					if owned or (showStockItems and isStockItem(item)) then
 						rawCandidates[#rawCandidates + 1] = item
 					end
 				end
@@ -1548,8 +2168,30 @@ function TF_OpenStandaloneBackpack(initialClassName, initialClassIndex, forcedLo
 		local dedupCount = #sourceItems
 
 		table.sort(sourceItems, function(a, b)
-			local sa = slotOrder[a.item_slot] or 99
-			local sb = slotOrder[b.item_slot] or 99
+			if sortMode == "quality" then
+				local qa = qualityRank(a)
+				local qb = qualityRank(b)
+				if qa ~= qb then return qa > qb end
+			elseif sortMode == "type" then
+				local ta = string.lower(tf_lang.GetRaw(a.item_type_name) or a.item_slot or "")
+				local tb = string.lower(tf_lang.GetRaw(b.item_type_name) or b.item_slot or "")
+				if ta ~= tb then return ta < tb end
+			elseif sortMode == "class" then
+				local ca = classCanUseItem(a, activeClass) and 0 or 1
+				local cb = classCanUseItem(b, activeClass) and 0 or 1
+				if ca ~= cb then return ca < cb end
+			elseif sortMode == "slot" then
+				local sa = slotOrder[sortSlotName(a)] or 99
+				local sb = slotOrder[sortSlotName(b)] or 99
+				if sa ~= sb then return sa < sb end
+			elseif sortMode == "date" then
+				local ida = tonumber(a.id) or 0
+				local idb = tonumber(b.id) or 0
+				if ida ~= idb then return ida > idb end
+			end
+
+			local sa = slotOrder[sortSlotName(a)] or 99
+			local sb = slotOrder[sortSlotName(b)] or 99
 			if sa ~= sb then return sa < sb end
 
 			local na = string.lower(getItemDisplayName(a))
@@ -1581,8 +2223,10 @@ function TF_OpenStandaloneBackpack(initialClassName, initialClassIndex, forcedLo
 			local slotFiltered = {}
 			for _, item in ipairs(sourceItems) do
 				local slotCompatible = true
-				if forcedSlot >= 4 then
+				if forcedSlot >= 4 and forcedSlot <= 6 then
 					slotCompatible = item.item_class == "tf_wearable_item" and (item.item_slot == "head" or item.item_slot == "misc")
+				elseif forcedSlot == 7 then
+					slotCompatible = mapItemToLoadoutSlot(item, activeClass) == 7
 				else
 					slotCompatible = mapItemToLoadoutSlot(item, activeClass) == forcedSlot
 				end
@@ -1598,7 +2242,7 @@ function TF_OpenStandaloneBackpack(initialClassName, initialClassIndex, forcedLo
 		local totalPages = math.max(1, math.ceil(visibleCount / pageSize))
 		currentPage = math.Clamp(currentPage, 1, totalPages)
 
-		if panel.LoadoutMode and forcedSlot and forcedSlot >= 4 then
+		if panel.LoadoutMode and forcedSlot and forcedSlot >= 4 and forcedSlot <= 6 then
 			infoLabel:SetText("Owned: " .. tostring(visibleCount) .. "  |  Class: " .. string.upper(activeClass) .. slotText .. "  |  Page " .. tostring(currentPage) .. "/" .. tostring(totalPages) .. "  |  Region conflicts are disabled")
 		elseif panel.LoadoutMode then
 			infoLabel:SetText("Owned: " .. tostring(visibleCount) .. "  |  Class: " .. string.upper(activeClass) .. slotText .. "  |  Page " .. tostring(currentPage) .. "/" .. tostring(totalPages) .. "  |  Showing equippable items only")
@@ -1623,17 +2267,22 @@ function TF_OpenStandaloneBackpack(initialClassName, initialClassIndex, forcedLo
 			end
 		end
 
+		local pageButtonsPerRow = 20
+		local pageGap = 5
+		local pageBtnW = math.max(26, math.floor((pageBar:GetWide() - ((pageButtonsPerRow - 1) * pageGap)) / pageButtonsPerRow))
+		local pageRows = totalPages > pageButtonsPerRow and 2 or 1
+		local pageBtnH = math.max(18, math.floor((pageBar:GetTall() - ((pageRows - 1) * pageGap)) / pageRows))
+
 		for p = 1, totalPages do
 			local btn = vgui.Create("DButton", pageBar)
-			btn:SetSize(30, 26)
+			btn:SetSize(pageBtnW, pageBtnH)
 			btn:SetText("")
 			btn.Paint = function(self, w, h)
 				if p == currentPage then
-					surface.SetDrawColor(140, 85, 70, 255)
+					draw.RoundedBox(6, 0, 0, w, h, Color(160, 88, 68, 255))
 				else
-					surface.SetDrawColor(120, 112, 98, 225)
+					draw.RoundedBox(6, 0, 0, w, h, Color(131, 122, 108, 228))
 				end
-				surface.DrawRect(0, 0, w, h)
 				surface.SetDrawColor(90, 84, 76, 255)
 				surface.DrawOutlinedRect(0, 0, w, h, 1)
 				draw.SimpleText(tostring(p), "HudFontSmallBold", w * 0.5, h * 0.5, Color(245, 236, 214, 255), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
@@ -1653,10 +2302,10 @@ function TF_OpenStandaloneBackpack(initialClassName, initialClassIndex, forcedLo
 			split = string.Split(convar:GetString(), ",")
 		end
 
-		local spaceX, spaceY = 8, 8
-		local gridW, gridH = gridPanel:GetWide() - 20, gridPanel:GetTall() - 20
-		local tileW = math.max(96, math.floor((gridW - ((columns - 1) * spaceX)) / columns))
-		local tileH = math.max(74, math.floor((gridH - ((rows - 1) * spaceY)) / rows))
+		local spaceX, spaceY = itemicons:GetSpaceX(), itemicons:GetSpaceY()
+		local gridW, gridH = gridPanel:GetWide() - (gridPadding * 2), gridPanel:GetTall() - (gridPadding * 2)
+		local tileW = math.max(72, math.floor((gridW - ((columns - 1) * spaceX)) / columns))
+		local tileH = math.max(62, math.floor((gridH - ((rows - 1) * spaceY)) / rows))
 
 		for idx = startIndex, endIndex do
 			local item = sourceItems[idx]
@@ -1667,20 +2316,25 @@ function TF_OpenStandaloneBackpack(initialClassName, initialClassIndex, forcedLo
 			model.activeImage = loadout_rect_mouseover
 			model.inactiveImage = loadout_rect
 			model.model_xpos = 0
-			model.model_ypos = 2
-			model.model_tall = math.max(22, math.floor(tileH * 0.34))
+			model.model_ypos = 1
+			model.model_tall = math.Clamp(math.floor((tileH / Scale) * 0.30), 14, 34)
 			model.text_xpos = -5
 			model.text_wide = tileW + 10
 			model.text_ypos = tileH - 13
 			model.itemImage_low = nil
-			model.text = getItemDisplayName(item)
-			model.centerytext = true
+			model.text = nil
+			model.centerytext = false
+			model.attributes = nil
+			model.tooltip_attributes = buildItemTooltipAttributes(item)
+			model.tooltip_name = getItemDisplayName(item)
+			model.tooltip_image = nil
+			model.tooltip_leveltext = getTooltipLevelText(item)
+			model.tooltip_description = getTooltipDescription(item)
+			model.tooltip_flavor = nil
+			model.number = nil
+			model:SetAttributePanel(backpackAttributePanel, 0, 0)
 
-			local quality = 0
-			if item.item_quality then
-				quality = string.upper(string.sub(item.item_quality, 1, 1)) .. string.sub(item.item_quality, 2)
-			end
-			model:SetQuality(quality)
+			model:SetQuality(getQualityDisplayName(item))
 
 			local invMat
 			if isstring(item.image_inventory) and item.image_inventory ~= "" then
@@ -1689,27 +2343,33 @@ function TF_OpenStandaloneBackpack(initialClassName, initialClassIndex, forcedLo
 			if (not invMat) or invMat:IsError() then
 				model.FallbackModel = item.model_player
 				model.itemImage = surface.GetTextureID("backpack/weapons/c_models/c_bat")
+				model.tooltip_image = model.itemImage
 			else
 				model.itemImage = surface.GetTextureID(item.image_inventory)
+				model.tooltip_image = model.itemImage
 			end
 
 			local compatible = classCanUseItem(item, activeClass)
 			local slotCompatible = forcedSlot == nil or forcedSlot == false
 			if forcedSlot then
-				if forcedSlot >= 4 then
+				if forcedSlot >= 4 and forcedSlot <= 6 then
 					slotCompatible = item.item_class == "tf_wearable_item" and (item.item_slot == "head" or item.item_slot == "misc")
+				elseif forcedSlot == 7 then
+					slotCompatible = mapItemToLoadoutSlot(item, activeClass) == 7
 				else
 					slotCompatible = mapItemToLoadoutSlot(item, activeClass) == forcedSlot
 				end
 			end
 			local equipRegionCompatible = true
-			if forcedSlot and forcedSlot >= 4 then
+			if forcedSlot and forcedSlot >= 4 and forcedSlot <= 6 then
 				equipRegionCompatible = not hasCosmeticEquipRegionConflict(item, split, itemsById, forcedSlot)
 			end
 			compatible = compatible and slotCompatible and equipRegionCompatible
 			model.disabled = not compatible
 			if not compatible then
-				model:SetAlpha(95)
+				model:SetAlpha(108)
+			else
+				model:SetAlpha(255)
 			end
 
 			local equipped = false
@@ -1726,9 +2386,20 @@ function TF_OpenStandaloneBackpack(initialClassName, initialClassIndex, forcedLo
 					end
 				end
 			end
-			if equipped then
-				model.PaintOver = function(self, w, h)
-					draw.SimpleText("Equipped", "HudFontSmallBold", w - 6, h - 4, Color(238, 131, 84, 255), TEXT_ALIGN_RIGHT, TEXT_ALIGN_BOTTOM)
+			local qualityBorder = getQualityBorderColor(item)
+			model.PaintOver = function(self, w, h)
+				local borderAlpha = compatible and 255 or 128
+				surface.SetDrawColor(qualityBorder.r, qualityBorder.g, qualityBorder.b, borderAlpha)
+				surface.DrawOutlinedRect(0, 0, w, h, 2)
+				if not compatible then
+					surface.SetDrawColor(8, 8, 8, 110)
+					surface.DrawRect(1, 1, w - 2, h - 2)
+				end
+				if equipped then
+					local badgeW, badgeH = math.max(56, math.floor(w * 0.5)), 16
+					local badgeX, badgeY = math.floor((w - badgeW) * 0.5), h - badgeH - 2
+					draw.RoundedBox(4, badgeX, badgeY, badgeW, badgeH, Color(7, 7, 7, 210))
+					draw.SimpleText("Equipped", "HudFontSmallBold", badgeX + badgeW * 0.5, badgeY + badgeH * 0.5, Color(238, 131, 84, 255), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
 				end
 			end
 
@@ -1778,6 +2449,8 @@ function TF_OpenStandaloneBackpack(initialClassName, initialClassIndex, forcedLo
 				menu:Open()
 			end
 		end
+
+		backpackAttributePanel:MoveToFront()
 	end
 
 	panel:BuildItems()
@@ -1793,6 +2466,11 @@ function TF_OpenStandaloneBackpack(initialClassName, initialClassIndex, forcedLo
 
 	panel.OnRemove = function()
 		hook.Remove("TFInventoryCacheUpdated", refreshHookId)
+		for _, restoreData in ipairs(classPanelsToRestore) do
+			if restoreData and IsValid(restoreData.panel) then
+				restoreData.panel:SetVisible(restoreData.visible ~= false)
+			end
+		end
 		if TFDebugBridge and TFDebugBridge.Emit then
 			TFDebugBridge.Emit("backpack_close", {
 				class = activeClass,
@@ -1812,4 +2490,10 @@ function hatSelector(type, slot, oldclass, weapons)
 	local classIndex = GetConVar("tf_hud_loadout_class"):GetInt()
 	local className = oldclass or classIndexToName[classIndex] or "scout"
 	TF_OpenStandaloneBackpack(className, classIndex, slot)
+end
+
+function actionSelector(slot, oldclass, weapons)
+	local classIndex = GetConVar("tf_hud_loadout_class"):GetInt()
+	local className = oldclass or classIndexToName[classIndex] or "scout"
+	TF_OpenStandaloneBackpack(className, classIndex, slot or 7)
 end

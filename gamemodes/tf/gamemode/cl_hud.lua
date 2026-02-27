@@ -59,6 +59,7 @@ local VGUIFiles = {
 	"hud_objectiveflagpanel";
 	"hud_objectiveflagpanel_blue";
 	"hud_objectivebombpanel";
+	"hud_payloadpanel";
 	
 	"hud_demomanpipes";
 	"hud_mediccharge";
@@ -107,6 +108,10 @@ concommand.Add("reload_vgui", function()
 end)
 
 LoadVGUI()
+if IsValid(HudMvMStatus) then
+	HudMvMStatus:Remove()
+	HudMvMStatus = nil
+end
 include("cl_crosshairs.lua")
 include("cl_scoreboard.lua")
 include("cl_chatprefix.lua")

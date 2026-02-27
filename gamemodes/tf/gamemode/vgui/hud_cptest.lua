@@ -153,6 +153,7 @@ end
 
 function PANEL:Paint()
 	if string.find(game.GetMap(), "mvm_", 1, true) then return end
+	if GAMEMODE.PayloadHUDActive then return end
 	--[[
 	tf_draw.LabelTextWrap{
 		x=10,y=10,

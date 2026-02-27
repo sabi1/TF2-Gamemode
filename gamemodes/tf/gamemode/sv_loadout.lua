@@ -1,13 +1,20 @@
 local meta = FindMetaTable("Player")
 
+local LOADOUT_SLOT_COUNT = 7
+
+local function normalizeLoadout(split)
+    local normalized = {}
+    for i = 1, LOADOUT_SLOT_COUNT do
+        normalized[i] = split[i] or "-1"
+    end
+    return normalized
+end
+
 function meta:GiveLoadout()
     local convar = "loadout_" .. self:GetPlayerClass()
-    local split = string.Split(self:GetInfo(convar, "-1,-1,-1,-1,-1"), ",")
-    if #split ~= 6 then
-        split = {-1, -1, -1, -1, -1, -1}
-    end
+    local split = normalizeLoadout(string.Split(self:GetInfo(convar, "-1,-1,-1,-1,-1,-1,-1"), ","))
 
-    for type, id in pairs(split) do
+    for _, id in ipairs(split) do
         id = tonumber(id)
         local itemname = nil
         -- oh no

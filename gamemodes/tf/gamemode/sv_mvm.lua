@@ -1,375 +1,331 @@
-local function Trim(s)
-    -- Remove leading and trailing whitespace
-    s = s:match("^%s*(.-)%s*$")
-    -- Remove leading // and optional whitespace after it
-    s = s:gsub("//.*$", "")
-    return s
-end
-local function ReadLines(path)
-    local content = file.Read(path, "GAME")
-    if not content then
-        print("[POP] Failed to read file: " .. path)
-        return nil
-    end
+CreateConVar("tf_mvm_enabled", "1", { FCVAR_ARCHIVE, FCVAR_NOTIFY }, "Enable POP-driven MvM runtime.")
+CreateConVar("tf_mvm_autoload", "1", { FCVAR_ARCHIVE, FCVAR_NOTIFY }, "Auto-load MvM mission for current map.")
+CreateConVar("tf_mvm_autostart", "1", { FCVAR_ARCHIVE, FCVAR_NOTIFY }, "Auto-start mission after autoload.")
+CreateConVar("tf_mvm_mission_override", "", { FCVAR_ARCHIVE }, "Mission override path (.pop).")
+CreateConVar("tf_mvm_external_pop_root", "C:/Program Files (x86)/Steam/steamapps/common/Team Fortress 2/tf/scripts/population", { FCVAR_ARCHIVE }, "External TF2 population root.")
+CreateConVar("tf_mvm_setup_time_override", "0", { FCVAR_ARCHIVE }, "Setup duration before each wave (seconds). Set <=0 to use mission values.")
+CreateConVar("tf_mvm_debug", "0", { FCVAR_ARCHIVE }, "Enable MvM runtime debug logging.")
 
-    local lines = {}
-    for line in content:gmatch("[^\r\n]+") do
-        line = Trim(line)
-        if line ~= "" and not line:match("^//") then
-            table.insert(lines, line)
+TF_MVM = TF_MVM or {}
+
+include("sv_mvm_mission_lookup.lua")
+include("sv_mvm_pop_parser.lua")
+include("sv_mvm_outputs.lua")
+include("sv_mvm_spawner.lua")
+include("sv_mvm_economy.lua")
+include("sv_mvm_runtime.lua")
+
+local function IsMvMMap()
+    return string.find(string.lower(game.GetMap() or ""), "mvm_", 1, true) ~= nil
+end
+
+local function IsAdminOrConsole(ply)
+    if not IsValid(ply) then return true end
+    return ply:IsAdmin()
+end
+
+local function PrintStatus(ply)
+    local rt = TF_MVM.Runtime
+
+    local lines = {
+        "[TF_MVM] Status",
+        "  enabled: " .. tostring(rt and rt:IsEnabled() or false),
+        "  active: " .. tostring(rt and rt.Active or false),
+        "  setup: " .. tostring(rt and rt.Setup or false),
+        "  wave active: " .. tostring(rt and rt.WaveActive or false),
+        "  wave: " .. tostring(rt and rt.WaveIndex or 0) .. "/" .. tostring((rt and rt.Mission and #rt.Mission.Waves) or 0),
+        "  mission: " .. tostring((rt and rt.Mission and rt.Mission.Path) or "<none>"),
+        "  scope: " .. tostring((rt and rt.Mission and rt.Mission.Scope) or "<none>"),
+        "  error: " .. tostring((rt and rt.LastError) or ""),
+    }
+
+    for _, line in ipairs(lines) do
+        print(line)
+        if IsValid(ply) then
+            ply:ChatPrint(line)
         end
     end
-    return lines
 end
 
-local function ParseBlock(lines, start)
-    local tbl = {}
-    local i = start or 1
+local function LoadAndMaybeStart(ply, overridePath, forceStart)
+    local rt = TF_MVM.Runtime
+    if not rt then return end
 
-    while i <= #lines do
-        local line = Trim(lines[i])
-
-        if line == "}" then
-            return tbl, i
+    local ok = rt:LoadMissionForCurrentMap(overridePath)
+    if not ok then
+        if IsValid(ply) then
+            ply:ChatPrint("[TF_MVM] Mission load failed. See server console for searched paths.")
         end
-
-        -- Key "Value"
-        local key, val = line:match('^([^%s]+)%s+"(.-)"$')
-        if key and val then
-            tbl[key] = val
-            i = i + 1
-
-        -- Key {
-        elseif i + 1 <= #lines and Trim(lines[i + 1]) == "{" then
-            key = line
-            local subTbl, newIndex = ParseBlock(lines, i + 2)
-
-            if tbl[key] then
-                if type(tbl[key]) ~= "table" or tbl[key][1] == nil then
-                    tbl[key] = { tbl[key] }
-                end
-                table.insert(tbl[key], subTbl)
-            else
-                tbl[key] = subTbl
-            end
-
-            i = newIndex + 1
-
-        -- Key Value
-        else
-            key, val = line:match('^([^%s]+)%s+(.+)$')
-            if key and val then
-                tbl[key] = val
-            end
-            i = i + 1
-        end
-    end
-
-    return tbl, i
-end
-
-function ParsePOPFile(path)
-    local lines = ReadLines(path)
-    if not lines then return nil end
-
-    local parsed, _ = ParseBlock(lines, 1)
-    return parsed
-end
-
-WaveManager = {}
-WaveManager.CurrentWave = 0
-WaveManager.Waves = {}
-WaveManager.ActiveSpawns = {}
-WaveManager.IsRunning = false
-WaveManager.PopFilePath = nil
-
-function WaveManager:LoadPOP(path)
-    local pop = ParsePOPFile(path)
-    PrintTable(pop)
-    if not pop then
-        print("[MvM] Failed to load .pop file!")
         return
     end
 
-    local waves = pop.WaveSchedule.Wave
-    if type(waves) == "table" and waves[1] == nil then
-        -- single wave
-        waves = { waves }
-    end
-
-    self.Waves = waves or {}
-    self.CurrentWave = 0
-    self.PopFilePath = path
-
-    print("[MvM] Loaded " .. #self.Waves .. " waves.")
-end
-
-function WaveManager:ActivateWaves()
-    if #self.Waves == 0 then
-        print("[MvM] No waves to activate.")
-        return
-    end
-
-    self.IsRunning = true
-    self.CurrentWave = 1
-    self:StartWave(self.Waves[self.CurrentWave])
-end
-
-function WaveManager:StartWave(wave)
-    print("[MvM] Starting Wave " .. self.CurrentWave)
-
-    if wave.StartWaveOutput then
-        self:FireOutput(wave.StartWaveOutput)
-    end
-
-    if wave.Checkpoint == "Yes" then
-        self.LastCheckpoint = self.CurrentWave
-    end
-
-    local spawns = wave.WaveSpawn
-    if type(spawns) == "table" and spawns[1] == nil then
-        -- single wave
-        spawns = { spawns }
-    end
-
-    for _, spawn in ipairs(spawns or {}) do    
-        if spawn.Squad then
-            -- Squad logic: spawn bots at once
-            local members = spawn.Squad
-            if type(members) == "table" and members[1] == nil then
-                members = { members }
+    if forceStart then
+        if not rt:Start() then
+            if IsValid(ply) then
+                ply:ChatPrint("[TF_MVM] Mission start failed.")
             end
-
-            for _, botdef in ipairs(members) do
-                self:SpawnSingleBot(botdef)
-            end
-
-        elseif spawn.RandomChoice then
-            local choices = spawn.RandomChoice
-            if type(choices) == "table" and choices[1] == nil then
-                choices = { choices }
-            end
-
-            local choice = choices[math.random(#choices)]
-            self:SpawnGroup(choice)
-
-        else
-            -- Standard wave spawn
-            self:SpawnGroup(spawn)
         end
     end
 end
 
-function WaveManager:SpawnMission(mission)
-    local class = string.lower(mission.Class or "")
-    local count = tonumber(mission.Count or 1)
-    local delay = tonumber(mission.InitialCooldown or 5)
-    local interval = tonumber(mission.CooldownTime or 30)
+concommand.Add("tf_mvm_start", function(ply, _, args)
+    if not IsAdminOrConsole(ply) then return end
+    if not TF_MVM or not TF_MVM.Runtime then return end
 
-    timer.Simple(delay, function()
-        timer.Create("MvM_Mission_" .. class .. "_" .. CurTime(), interval, count, function()
-            if class == "sniper" then
-                self:SpawnSpecialBot({ Name = "Sniper", Class = "Sniper", Skill = "Expert", Attributes = {"Sniper"} })
+    local overridePath = args and args[1] or nil
+    if overridePath and overridePath ~= "" then
+        LoadAndMaybeStart(ply, overridePath, true)
+        return
+    end
 
-            elseif class == "spy" then
-                self:SpawnSpecialBot({ Name = "Spy", Class = "Spy", Skill = "Expert", Attributes = {"Spy"} })
+    if TF_MVM.Runtime.Mission == nil then
+        LoadAndMaybeStart(ply, nil, true)
+        return
+    end
 
-            elseif class == "sentrybuster" then
-                self:SpawnSpecialBot({ Name = "SentryBuster", Class = "Demoman", Attributes = {"ExplodeOnDeath", "Mini-Boss"} })
+    TF_MVM.Runtime:Start()
+end)
+
+concommand.Add("mvm_start", function(ply, _, args)
+    if not IsAdminOrConsole(ply) then return end
+    if not TF_MVM or not TF_MVM.Runtime then return end
+
+    local overridePath = args and args[1] or nil
+    if overridePath and overridePath ~= "" then
+        LoadAndMaybeStart(ply, overridePath, true)
+        return
+    end
+
+    if TF_MVM.Runtime.Mission == nil then
+        LoadAndMaybeStart(ply, nil, true)
+        return
+    end
+
+    TF_MVM.Runtime:Start()
+end)
+
+concommand.Add("tf_mvm_stop", function(ply)
+    if not IsAdminOrConsole(ply) then return end
+    if not TF_MVM or not TF_MVM.Runtime then return end
+
+    TF_MVM.Runtime:Stop("manual_stop")
+end)
+
+concommand.Add("tf_mvm_reload_mission", function(ply)
+    if not IsAdminOrConsole(ply) then return end
+    if not TF_MVM or not TF_MVM.Runtime then return end
+
+    local wasActive = TF_MVM.Runtime.Active
+    if wasActive then
+        TF_MVM.Runtime:Stop("reload_mission")
+    end
+
+    local ok = TF_MVM.Runtime:LoadMissionForCurrentMap()
+    if ok and wasActive then
+        TF_MVM.Runtime:Start()
+    end
+end)
+
+concommand.Add("tf_mvm_set_mission", function(ply, _, args)
+    if not IsAdminOrConsole(ply) then return end
+    if not TF_MVM or not TF_MVM.Runtime then return end
+
+    local overridePath = args and args[1] or ""
+    if overridePath == "" then
+        if IsValid(ply) then
+            ply:ChatPrint("Usage: tf_mvm_set_mission <path-to-pop>")
+        end
+        return
+    end
+
+    local wasActive = TF_MVM.Runtime.Active
+    if wasActive then
+        TF_MVM.Runtime:Stop("set_mission")
+    end
+
+    local ok = TF_MVM.Runtime:LoadMissionForCurrentMap(overridePath)
+    if ok and IsValid(ply) then
+        ply:ChatPrint("[TF_MVM] Mission override loaded: " .. overridePath)
+    end
+    if ok and wasActive then
+        TF_MVM.Runtime:Start()
+    end
+end)
+
+concommand.Add("tf_mvm_status", function(ply)
+    if not IsAdminOrConsole(ply) then return end
+    if not TF_MVM or not TF_MVM.Runtime then return end
+
+    PrintStatus(ply)
+end)
+
+concommand.Add("tf_mvm_ready_up", function(ply)
+    if not IsValid(ply) or not ply:IsPlayer() then return end
+    if not TF_MVM or not TF_MVM.Runtime then return end
+    TF_MVM.Runtime:TogglePlayerReady(ply)
+end)
+
+concommand.Add("player_ready_toggle", function(ply)
+    if not IsValid(ply) or not ply:IsPlayer() then return end
+    if not TF_MVM or not TF_MVM.Runtime then return end
+    TF_MVM.Runtime:TogglePlayerReady(ply)
+end)
+
+hook.Add("InitPostEntity", "TF_MVM_AutoloadMission", function()
+    if not TF_MVM or not TF_MVM.Runtime then return end
+    if not IsMvMMap() then return end
+
+    local enabled = GetConVar("tf_mvm_enabled")
+    if enabled and not enabled:GetBool() then
+        return
+    end
+
+    local autoload = GetConVar("tf_mvm_autoload")
+    if autoload and not autoload:GetBool() then
+        return
+    end
+
+    local loaded = TF_MVM.Runtime:LoadMissionForCurrentMap()
+    if not loaded then
+        return
+    end
+
+    local autostart = GetConVar("tf_mvm_autostart")
+    if autostart and autostart:GetBool() then
+        TF_MVM.Runtime:Start()
+    end
+end)
+
+hook.Add("ShutDown", "TF_MVM_ShutdownCleanup", function()
+    if not TF_MVM or not TF_MVM.Runtime then return end
+    TF_MVM.Runtime:Stop("shutdown")
+end)
+
+local function PlayMvMAnnouncerSound(soundName)
+    if not isstring(soundName) or soundName == "" then return end
+    umsg.Start("TF_PlayGlobalSound")
+        umsg.String(soundName)
+    umsg.End()
+end
+
+local function PlayMvMMusic(soundName)
+    if not isstring(soundName) or soundName == "" then return end
+    umsg.Start("TF_PlayGlobalSound")
+        umsg.String(soundName)
+    umsg.End()
+end
+
+local function GetWaveStartMusic(waveIndex, waveTotal)
+    waveIndex = math.max(1, tonumber(waveIndex) or 1)
+    waveTotal = math.max(1, tonumber(waveTotal) or 1)
+    if waveIndex >= waveTotal then
+        return "music.mvm_start_last_wave"
+    end
+    if waveIndex > 1 then
+        return "music.mvm_start_mid_wave"
+    end
+    return "music.mvm_start_wave"
+end
+
+local function GetWaveEndMusic(waveIndex, waveTotal)
+    waveIndex = math.max(1, tonumber(waveIndex) or 1)
+    waveTotal = math.max(1, tonumber(waveTotal) or 1)
+    if waveIndex >= waveTotal then
+        return "music.mvm_end_last_wave"
+    end
+    if waveIndex > 1 then
+        return "music.mvm_end_mid_wave"
+    end
+    return "music.mvm_end_wave"
+end
+
+local setupCountdownTimerName = "TF_MVM_SetupCountdownAudio"
+local function StopSetupCountdownAudioTimer()
+    if timer.Exists(setupCountdownTimerName) then
+        timer.Remove(setupCountdownTimerName)
+    end
+end
+
+hook.Add("TF_MVM_MissionStarted", "TF_MVM_Announcer_MissionStart", function()
+    PlayMvMAnnouncerSound("Announcer.MVM_Manned_Up")
+end)
+
+hook.Add("TF_MVM_WaveSetupStarted", "TF_MVM_SetupCountdownAudio", function(waveIndex)
+    StopSetupCountdownAudioTimer()
+
+    local fired = {
+        music10 = false,
+        announce5 = false,
+        announce4 = false,
+        announce3 = false,
+        announce2 = false,
+        announce1 = false,
+    }
+
+    timer.Create(setupCountdownTimerName, 0.1, 0, function()
+        local rt = TF_MVM and TF_MVM.Runtime or nil
+        if not rt or not rt:IsManagedActive() or not rt:IsSetupPhase() then
+            StopSetupCountdownAudioTimer()
+            return
+        end
+
+        local left = math.max(0, math.ceil((rt.SetupEndTime or CurTime()) - CurTime()))
+        local total = #(rt.Mission and rt.Mission.Waves or {})
+
+        if left <= 10 and left > 0 and not fired.music10 then
+            fired.music10 = true
+            PlayMvMMusic(GetWaveStartMusic(waveIndex, total))
+        end
+
+        if left <= 5 and left >= 1 then
+            local key = "announce" .. tostring(left)
+            if not fired[key] then
+                fired[key] = true
+                PlayMvMAnnouncerSound("Announcer.RoundBegins" .. tostring(left) .. "Seconds")
             end
-        end)
+        end
+
+        if left <= 0 then
+            StopSetupCountdownAudioTimer()
+        end
     end)
-end
+end)
 
-hook.Add("PlayerDeath", "MvMBotAutoKick", function(victim, inflictor, attacker)
-    if string.find(game.GetMap(),"mvm_") and victim.TFBot and victim:Team() == TEAM_BLU then
-        timer.Simple(5, function()
-            if IsValid(victim) then
-                victim:Kick("Bot removed after death (MvM)")
-            end
-        end)
+hook.Add("TF_MVM_WaveStarted", "TF_MVM_Announcer_WaveStart", function(waveIndex)
+    StopSetupCountdownAudioTimer()
+    local rt = TF_MVM and TF_MVM.Runtime or nil
+    local total = #(rt and rt.Mission and rt.Mission.Waves or {})
+    local isFinal = total > 0 and waveIndex == total
+
+    if waveIndex == 1 then
+        PlayMvMAnnouncerSound("Announcer.MVM_First_Wave_Start")
+    elseif isFinal then
+        PlayMvMAnnouncerSound("Announcer.MVM_Final_Wave_Start")
+    else
+        PlayMvMAnnouncerSound("Announcer.MVM_Wave_Start")
     end
 end)
 
-function WaveManager:SpawnSpecialBot(def)
-    local bot = player.CreateNextBot(def.Name or "MissionBot")
-    bot.TFBot = true
-    bot:SetTeam(TEAM_BLU)
-    bot:SetPos(GetSpawnForRole(def.Class or "bot")) -- function based on `Where`
-    
-    ApplyBotAttributes(bot, def.Attributes or {})
-    bot:SetPlayerClass(def.Class)
-end
-function GetSpawnForRole(role)
-    -- Fallback logic
-    local name = "spawnbot"
-    if role == "Sniper" then name = "spawnbot_mission_sniper" end
-    if role == "Spy" then name = "spawnbot_mission_spy" end
-    if role == "SentryBuster" then name = "spawnbot_mission_buster" end
+hook.Add("TF_MVM_WaveCompleted", "TF_MVM_Announcer_WaveEnd", function(waveIndex)
+    StopSetupCountdownAudioTimer()
+    local rt = TF_MVM and TF_MVM.Runtime or nil
+    local total = #(rt and rt.Mission and rt.Mission.Waves or {})
+    local isFinal = total > 0 and waveIndex == total
 
-    local spawns = ents.FindByName(name)
-    if #spawns > 0 then return spawns[math.random(#spawns)]:GetPos() end
+    PlayMvMMusic(GetWaveEndMusic(waveIndex, total))
 
-    return Vector(0,0,0)
-end
-
-function WaveManager:EndWave()
-    local wave = self.Waves[self.CurrentWave]
-    if wave and wave.DoneOutput then
-        self:FireOutput(wave.DoneOutput)
+    if isFinal then
+        PlayMvMAnnouncerSound("Announcer.MVM_Final_Wave_End")
+    else
+        PlayMvMAnnouncerSound("Announcer.MVM_Wave_End")
     end
-
-    self:NextWave()
-end
-
-function WaveManager:FireOutput(output)
-    if type(output) == "table" and output[1] == nil then
-        output = { output }
-    end
-
-    for _, out in ipairs(output) do
-        -- Must match output format: { Target, Action, Delay }
-        local target = ents.FindByName(out.Target or "")[1]
-        if IsValid(target) then
-            target:Input(out.Action or "Trigger", NULL, NULL, "", tonumber(out.Delay or 0))
-        end
-    end
-end
-
-
-function WaveManager:SpawnGroup(spawn)
-    local count = tonumber(spawn.TotalCount) or 1
-    local maxActive = tonumber(spawn.MaxActive) or count
-    local wait = tonumber(spawn.WaitBetweenSpawns) or 0
-    local botDef = spawn.TFBot
-
-    if not botDef then return end
-
-    if type(botDef) == "table" and botDef[1] == nil then
-        botDef = { botDef }
-    end
-
-    local spawned = 0
-    local active = 0
-
-    local function spawnBot()
-        if spawned >= count then return end
-        if active >= maxActive then return end
-        for i=1,count do
-            local def = botDef[math.random(#botDef)]
-
-            local bot = player.CreateNextBot(def.Name or def.Class or "MvMBot")
-            bot.IsL4DZombie = true 
-            bot.TFBot = true
-            bot.LastPath = nil
-            bot.CurSegment = 2
-            local v = table.Random(ents.FindByName("spawnbot"))
-            bot:SetPos(v:GetPos())
-            bot:SetTeam(TEAM_BLU)
-            bot:SetPlayerClass(def.Class)
-            timer.Simple(0.5, function()
-                bot:Spawn()
-                bot:SetPlayerClass(def.Class)
-            end)
-            bot:SetSkin(bot:Team() == TEAM_BLU and 1 or 0)
-
-            bot.ControllerBot = ents.Create("ctf_bot_navigator")
-            bot.ControllerBot:Spawn()
-            bot.ControllerBot:SetOwner(bot)
-            -- Apply attributes
-            if def.Attributes then
-                ApplyBotAttributes(bot, def.Attributes)
-            end
-
-            if def.Item then
-                GiveBotItems(bot, def.Item)
-            end
-
-            spawned = spawned + 1
-            active = active + 1
-
-            bot.OnKilled = function()
-                active = active - 1
-                self:CheckWaveFinished()
-            end
-        end
-    end
-
-    timer.Create("MvM_SpawnGroup_" .. CurTime(), wait, count, spawnBot)
-end
-
-function WaveManager:CheckWaveFinished()
-    local botsAlive = 0
-
-    for _, ply in ipairs(player.GetAll()) do
-        if ply:IsBot() and ply:Team() == TEAM_BLU and ply:Alive() then
-            botsAlive = botsAlive + 1
-        end
-    end
-
-    if botsAlive == 0 then
-        self:NextWave()
-    end
-end
-
-function WaveManager:NextWave()
-    if self.CurrentWave >= #self.Waves then
-        print("[MvM] All waves complete!")
-        self.IsRunning = false
-        return
-    end
-
-    self.CurrentWave = self.CurrentWave + 1
-    self:StartWave(self.Waves[self.CurrentWave])
-end
-
-concommand.Add("mvm_start", function(ply)
-    if IsValid(ply) and not ply:IsAdmin() then return end
-    WaveManager:LoadPOP("scripts/population/"..game.GetMap()..".pop")
-    WaveManager:ActivateWaves()
 end)
 
-function ApplyBotAttributes(bot, attributes)
-    for _, attr in ipairs(attributes) do
-        attr = string.lower(attr)
+hook.Add("TF_MVM_MissionCompleted", "TF_MVM_Announcer_MissionComplete", function()
+    PlayMvMAnnouncerSound("Announcer.MVM_All_Dead")
+end)
 
-        if attr == "alwayscrit" then
-            bot.AlwaysCrit = true
-
-        elseif attr == "disablejump" then
-            bot:SetJumpPower(0)
-
-        elseif attr == "holdfireuntilclose" then
-            bot.HoldFireUntilClose = true
-
-        elseif attr == "aggressive" then
-            bot.Aggressive = true
-
-        elseif attr == "noattack" then
-            bot.NoAttack = true
-
-        elseif attr == "spawnwithfullcharge" then
-            bot.SpawnWithCharge = true
-
-        elseif attr == "mini-boss" or attr == "miniboss" then
-            bot:SetModelScale(1.75)
-        end
-    end
-end
-
-function GiveBotItems(bot, items)
-    if type(items) == "string" then
-        items = { items }
-    end
-
-    for _, item in ipairs(items) do
-        -- You could map item names to actual weapons or models here
-        local wep = ents.Create("tf_weapon_" .. string.lower(item))
-        if IsValid(wep) then
-            wep:SetOwner(bot)
-            wep:Spawn()
-            bot:Give(wep:GetClass())
-        end
-    end
-end
-
+hook.Add("TF_MVM_MissionFailed", "TF_MVM_Announcer_MissionFailed", function()
+    PlayMvMAnnouncerSound("Announcer.MVM_Game_Over_Loss")
+    PlayMvMMusic("music.mvm_lost_wave")
+end)

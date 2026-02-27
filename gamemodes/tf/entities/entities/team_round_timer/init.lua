@@ -1,5 +1,7 @@
 ENT.Type = "point"
 
+local TRAIN_STATE_FORWARD = 1
+
 local TimeRemainingToOutput = {
 {1	, "On1SecRemain"	, Sound("Announcer.RoundBegins1Seconds")	, Sound("Announcer.RoundEnds1seconds")},
 {2	, "On2SecRemain"	, Sound("Announcer.RoundBegins2Seconds")	, Sound("Announcer.RoundEnds2seconds")},
@@ -171,7 +173,13 @@ function ENT:GetTime()
 end
 
 function ENT:SetTime(sec)
-	sec = math.Clamp(sec, 0, self.MaxLength)
+	sec = tonumber(sec) or 0
+	local maxLen = tonumber(self.MaxLength)
+	if maxLen == nil then
+		maxLen = math.huge
+		self.MaxLength = maxLen
+	end
+	sec = math.Clamp(sec, 0, maxLen)
 	
 	if self.TimerPaused then
 		self:SetAndPauseTimer(sec)
@@ -181,7 +189,13 @@ function ENT:SetTime(sec)
 end
 
 function ENT:SetAndResumeTimer(sec, setmax)
-	sec = math.Clamp(sec, 0, self.MaxLength)
+	sec = tonumber(sec) or 0
+	local maxLen = tonumber(self.MaxLength)
+	if maxLen == nil then
+		maxLen = math.huge
+		self.MaxLength = maxLen
+	end
+	sec = math.Clamp(sec, 0, maxLen)
 	
 	self.TimerReference = sec
 	self.TimerLastUpdated = CurTime()
@@ -196,7 +210,13 @@ function ENT:SetAndResumeTimer(sec, setmax)
 	end
 end
 function ENT:SetAndResumeTimer2(sec, setmax)
-	sec = math.Clamp(sec, 0, self.MaxLength)
+	sec = tonumber(sec) or 0
+	local maxLen = tonumber(self.MaxLength)
+	if maxLen == nil then
+		maxLen = math.huge
+		self.MaxLength = maxLen
+	end
+	sec = math.Clamp(sec, 0, maxLen)
 	
 	self.TimerReference = sec
 	self.TimerLastUpdated = CurTime()
@@ -212,7 +232,13 @@ function ENT:SetAndResumeTimer2(sec, setmax)
 end
 
 function ENT:SetAndPauseTimer(sec, setmax)
-	sec = math.Clamp(sec, 0, self.MaxLength)
+	sec = tonumber(sec) or 0
+	local maxLen = tonumber(self.MaxLength)
+	if maxLen == nil then
+		maxLen = math.huge
+		self.MaxLength = maxLen
+	end
+	sec = math.Clamp(sec, 0, maxLen)
 	
 	self.TimerPaused = sec
 	
@@ -247,6 +273,88 @@ function ENT:KeyValue(key,value)
 	self.Properties[key] = value
 end
 
+function ENT:GetPayloadWatcher()
+	if GAMEMODE and GAMEMODE.GetActivePayloadWatcher then
+		local watcher = GAMEMODE:GetActivePayloadWatcher()
+		if IsValid(watcher) then
+			return watcher
+		end
+	end
+
+	for _, watcher in ipairs(ents.FindByClass("team_train_watcher")) do
+		if IsValid(watcher) then
+			return watcher
+		end
+	end
+
+	return NULL
+end
+
+function ENT:GetPayloadWatcherState()
+	local watcher = self:GetPayloadWatcher()
+	if not IsValid(watcher) or not watcher.GetPayloadState then
+		return NULL, nil
+	end
+	return watcher, watcher:GetPayloadState() or {}
+end
+
+function ENT:IsPayloadContestedOrPushed(state)
+	if not istable(state) then return false end
+	if (tonumber(state.cappers) or 0) > 0 then return true end
+	if state.blocked then return true end
+	if tonumber(state.trainState) == TRAIN_STATE_FORWARD then return true end
+	return false
+end
+
+function ENT:GetPayloadDefenderTeam(state)
+	if istable(state) then
+		local defend = tonumber(state.defendTeam)
+		if defend == TEAM_RED or defend == TEAM_BLU then
+			return defend
+		end
+
+		local attack = tonumber(state.attackTeam)
+		if attack == TEAM_RED then
+			return TEAM_BLU
+		end
+	end
+	return TEAM_RED
+end
+
+function ENT:TryStartPayloadOvertime()
+	if self.PayloadOvertime then return true end
+
+	local watcher, state = self:GetPayloadWatcherState()
+	if not IsValid(watcher) or not istable(state) then return false end
+	if not state.active or state.goalReached then return false end
+	if not self:IsPayloadContestedOrPushed(state) then return false end
+
+	self.PayloadOvertime = true
+	self:SetAndPauseTimer(0)
+
+	if watcher.Input_OnStartOvertime then
+		watcher:Input_OnStartOvertime(self, self, "")
+	elseif watcher.AcceptInput then
+		watcher:AcceptInput("OnStartOvertime", self, self, "")
+	end
+
+	return true
+end
+
+function ENT:StopPayloadOvertime()
+	if not self.PayloadOvertime then return end
+	self.PayloadOvertime = false
+
+	local watcher = self:GetPayloadWatcher()
+	if not IsValid(watcher) then return end
+
+	if watcher.Input_OnStopOvertime then
+		watcher:Input_OnStopOvertime(self, self, "")
+	elseif watcher.AcceptInput then
+		watcher:AcceptInput("OnStopOvertime", self, self, "")
+	end
+end
+
 function ENT:Think()
 	if not GAMEMODE.PostEntityDone then return end
 	if GAMEMODE.PostEntityDone and not self.PostEntityDone then
@@ -257,10 +365,38 @@ function ENT:Think()
 	end
 	GAMEMODE.IsSetupPhase = self.IsSetupPhase
 	local t = self:GetTime()
+
+	if self.PayloadOvertime and GAMEMODE.RoundHasWinner then
+		self:StopPayloadOvertime()
+	end
+
 	if t<=0 then
 		if self.IsSetupPhase then
 			self:RestartTimer(true)
+		elseif self.PayloadOvertime then
+			local _, state = self:GetPayloadWatcherState()
+			if state and state.goalReached then
+				self:StopPayloadOvertime()
+				self.RoundFinished = true
+				return
+			end
+
+			if self:IsPayloadContestedOrPushed(state) and not GAMEMODE.RoundHasWinner and not (state and state.goalReached) then
+				return
+			end
+
+			self:StopPayloadOvertime()
+			self.RoundFinished = true
+			self:TriggerOutput("OnFinished")
+
+			if not GAMEMODE.RoundHasWinner then
+				GAMEMODE:RoundWin(self:GetPayloadDefenderTeam(state))
+			end
 		elseif not self.RoundFinished then
+			if self:TryStartPayloadOvertime() then
+				return
+			end
+
 			self.RoundFinished = true
 			self:TriggerOutput("OnFinished")
 			if !self.IsSetupPhase then

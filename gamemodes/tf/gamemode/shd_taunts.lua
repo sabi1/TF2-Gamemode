@@ -46,6 +46,15 @@ local wep = {
 "tf_weapon_syringegun_medic",
 }
 
+local function BlockLegacyMvMCommands(ply)
+	if not TF_MVM or not TF_MVM.Runtime then return false end
+	if not TF_MVM.Runtime:IsManagedActive() then return false end
+	if IsValid(ply) then
+		ply:ChatPrint("Legacy MvM wave commands are disabled while POP runtime is active.")
+	end
+	return true
+end
+
 
 concommand.Add("tf_red_wins", function(ply, cmd)
 	GAMEMODE:RoundWin(2)
@@ -67,6 +76,7 @@ end)
 concommand.Add("tf_no_one_wins", function(ply, cmd)
 end) 
 concommand.Add("tf_mvm_wins", function(ply, cmd)
+	if BlockLegacyMvMCommands(ply) then return end
 	for k,v in pairs( player.GetAll() ) do
 		if v:Team() != TEAM_BLU then
 			if v:Team() == TEAM_SPECTATOR then
@@ -115,6 +125,7 @@ concommand.Add("tf_mvm_wins", function(ply, cmd)
 end)
 
 concommand.Add("tf_mvm_wave_end_bonus", function(ply, cmd)
+	if BlockLegacyMvMCommands(ply) then return end
 	if !ply:IsAdmin() then return end
 	ply:EmitSound("vo/mvm_wave_end0"..math.random(1,8)..".wav", 0, 100)
 	ply:EmitSound("music/mvm_end_wave.wav", 0, 100)
@@ -148,30 +159,35 @@ concommand.Add("tf_help_cap_flag", function(ply, cmd)
 	end
 end)
 concommand.Add("tf_mvm_wave_end", function(ply, cmd)
+	if BlockLegacyMvMCommands(ply) then return end
 	if !ply:IsAdmin() then return end
 	ply:EmitSound("vo/mvm_wave_end0"..math.random(1,8)..".wav", 0, 100)
 	ply:EmitSound("music/mvm_end_wave.wav", 0, 100)
 	RunConsoleCommand("tf_bot_kick_all")
 end)
 concommand.Add("tf_mvm_wave_mid_end", function(ply, cmd)
+	if BlockLegacyMvMCommands(ply) then return end
 	if !ply:IsAdmin() then return end
 	ply:EmitSound("vo/mvm_wave_end0"..math.random(1,8)..".wav", 0, 100)
 	ply:EmitSound("music/mvm_end_mid_wave.wav", 0, 100)
 	RunConsoleCommand("tf_bot_kick_all")
 end)
 concommand.Add("tf_mvm_wave_end_tank", function(ply, cmd)
+	if BlockLegacyMvMCommands(ply) then return end
 	if !ply:IsAdmin() then return end
 	ply:EmitSound("vo/mvm_wave_end0"..math.random(1,8)..".wav", 0, 100)
 	ply:EmitSound("music/mvm_end_tank_wave.wav", 0, 100)
 	RunConsoleCommand("tf_bot_kick_all")
 end)
 concommand.Add("tf_mvm_wave_end_final", function(ply, cmd)
+	if BlockLegacyMvMCommands(ply) then return end
 	if !ply:IsAdmin() then return end
 	ply:EmitSound("vo/mvm_final_wave_end0"..math.random(1,6)..".wav", 0, 100)
 	ply:EmitSound("music/mvm_end_last_wave.wav", 0, 100)
 	RunConsoleCommand("tf_bot_kick_all")
 end)
 concommand.Add("tf_mvm_wave_start", function(ply, cmd)
+	if BlockLegacyMvMCommands(ply) then return end
 	if !ply:IsAdmin() then return end
 	ply:EmitSound("vo/mvm_wave_start0"..math.random(1,9)..".wav", 0, 100)
 	ply:EmitSound("music/mvm_start_wave.wav", 0, 100)
@@ -186,6 +202,7 @@ end)
 
 
 concommand.Add("tf_mvm_wave_666_start", function(ply, cmd)
+	if BlockLegacyMvMCommands(ply) then return end
 	if !ply:IsAdmin() then return end
 	ply:EmitSound("vo/mvm_wave_start0"..math.random(1,9)..".wav", 0, 100)
 	ply:EmitSound("music/mvm_start_wave.wav", 0, 80)
@@ -199,6 +216,7 @@ concommand.Add("tf_mvm_wave_666_start", function(ply, cmd)
 end)
 
 concommand.Add("tf_mvm_wave_start_mid", function(ply, cmd)
+	if BlockLegacyMvMCommands(ply) then return end
 	if !ply:IsAdmin() then return end
 	ply:EmitSound("vo/mvm_wave_start0"..math.random(1,9)..".wav", 0, 100)
 	ply:EmitSound("music/mvm_start_mid_wave.wav", 0, 100)
@@ -211,6 +229,7 @@ concommand.Add("tf_mvm_wave_start_mid", function(ply, cmd)
 	timer.Create("WaveStart6", 10, 1, function() RunConsoleCommand("tf_bot_add") RunConsoleCommand("tf_bot_add") RunConsoleCommand("tf_bot_add") RunConsoleCommand("tf_bot_add")  end )
 end)
 concommand.Add("tf_mvm_wave_start_tank", function(ply, cmd)
+	if BlockLegacyMvMCommands(ply) then return end
 	if !ply:IsAdmin() then return end
 	ply:EmitSound("vo/mvm_wave_start0"..math.random(1,9)..".wav", 0, 100)
 	ply:EmitSound("music/mvm_start_tank_wave.wav", 0, 100)
@@ -225,6 +244,7 @@ concommand.Add("tf_mvm_wave_start_tank", function(ply, cmd)
 	timer.Create("WaveStart6", 30, 1, function() RunConsoleCommand("tf_bot_add") RunConsoleCommand("tf_bot_add") RunConsoleCommand("tf_bot_add") RunConsoleCommand("tf_bot_add")  end )
 end)
 concommand.Add("tf_mvm_wave_start_final", function(ply, cmd)
+	if BlockLegacyMvMCommands(ply) then return end
 	if !ply:IsAdmin() then return end
 	ply:EmitSound("vo/mvm_final_wave_start0"..math.random(1,9)..".wav", 0, 100)
 	ply:EmitSound("music/mvm_start_last_wave.wav", 0, 100)

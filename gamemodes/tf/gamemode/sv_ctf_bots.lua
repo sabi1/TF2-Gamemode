@@ -200,6 +200,7 @@ local tf_bot_random_loadouts = CreateConVar("tf_bot_random_loadouts", "1", {FCVA
 local tf_bot_randomizer_mode = CreateConVar("tf_bot_randomizer_mode", "0", {FCVAR_ARCHIVE, FCVAR_NOTIFY}, "Ignore class restrictions when randomizing bot loadouts.")
 local tf_bot_loadout_mutation_chance = CreateConVar("tf_bot_loadout_mutation_chance", "0.20", {FCVAR_ARCHIVE, FCVAR_NOTIFY}, "Chance a respawning bot changes one weapon slot in its saved random loadout.")
 local tf_bot_loadout_debug = CreateConVar("tf_bot_loadout_debug", "0", {FCVAR_ARCHIVE, FCVAR_NOTIFY}, "Enable debug logs for bot loadout randomization.")
+local tf_mvm_bot_allow_flag_carrier_to_fight = CreateConVar("tf_mvm_bot_allow_flag_carrier_to_fight", "0", {FCVAR_ARCHIVE, FCVAR_NOTIFY}, "Allow MvM bomb carrier bots to actively fight instead of prioritizing hatch.")
 local tf_bot_ragdoll_drop_boost = CreateConVar("tf_bot_ragdoll_drop_boost", "280", {FCVAR_ARCHIVE, FCVAR_NOTIFY}, "Additional downward velocity for dead bot ragdolls.")
 -- Keep perf CVars defined here because this file is loaded before shared.lua.
 local tf_bot_perf_enable = CreateConVar("tf_bot_perf_enable", "1", {FCVAR_ARCHIVE, FCVAR_NOTIFY})
@@ -215,6 +216,25 @@ local tf_bot_breakable_check_interval = CreateConVar("tf_bot_breakable_check_int
 local tf_bot_perf_hard_threshold = CreateConVar("tf_bot_perf_hard_threshold", "16", {FCVAR_ARCHIVE, FCVAR_NOTIFY}, "Bot count threshold where extra throttling kicks in.")
 local tf_bot_perf_hard_multiplier = CreateConVar("tf_bot_perf_hard_multiplier", "1.6", {FCVAR_ARCHIVE, FCVAR_NOTIFY}, "Extra interval multiplier used above hard threshold.")
 local tf_bot_disable_social_look_highload = CreateConVar("tf_bot_disable_social_look_highload", "1", {FCVAR_ARCHIVE, FCVAR_NOTIFY}, "Disable friendly look-at-me scan when high-load threshold is reached.")
+
+local function IsBotForcedMeleeOnly(bot)
+	if not IsValid(bot) then return false end
+	if tf_bot_melee_only:GetBool() and not string.find(bot:GetModel() or "", "/bots") then
+		return true
+	end
+	return bot.TF_MVM_WeaponRestriction == "meleeonly"
+end
+
+local function ForceBotMeleeWeapon(bot)
+	if not IsValid(bot) then return false end
+	for _, wep in ipairs(bot:GetWeapons()) do
+		if IsValid(wep) and wep.IsMeleeWeapon then
+			bot:SelectWeapon(wep:GetClass())
+			return true
+		end
+	end
+	return false
+end
 
 local function CVFloat(cv, fallback)
 	if cv and cv.GetFloat then
@@ -285,6 +305,7 @@ local objectiveCache = {
 	item_teamflag = {},
 	item_teamflag_mvm = {},
 	func_capturezone = {},
+	func_flagdetectionzone = {},
 	trigger_capture_area = {},
 	bot_hint_sentrygun = {},
 	obj_sentrygun = {},
@@ -339,6 +360,7 @@ local function RefreshObjectiveCache(force)
 	objectiveCache.item_teamflag = ents.FindByClass("item_teamflag")
 	objectiveCache.item_teamflag_mvm = ents.FindByClass("item_teamflag_mvm")
 	objectiveCache.func_capturezone = ents.FindByClass("func_capturezone")
+	objectiveCache.func_flagdetectionzone = ents.FindByClass("func_flagdetectionzone")
 	objectiveCache.trigger_capture_area = ents.FindByClass("trigger_capture_area")
 	objectiveCache.bot_hint_sentrygun = ents.FindByClass("bot_hint_sentrygun")
 	objectiveCache.obj_sentrygun = ents.FindByClass("obj_sentrygun")
@@ -591,14 +613,106 @@ function lookForClosestFriendlyHumanLookingAtMe(bot)
 		bot._cachedFriendlyLookAtMe = table.Random(npcs)
 		return bot._cachedFriendlyLookAtMe
 end
-function escortAvailable(bot)
-	local npcs = {} 
-	for k,v in ipairs(GetCachedEntities("team_train_watcher")) do
-		if (IsValid(v)) then
-			table.insert(npcs, v)		
+
+local function GetPayloadWatcher()
+	if GAMEMODE and GAMEMODE.GetActivePayloadWatcher then
+		local watcher = GAMEMODE:GetActivePayloadWatcher()
+		if IsValid(watcher) then
+			return watcher
 		end
 	end
-	return table.Count(npcs) > 0
+
+	for _, watcher in ipairs(GetCachedEntities("team_train_watcher")) do
+		if IsValid(watcher) then
+			return watcher
+		end
+	end
+
+	return nil
+end
+
+local function GetPayloadState(watcher)
+	if not IsValid(watcher) or not watcher.GetPayloadState then
+		return {}
+	end
+	return watcher:GetPayloadState() or {}
+end
+
+local function GetPayloadAttackTeam(state)
+	local teamNum = tonumber(state.attackTeam)
+	if teamNum == TEAM_RED or teamNum == TEAM_BLU then
+		return teamNum
+	end
+	return TEAM_BLU
+end
+
+local function GetPayloadDefendTeam(state)
+	local teamNum = tonumber(state.defendTeam)
+	if teamNum == TEAM_RED or teamNum == TEAM_BLU then
+		return teamNum
+	end
+	return (GetPayloadAttackTeam(state) == TEAM_RED) and TEAM_BLU or TEAM_RED
+end
+
+local function GetPayloadCartPosition(watcher)
+	if not IsValid(watcher) then return nil end
+	if watcher.GetCartPosition then
+		return watcher:GetCartPosition()
+	end
+	if IsValid(watcher.Train) then
+		return watcher.Train:GetPos()
+	end
+	return watcher:GetPos()
+end
+
+local function GetPayloadDefendPosition(watcher)
+	if not IsValid(watcher) then return nil end
+	if watcher.GetDefendPosition then
+		return watcher:GetDefendPosition()
+	end
+	return GetPayloadCartPosition(watcher)
+end
+
+local function GetPayloadObjectivePosition(bot)
+	if not IsValid(bot) then return nil end
+
+	local watcher = GetPayloadWatcher()
+	if not IsValid(watcher) then return nil end
+
+	local state = GetPayloadState(watcher)
+	if state.goalReached then return nil end
+	if state.active == false and not IsValid(watcher.Train) then return nil end
+
+	local attackTeam = GetPayloadAttackTeam(state)
+	local defendTeam = GetPayloadDefendTeam(state)
+	local cartPos = GetPayloadCartPosition(watcher)
+	if not cartPos then return nil end
+
+	if bot:Team() == attackTeam then
+		return cartPos
+	end
+
+	if bot:Team() == defendTeam then
+		local cappers = tonumber(state.cappers) or 0
+		local contested = cappers > 0 or state.blocked or tonumber(state.trainState) == 1
+		if contested then
+			return cartPos
+		end
+		return GetPayloadDefendPosition(watcher) or cartPos
+	end
+
+	return cartPos
+end
+
+function escortAvailable(bot)
+	local watcher = GetPayloadWatcher()
+	if not IsValid(watcher) then return false end
+
+	local state = GetPayloadState(watcher)
+	if state.goalReached then return false end
+	if state.active == false and not IsValid(watcher.Train) then return false end
+
+	return true
 end
 
 function flagAvailable(bot)
@@ -618,6 +732,470 @@ function bombAvailable(bot)
 		end
 	end
 	return table.Count(npcs) > 0
+end
+
+local function IsMvMMap()
+	return string.find(string.lower(game.GetMap() or ""), "mvm_", 1, true) ~= nil
+end
+
+local function GetObjectivePos(ent)
+	if not IsValid(ent) then return nil end
+	local pos = nil
+	if ent.Pos then
+		pos = ent.Pos
+	elseif ent.WorldSpaceCenter then
+		pos = ent:WorldSpaceCenter()
+	else
+		pos = ent:GetPos()
+	end
+
+	-- Keep objective points anchored to nav so bots do not chase brush centers in void/solid.
+	if pos and navmesh and navmesh.GetNearestNavArea then
+		local area = navmesh.GetNearestNavArea(pos)
+		if IsValid(area) then
+			return area:GetCenter()
+		end
+	end
+
+	return pos
+end
+
+local function IsMvMGateBot(bot)
+	if not IsValid(bot) then return false end
+	if bot.TF_MVM_IsGateBot ~= nil then
+		return bot.TF_MVM_IsGateBot == true
+	end
+
+	local now = CurTime()
+	if bot._mvmGateBotScanNext and bot._mvmGateBotScanNext > now then
+		return bot._mvmGateBotScanCached == true
+	end
+
+	local isGateBot = false
+	if isfunction(bot.GetTFItems) then
+		for _, item in ipairs(bot:GetTFItems()) do
+			if not IsValid(item) then continue end
+			local data = item.GetItemData and item:GetItemData() or nil
+			local name = string.lower(tostring((data and (data.name or data.item_name)) or ""))
+			if string.find(name, "gatebot", 1, true) or string.find(name, "gate bot", 1, true) then
+				isGateBot = true
+				break
+			end
+		end
+	end
+
+	bot._mvmGateBotScanCached = isGateBot
+	bot._mvmGateBotScanNext = now + 0.9
+
+	if isGateBot then
+		bot.TF_MVM_IsGateBot = true
+	end
+
+	return isGateBot
+end
+
+local function GetMvMBombDeployZone()
+	local fallback = nil
+	for _, zone in ipairs(GetCachedEntities("func_capturezone")) do
+		if not IsValid(zone) then continue end
+		if not fallback then
+			fallback = zone
+		end
+		local teamNum = tonumber(zone.TeamNum or zone.Team or 0) or 0
+		if teamNum == TEAM_RED or teamNum == 2 then
+			return zone
+		end
+	end
+	return fallback
+end
+
+local function GetMvMOpenGateTargetPos(bot)
+	local bestPos = nil
+	local bestDist = nil
+	local origin = IsValid(bot) and bot:GetPos() or vector_origin
+
+	for _, zone in ipairs(GetCachedEntities("func_flagdetectionzone")) do
+		if not IsValid(zone) then continue end
+		if zone.Opened then continue end
+
+		local pos = GetObjectivePos(zone)
+		if not pos then continue end
+
+		local dist = origin:DistToSqr(pos)
+		if not bestDist or dist < bestDist then
+			bestDist = dist
+			bestPos = pos
+		end
+	end
+
+	return bestPos
+end
+
+local function IsMvMInvaderBot(bot)
+	if not IsValid(bot) then return false end
+	if not IsMvMMap() then return false end
+	return bot:Team() == TEAM_BLU or bot:Team() == TF_TEAM_PVE_INVADERS or bot.IsMVMRobot == true
+end
+
+local function GetMvMBombIntel()
+	for _, intelEnt in ipairs(GetCachedEntities("item_teamflag_mvm")) do
+		if IsValid(intelEnt) then
+			return intelEnt
+		end
+	end
+	return nil
+end
+
+local function IsMvMBombAtHome(bombIntel)
+	if not IsValid(bombIntel) then return false end
+	if isfunction(bombIntel.IsHome) then
+		return bombIntel:IsHome() == true
+	end
+	-- item_teamflag_mvm uses explicit state values: 0=home, 1=carried, 2=dropped.
+	return tonumber(bombIntel.State or -1) == 0
+end
+
+local function IsMvMBombCarrier(bot)
+	if not IsValid(bot) or not IsMvMInvaderBot(bot) then return false end
+	local intel = GetMvMBombIntel()
+	if not IsValid(intel) or not IsValid(intel.Carrier) then return false end
+	return intel.Carrier:EntIndex() == bot:EntIndex()
+end
+
+local function ShouldCarrierIgnoreEnemy(bot, enemy)
+	if not IsMvMBombCarrier(bot) then return false end
+	if not IsValid(enemy) or not enemy:IsPlayer() then return true end
+	-- Keep moving unless an enemy is in close blocking range.
+	return bot:GetPos():DistToSqr(enemy:GetPos()) > (480 * 480)
+end
+
+local function IsMvMSentryBuster(bot)
+	if not IsValid(bot) then return false end
+	return string.lower(tostring(bot:GetPlayerClass() or "")) == "sentrybuster"
+end
+
+local function IsMvMAggressiveBot(bot)
+	if not IsValid(bot) then return false end
+	if isfunction(bot.IsMiniBoss) and bot:IsMiniBoss() then return true end
+	if bot:GetNWBool("IsBoss", false) then return true end
+	return tonumber(bot.BotStrategy or 0) == 1
+end
+
+local function CountMvMEscortsForCarrier(teamNum, carrier, range)
+	if not IsValid(carrier) then return 0 end
+	local maxDistSqr = (range or 1200) * (range or 1200)
+	local count = 0
+
+	for _, mate in ipairs(player.GetBots()) do
+		if not IsValid(mate) then continue end
+		if mate:Team() ~= teamNum then continue end
+		if mate:EntIndex() == carrier:EntIndex() then continue end
+		if mate.intelcarrier ~= carrier then continue end
+		if mate:GetPos():DistToSqr(carrier:GetPos()) > maxDistSqr then continue end
+		count = count + 1
+	end
+
+	return count
+end
+
+local function SelectSentryBusterTarget(bot)
+	if not IsValid(bot) then return nil end
+
+	local bestTarget = nil
+	local bestScore = -math.huge
+
+	local function scoreBuilding(building, isPriority)
+		if not IsValid(building) or building:IsFriendly(bot) then return end
+		local dist = bot:GetPos():DistToSqr(building:GetPos())
+		local killScore = 0
+		if building.GetKills and isfunction(building.GetKills) then
+			killScore = math.max(tonumber(building:GetKills()) or 0, 0) * 100000
+		end
+		local score = killScore - dist
+		if isPriority then
+			score = score + 100000000
+		end
+		if score > bestScore then
+			bestScore = score
+			bestTarget = building
+		end
+	end
+
+	for _, sentry in ipairs(GetCachedEntities("obj_sentrygun")) do
+		scoreBuilding(sentry, true)
+	end
+	for _, disp in ipairs(GetCachedEntities("obj_dispenser")) do
+		scoreBuilding(disp, false)
+	end
+	for _, tele in ipairs(GetCachedEntities("obj_teleporter")) do
+		scoreBuilding(tele, false)
+	end
+
+	return bestTarget
+end
+
+local MvMAction = {
+	None = "none",
+	LeaveSpawn = "leave_spawn",
+	FetchBomb = "fetch_bomb",
+	DeliverBomb = "deliver_bomb",
+	EscortCarrier = "escort_carrier",
+	PushGate = "push_gate",
+	DefendBomb = "defend_bomb",
+	DefendHatch = "defend_hatch",
+	DestroySentries = "destroy_sentries",
+	Roam = "roam",
+}
+
+local function GetFriendlySpawnAttributeForBot(bot)
+	if not IsValid(bot) then return nil end
+	if bot:Team() == TEAM_RED then
+		return "spawn_room_red"
+	end
+	if bot:Team() == TEAM_BLU or bot:Team() == TF_TEAM_PVE_INVADERS then
+		return "spawn_room_blue"
+	end
+	return nil
+end
+
+local function HasAreaTFAttribute(area, attrName)
+	if not IsValid(area) or not isstring(attrName) or attrName == "" then return false end
+	if not isfunction(area.HasTFAttribute) then return false end
+	return area:HasTFAttribute(attrName) == true
+end
+
+local function GetSpawnExitTargetPos(bot)
+	if not IsValid(bot) or not navmesh or not navmesh.GetAllNavAreas then return nil end
+	local spawnAttr = GetFriendlySpawnAttributeForBot(bot)
+	if not spawnAttr then return nil end
+
+	local now = CurTime()
+	if bot._mvmSpawnExitPos and bot._mvmSpawnExitUntil and bot._mvmSpawnExitUntil > now then
+		return bot._mvmSpawnExitPos
+	end
+
+	local origin = bot:GetPos()
+	local bestPos = nil
+	local bestDist = nil
+	for _, area in ipairs(navmesh.GetAllNavAreas()) do
+		if not IsValid(area) then continue end
+		if HasAreaTFAttribute(area, spawnAttr) then continue end
+
+		local center = area:GetCenter()
+		local dz = math.abs(center.z - origin.z)
+		if dz > 512 then continue end
+
+		local dist = origin:DistToSqr(center)
+		if not bestDist or dist < bestDist then
+			bestDist = dist
+			bestPos = center
+		end
+	end
+
+	bot._mvmSpawnExitPos = bestPos
+	bot._mvmSpawnExitUntil = now + 1.0
+	return bestPos
+end
+
+local function GetMvMNavObjectiveAnchor(bot)
+	if not IsValid(bot) or not IsMvMMap() then return nil end
+
+	local now = CurTime()
+	if bot._mvmNavAnchor and bot._mvmNavAnchorUntil and bot._mvmNavAnchorUntil > now then
+		return bot._mvmNavAnchor
+	end
+
+	local anchor = nil
+	local deployPos = GetObjectivePos(GetMvMBombDeployZone())
+	local bombIntel = GetMvMBombIntel()
+	local bombCarrier = IsValid(bombIntel) and bombIntel.Carrier or nil
+
+	if IsMvMInvaderBot(bot) then
+		if bot:GetNWBool("InRespawnRoom", false) then
+			anchor = GetSpawnExitTargetPos(bot)
+		elseif IsValid(bombCarrier) and not bombCarrier:IsFriendly(bot) then
+			if bombCarrier:EntIndex() == bot:EntIndex() then
+				anchor = deployPos
+			else
+				anchor = bombCarrier:GetPos()
+			end
+		elseif IsValid(bombIntel) then
+			if IsMvMBombAtHome(bombIntel) then
+				anchor = deployPos or bombIntel:GetPos()
+			else
+				anchor = bombIntel:GetPos()
+			end
+		else
+			anchor = deployPos
+		end
+	elseif bot:Team() == TEAM_RED then
+		if IsValid(bombCarrier) and not bombCarrier:IsFriendly(bot) then
+			anchor = bombCarrier:GetPos()
+		else
+			anchor = deployPos
+		end
+	end
+
+	if anchor and navmesh and navmesh.GetNearestNavArea then
+		local navArea = navmesh.GetNearestNavArea(anchor)
+		if IsValid(navArea) then
+			anchor = navArea:GetCenter()
+		end
+	end
+
+	bot._mvmNavAnchor = anchor
+	bot._mvmNavAnchorUntil = now + 0.25
+	return anchor
+end
+
+local function SelectMvMAction(bot, controller, shouldFollowCarrierFn)
+	if not IsValid(bot) or not IsMvMMap() or GAMEMODE.RoundHasWinner then
+		return nil
+	end
+	if not bombAvailable(bot) then
+		return nil
+	end
+
+	local decision = {
+		action = MvMAction.None,
+		targetPos = nil,
+		intelCarrier = nil,
+		followCarrier = false,
+		isCarryingBomb = false,
+		targetEnt = nil,
+		routeType = nil,
+		ignoreCombat = false,
+	}
+
+	local deployZone = GetMvMBombDeployZone()
+	local deployPos = GetObjectivePos(deployZone)
+	local bombIntel = GetMvMBombIntel()
+	local bombCarrier = IsValid(bombIntel) and bombIntel.Carrier or nil
+
+	if IsMvMInvaderBot(bot) and bot:GetNWBool("InRespawnRoom", false) then
+		local exitPos = GetSpawnExitTargetPos(bot)
+		if exitPos then
+			decision.action = MvMAction.LeaveSpawn
+			decision.targetPos = exitPos
+			return decision
+		end
+	end
+
+	-- Sentry busters commit to buildings and ignore bomb handling.
+	if IsMvMInvaderBot(bot) and IsMvMSentryBuster(bot) then
+		local buildingTarget = SelectSentryBusterTarget(bot)
+		if IsValid(buildingTarget) then
+			decision.action = MvMAction.DestroySentries
+			decision.targetPos = buildingTarget:GetPos()
+			decision.targetEnt = buildingTarget
+			return decision
+		end
+		decision.action = MvMAction.Roam
+		decision.targetPos = deployPos
+		return decision
+	end
+
+	-- RED side in MvM: defend bomb/hatch.
+	if bot:Team() == TEAM_RED then
+		if IsValid(bombCarrier) and not bombCarrier:IsFriendly(bot) then
+			decision.action = MvMAction.DefendBomb
+			decision.targetEnt = bombCarrier
+			decision.targetPos = bombCarrier:GetPos()
+			decision.intelCarrier = bombCarrier
+			return decision
+		end
+
+		if deployPos then
+			local closeEnough = bot.botPos and bot:GetPos():DistToSqr(bot.botPos) < (bot:GetModelRadius() * bot:GetModelRadius() * 2.0)
+			local shouldPickPatrol = (not bot._mvmDefendPatrolUntil) or (bot._mvmDefendPatrolUntil < CurTime()) or closeEnough
+			if shouldPickPatrol and IsValid(controller) then
+				local patrolPos = controller:FindSpot("random", { radius = 1600, pos = deployPos, type = "exposed" })
+				bot._mvmDefendPatrolPos = patrolPos or deployPos
+				bot._mvmDefendPatrolUntil = CurTime() + math.Rand(3, 6)
+			end
+			decision.action = MvMAction.DefendHatch
+			decision.targetPos = bot._mvmDefendPatrolPos or deployPos
+			return decision
+		end
+
+		if IsValid(controller) and (CurTime() > controller.LastSegmented or not bot.botPos) then
+			bot._mvmDefendPatrolPos = controller:FindSpot("random", {radius = 3000})
+			controller.LastSegmented = CurTime() + 8
+		end
+		decision.action = MvMAction.Roam
+		decision.targetPos = bot._mvmDefendPatrolPos or bot.botPos
+		return decision
+	end
+
+	if not IsMvMInvaderBot(bot) then
+		decision.action = MvMAction.Roam
+		decision.targetPos = IsValid(bot.TargetEnt) and bot.TargetEnt:GetPos() or deployPos
+		return decision
+	end
+	if bot:GetPlayerClass() == "engineer" or bot.playerclass == "medic" then
+		decision.action = MvMAction.Roam
+		decision.targetPos = IsValid(bot.TargetEnt) and bot.TargetEnt:GetPos() or deployPos
+		return decision
+	end
+
+	local gateTargetPos = nil
+	if IsMvMGateBot(bot) then
+		gateTargetPos = GetMvMOpenGateTargetPos(bot)
+	end
+
+	if IsValid(bombCarrier) and not bombCarrier:IsFriendly(bot) then
+		if bombCarrier:EntIndex() == bot:EntIndex() then
+			decision.action = gateTargetPos and MvMAction.PushGate or MvMAction.DeliverBomb
+			decision.targetPos = gateTargetPos or deployPos
+			decision.isCarryingBomb = true
+			decision.routeType = "mvm_bomb_carrier"
+			decision.ignoreCombat = true
+			return decision
+		end
+
+		local escortCap = 4
+		local escortCount = CountMvMEscortsForCarrier(bot:Team(), bombCarrier, 1200)
+		local canEscort = not bot:IsMiniBoss() and escortCount < escortCap
+		if canEscort and shouldFollowCarrierFn and shouldFollowCarrierFn(bot, bombCarrier, true) then
+			decision.action = MvMAction.EscortCarrier
+			decision.targetPos = bombCarrier:GetPos()
+			decision.intelCarrier = bombCarrier
+			decision.followCarrier = true
+			return decision
+		end
+
+		if IsMvMAggressiveBot(bot) then
+			decision.action = gateTargetPos and MvMAction.PushGate or MvMAction.DeliverBomb
+			decision.targetPos = gateTargetPos or deployPos or bombCarrier:GetPos()
+		elseif IsValid(bot.TargetEnt) then
+			decision.action = MvMAction.Roam
+			decision.targetPos = bot.TargetEnt:GetPos()
+		else
+			decision.action = MvMAction.EscortCarrier
+			decision.targetPos = bombCarrier:GetPos()
+		end
+		return decision
+	end
+
+	if IsValid(bombIntel) then
+		if IsMvMBombAtHome(bombIntel) then
+			if IsValid(bot.TargetEnt) then
+				decision.action = MvMAction.Roam
+				decision.targetPos = bot.TargetEnt:GetPos()
+			else
+				decision.action = gateTargetPos and MvMAction.PushGate or MvMAction.DeliverBomb
+				decision.targetPos = gateTargetPos or deployPos or bombIntel:GetPos()
+			end
+		else
+			decision.action = MvMAction.FetchBomb
+			decision.targetPos = bombIntel:GetPos()
+		end
+		return decision
+	end
+
+	decision.action = gateTargetPos and MvMAction.PushGate or MvMAction.DeliverBomb
+	decision.targetPos = gateTargetPos or deployPos
+	return decision
 end
 
 function lookForClosestHumanPlayer(bot)
@@ -742,8 +1320,9 @@ function LBAddBot(team)
 			bot.TFBot = true
 			if string.find(game.GetMap(), "mvm_") then
 				
-				ply:SetTeam(TF_TEAM_PVE_INVADERS)
-				ply:SetSkin(1)
+				bot.IsMVMRobot = true
+				bot:SetTeam(TEAM_BLU)
+				bot:SetSkin(1)
 					
 			else		
 			
@@ -830,13 +1409,24 @@ local function LeadBot_S_Add(team2)
 	end 
 
 	nDiffBetweenTeams = ( iMostPlayers - iLeastPlayers );
-	if (team.NumPlayers(TEAM_RED) > team.NumPlayers(TEAM_BLU)) then
-		ply:SetTeam(TEAM_BLU)	
-	elseif (team.NumPlayers(TEAM_RED) < team.NumPlayers(TEAM_BLU)) then
-		ply:SetTeam(TEAM_RED)	
+	if IsMvMMap() then
+		-- In TF2 MvM, AI bots are invaders (BLU-side), not RED defenders.
+		ply:SetTeam(TEAM_BLU)
+		ply.IsMVMRobot = true
+	else
+		if (team.NumPlayers(TEAM_RED) > team.NumPlayers(TEAM_BLU)) then
+			ply:SetTeam(TEAM_BLU)	
+		elseif (team.NumPlayers(TEAM_RED) < team.NumPlayers(TEAM_BLU)) then
+			ply:SetTeam(TEAM_RED)	
+		end
 	end
 	
 	bot:Spawn()
+	if IsMvMMap() then
+		bot:SetTeam(TEAM_BLU)
+		bot:SetSkin(1)
+		bot.IsMVMRobot = true
+	end
 	local random = math.random(1,9)
 	if (random == 1) then
 		bot:SetPlayerClass("scout")
@@ -1248,6 +1838,7 @@ end
 
 function TFBot_ApplyRandomLoadout(bot, opts)
 	if not IsValid(bot) or not bot.TFBot or bot.IsL4DZombie then return false end
+	if bot.TF_MVMManaged or bot.IsMVMRobot then return false end
 	if not CVBool(tf_bot_random_loadouts, true) then return false end
 	opts = opts or {}
 	local now = CurTime()
@@ -1399,6 +1990,11 @@ end
 hook.Add("PlayerSpawn", "LeadBot_S_PlayerSpawn", function(bot)
 	if (IsValid(bot)) then
 		if bot.TFBot then
+				if bot.TF_MVMManaged or bot.IsMVMRobot then
+					-- Popfile runtime controls class/loadout for managed MvM bots.
+					bot:SetFOV(75, 0)
+					return
+				end
 				local class = table.Random(classtb)
 				if (tf_bot_force_class:GetString() != "") then
 					bot:SetPlayerClass(tf_bot_force_class:GetString())
@@ -1467,12 +2063,18 @@ hook.Add("Move", "LeadBot_Control22", function(bot, mv)
 		--cmd:ClearButtons()
 
 		if (GetConVar("ai_disabled"):GetBool()) then return end
-		if (IsValid(bot.TargetEnt)) then
-			if (!IsValidTarget(bot,bot.TargetEnt)) then
+		local ignoreCombat = bot.TF_MVM_IgnoreCombat == true and IsMvMBombCarrier(bot)
+		if ignoreCombat and IsValid(bot.TargetEnt) and ShouldCarrierIgnoreEnemy(bot, bot.TargetEnt) then
+			bot.TargetEnt = nil
+		end
+		if not ignoreCombat then
+			if (IsValid(bot.TargetEnt) and not IsBotForcedMeleeOnly(bot)) then
+				if (!IsValidTarget(bot,bot.TargetEnt)) then
+					bot.TargetEnt = AcquireEnemyTarget(bot)
+				end
+			else
 				bot.TargetEnt = AcquireEnemyTarget(bot)
 			end
-		else
-			bot.TargetEnt = AcquireEnemyTarget(bot)
 		end
 		if !bot.ControllerBot.nextRandomLook or bot.ControllerBot.nextRandomLook < CurTime() then
 			bot.ControllerBot.LookAt = Angle(math.Rand(-45,45),math.Rand(-360,360),0)
@@ -1596,9 +2198,10 @@ hook.Add("Move", "LeadBot_Control22", function(bot, mv)
 			bot:SetViewOffsetDucked(Vector(0, 0, 48) * bot.OverrideModelScale)
 		end
 	
-		local moveawayrange = 80
-		if (string.find(bot:GetModel(),"/bot_") and !string.find(bot:GetModel(),"medic")) then
-			moveawayrange = 150
+		local moveawayrange = 80 -- Hammer units (default teammate avoidance radius)
+		local isMvMBot = IsMvMMap() and (bot:Team() == TEAM_BLU or bot:Team() == TF_TEAM_PVE_INVADERS or bot.IsMVMRobot)
+		if isMvMBot then
+			moveawayrange = 150 -- Hammer units (MvM bots use wider spacing)
 		end
 		--[[
 		if controller.NextCenter > CurTime() and bot:GetNWBool("Taunting",false) != true and bot.botPos then
@@ -1811,9 +2414,10 @@ local function ComputePathCost(bot, area, fromArea, ladder, length)
     end
 
 
-    -- Avoid enemy spawn rooms
-    if (self:Team() == TEAM_RED and area:HasTFAttribute("spawn_room_blue")) or
-       (self:Team() == TEAM_BLUE and area:HasTFAttribute("spawn_room_red")) then
+    -- Avoid enemy spawn rooms (MvM invaders share BLU-side spawn ownership).
+    local isBlueSide = (self:Team() == TEAM_BLU or self:Team() == TF_TEAM_PVE_INVADERS)
+    if (self:Team() == TEAM_RED and HasAreaTFAttribute(area, "spawn_room_blue")) or
+       (isBlueSide and HasAreaTFAttribute(area, "spawn_room_red")) then
         if not TFGameRules.RoundHasBeenWon or not TFGameRules:RoundHasBeenWon() then
             return -1.0
         end
@@ -1854,14 +2458,29 @@ local function ComputePathCost(bot, area, fromArea, ladder, length)
             dist = dist * 4.0 * area:GetCombatIntensity()
         end
 
-        if (self:Team() == TEAM_RED and area:HasTFAttribute("blue_sentry_danger")) or
-           (self:Team() == TEAM_BLUE and area:HasTFAttribute("red_sentry_danger")) then
+        local isBlueSide = (self:Team() == TEAM_BLU or self:Team() == TF_TEAM_PVE_INVADERS)
+        if (self:Team() == TEAM_RED and HasAreaTFAttribute(area, "blue_sentry_danger")) or
+           (isBlueSide and HasAreaTFAttribute(area, "red_sentry_danger")) then
             dist = dist * 5.0
+        end
+    end
+    if self.routeType == "mvm_push" then
+        preference = 1.0
+    end
+    if self.routeType == "mvm_bomb_carrier" then
+        preference = 1.0
+        if area:IsInCombat() then
+            dist = dist * 2.2
+        end
+        local isBlueSide = (self:Team() == TEAM_BLU or self:Team() == TF_TEAM_PVE_INVADERS)
+        if (self:Team() == TEAM_RED and HasAreaTFAttribute(area, "blue_sentry_danger")) or
+           (isBlueSide and HasAreaTFAttribute(area, "red_sentry_danger")) then
+            dist = dist * 3.2
         end
     end
 
     if self:GetPlayerClass() == "spy" then
-        local enemyTeam = (self:Team() == TEAM_RED) and TEAM_BLUE or TEAM_RED
+        local enemyTeam = (self:Team() == TEAM_RED) and TEAM_BLU or TEAM_RED
 
         for _, ent in ipairs(GetCachedEntities("obj_sentrygun")) do
             if IsValid(ent) and ent:Team() == enemyTeam then
@@ -1874,6 +2493,32 @@ local function ComputePathCost(bot, area, fromArea, ladder, length)
         dist = dist + dist * 10.0 * area:GetPlayerCount(self:Team())
     end
 
+	if IsMvMMap() then
+		local friendlySpawnAttr = GetFriendlySpawnAttributeForBot(self)
+		if friendlySpawnAttr and HasAreaTFAttribute(area, friendlySpawnAttr) and not self:GetNWBool("InRespawnRoom", false) then
+			-- Discourage routes that linger in friendly spawn once bot is active.
+			dist = dist * 3.5
+		end
+
+		local anchor = GetMvMNavObjectiveAnchor(self)
+		if anchor and IsValid(fromArea) then
+			local areaDist = area:GetCenter():DistToSqr(anchor)
+			local fromDist = fromArea:GetCenter():DistToSqr(anchor)
+			if self.routeType == "mvm_bomb_carrier" then
+				if areaDist > fromDist then
+					dist = dist * 2.35
+				else
+					dist = dist * 0.72
+				end
+			else
+				if areaDist > fromDist then
+					dist = dist * 1.45
+				else
+					dist = dist * 0.92
+				end
+			end
+		end
+	end
 		
 
     local cost = dist * preference
@@ -1899,14 +2544,16 @@ hook.Add("SetupMove", "LeadBot_Control", function(bot, mv, cmd)
 			end
 		end
 		if canSense then
-			local closeTargets = GetNearbyEntities(bot, bot:GetModelRadius() * 1.02, GetAdaptiveInterval(CVFloat(tf_bot_sense_interval, 0.25), 0.05))
+			local isCarrier = IsMvMBombCarrier(bot) and bot.TF_MVM_IgnoreCombat == true
+			local closeRange = isCarrier and 260 or (bot:GetModelRadius() * 1.02)
+			local closeTargets = GetNearbyEntities(bot, closeRange, GetAdaptiveInterval(CVFloat(tf_bot_sense_interval, 0.25), 0.05))
 			for _, v in ipairs(closeTargets) do
 				if v:IsPlayer() and not v:IsFriendly(bot) then
 					bot.TargetEnt = v
 					break
 				end
 			end
-			if not IsValid(bot.TargetEnt) then
+			if not isCarrier and not IsValid(bot.TargetEnt) then
 				local mediumTargets = GetNearbyEntities(bot, 1200, GetAdaptiveInterval(CVFloat(tf_bot_sense_interval, 0.25), 0.05))
 				for _, v in ipairs(mediumTargets) do
 					if v:IsPlayer() and v:Team() ~= bot:Team() and v:GetEyeTrace().Entity == bot then
@@ -1961,13 +2608,22 @@ hook.Add("SetupMove", "LeadBot_Control", function(bot, mv, cmd)
 			end
 		end
 		if canUpdateObjective then
+			bot.TF_MVM_IgnoreCombat = false
 			if escortAvailable(bot) and !GAMEMODE.RoundHasWinner then -- Payload AI
-					for k, v in pairs(GetCachedEntities("trigger_capture_area")) do
-						intel = v
-					end
+					local payloadPos = GetPayloadObjectivePosition(bot)
+					if payloadPos then
+						bot.botPos = payloadPos
+					else
+						for _, trigger in pairs(GetCachedEntities("trigger_capture_area")) do
+							if IsValid(trigger) then
+								intel = trigger
+								break
+							end
+						end
 
-					if IsValid(intel) then
-						bot.botPos = intel.Pos
+						if IsValid(intel) then
+							bot.botPos = intel.Pos or intel:GetPos()
+						end
 					end
 					
 					--bot.LastSegmented = CurTime() + math.Rand(0.5, 1)
@@ -2040,42 +2696,31 @@ hook.Add("SetupMove", "LeadBot_Control", function(bot, mv, cmd)
 
 				bot.botPos = targetpos
 			]]
-			elseif bombAvailable(bot) and (bot:Team() == TEAM_BLU or bot:Team() == TF_TEAM_PVE_INVADERS) and bot:GetPlayerClass() != "engineer" and bot.playerclass != "medic" and bot:GetPlayerClass() != "sentrybuster" and !GAMEMODE.RoundHasWinner then -- CTF AI in MVM Maps
-				for k, v in pairs(GetCachedEntities("item_teamflag_mvm")) do
-					if v.TeamNum ~= bot:Team() and k == 1 then 
-						intel = v
+			elseif bombAvailable(bot) and IsMvMMap() and !GAMEMODE.RoundHasWinner then -- MvM objective selector (Phase 1)
+				local mvmDecision = SelectMvMAction(bot, controller, ShouldFollowIntelCarrier)
+				if mvmDecision then
+					bot.mvmAction = mvmDecision.action or MvMAction.None
+					bot.isCarryingIntel = mvmDecision.isCarryingBomb == true
+					bot.intelcarrier = mvmDecision.intelCarrier
+					bot.shouldFollowIntelCarrier = mvmDecision.followCarrier == true
+					if mvmDecision.routeType then
+						bot.routeType = mvmDecision.routeType
+					elseif bot.mvmAction == MvMAction.DefendBomb or bot.mvmAction == MvMAction.DefendHatch then
+						bot.routeType = "safest"
+					else
+						bot.routeType = "mvm_push"
+					end
+					bot.TF_MVM_IgnoreCombat = mvmDecision.ignoreCombat == true
+
+					if IsValid(mvmDecision.targetEnt) then
+						bot.TargetEnt = mvmDecision.targetEnt
+					end
+
+					targetpos = mvmDecision.targetPos
+					if targetpos then
+						bot.botPos = targetpos
 					end
 				end
-
-				for k, v in pairs(GetCachedEntities("func_capturezone")) do
-					fintelcap = v
-				end
-				if (IsValid(intel)) then
-					bot.isCarryingIntel = true
-					if !intel.Carrier then -- neither intel has a capture
-						targetpos = intel:GetPos()
-						bot.intelcarrier = nil
-					elseif intel.Carrier and intel.Carrier:EntIndex() == bot:EntIndex() and IsValid(fintelcap) then -- or if friendly intelligence has capture
-						targetpos = fintelcap.Pos -- goto friendly cap spot
-						bot.intelcarrier = nil
-					elseif IsValid(intel.Carrier) and bot:EntIndex() != intel.Carrier:EntIndex() then -- or else if we have it already carried
-						if (!bot:IsMiniBoss()) then
-							targetpos = intel.Carrier:GetPos()
-							bot.intelcarrier = intel.Carrier
-						else
-							if (IsValid(bot.TargetEnt)) then
-								targetpos = bot.TargetEnt:GetPos()
-							end
-						end
-					elseif IsValid(fintelcap) then
-						targetpos = fintelcap.Pos -- move to the bomb, the flag is currently invalid until a bot gets it
-						bot.intelcarrier = nil
-					end	
-				elseif IsValid(fintelcap) then
-					targetpos = fintelcap.Pos -- goto friendly cap spot
-				end
-
-				bot.botPos = targetpos
 			else
 				if (!IsValid(bot.TargetEnt) || !bot.TargetEnt:Alive()) then
 					-- our enemy doesn't exist anymore, find a random spot every 10 seconds
@@ -2168,30 +2813,21 @@ hook.Add("SetupMove", "LeadBot_Control", function(bot, mv, cmd)
 		------------------------------
 		 -----[[ENTITY DETECTION]]-----
 		------------------------------
-		if (bot:Team() == TEAM_BLU and bot:GetPlayerClass() == "sentrybuster") then
-				local buildingCandidates = {}
-				for _, build in ipairs(GetCachedEntities("obj_sentrygun")) do
-					buildingCandidates[#buildingCandidates + 1] = build
+		if (IsMvMInvaderBot(bot) and IsMvMSentryBuster(bot)) then
+				local className = IsValid(bot.TargetEnt) and bot.TargetEnt:GetClass() or ""
+				if IsValid(bot.TargetEnt) and (bot.TargetEnt:IsPlayer() or (className != "obj_sentrygun" and className != "obj_dispenser" and className != "obj_teleporter")) then
+					bot.TargetEnt = nil
 				end
-				for _, build in ipairs(GetCachedEntities("obj_dispenser")) do
-					buildingCandidates[#buildingCandidates + 1] = build
+
+				if !IsValid(bot.TargetEnt) or bot.TargetEnt:IsFriendly(bot) then
+					bot.TargetEnt = SelectSentryBusterTarget(bot)
 				end
-				for _, build in ipairs(GetCachedEntities("obj_teleporter")) do
-					buildingCandidates[#buildingCandidates + 1] = build
-				end
-				for _, v in ipairs(buildingCandidates) do
-					if (!IsValid(bot.TargetEnt)) then
-						if v:EntIndex() != bot:EntIndex() then
-							if (!v:IsFriendly(bot)) then -- TODO: find a better way to do this
-								local targetpos = v:EyePos() - Vector(0, 0, 10) -- bot eye check, don't start shooting targets just because we barely see their head
-								local trace = util.TraceLine({start = bot:GetShootPos(), endpos = targetpos, filter = function( ent ) return ent == v end})
-			
-								if (v:EntIndex() == bot:EntIndex()) then return end
-								if (v:EntIndex() == bot.ControllerBot:EntIndex()) then return end
-								bot.TargetEnt = v
-							end
-						end
-					end
+
+				if IsValid(bot.TargetEnt) then
+					bot.botPos = bot.TargetEnt:GetPos()
+					bot.shouldFollowIntelCarrier = false
+					-- Mirror TF2 buster intent: ignore player combat and beeline objective.
+					bot.tooclose = false
 				end
 		end
 		------------------------------
@@ -2207,15 +2843,13 @@ hook.Add("SetupMove", "LeadBot_Control", function(bot, mv, cmd)
 			-- back up if the target is really close
 			-- TODO: find a random spot rather than trying to back up into what could just be a wall
 			
-			if (tf_bot_melee_only:GetBool() and !string.find(bot:GetModel(),"/bots")) then
-				if (IsValid(bot:GetWeapons()[3]) and bot:GetWeapons()[3].IsMeleeWeapon) then
-					bot:SelectWeapon(bot:GetWeapons()[3])
-				elseif (IsValid(bot:GetWeapons()[2]) and bot:GetWeapons()[2].IsMeleeWeapon) then
-					bot:SelectWeapon(bot:GetWeapons()[2])
-				elseif (IsValid(bot:GetWeapons()[1]) and bot:GetWeapons()[1].IsMeleeWeapon) then
-					bot:SelectWeapon(bot:GetWeapons()[1])
-				end
+			if IsBotForcedMeleeOnly(bot) then
+				ForceBotMeleeWeapon(bot)
 			end
+		end
+
+		if bot.TF_MVM_IgnoreCombat and IsValid(bot.TargetEnt) and ShouldCarrierIgnoreEnemy(bot, bot.TargetEnt) then
+			bot.TargetEnt = nil
 		end
 
 		if (!bot.lookingAt and bot:GetNWBool("Taunting",false) != true) then
@@ -2300,6 +2934,135 @@ end)
 hook.Add("EntityRemoved", "leadbot_drop_flag_on_removed_carrier", function(ent)
 	if not ent or not ent.IsPlayer or not ent:IsPlayer() then return end
 	DropFlagsForCarrier(ent)
+end)
+
+local desiredBotQuota = 0
+
+local function IsManagedTFBot(ply)
+	if not IsValid(ply) or not ply:IsBot() then return false end
+	if ply.TF_MVMManaged then return true end
+	return ply.TFBot == true and not ply.IsL4DZombie
+end
+
+local function CountManagedTFBots()
+	local count = 0
+	for _, bot in ipairs(player.GetBots()) do
+		if IsManagedTFBot(bot) then
+			count = count + 1
+		end
+	end
+	return count
+end
+
+local function SetQuotaTarget(rawValue)
+	local n = tonumber(rawValue or 0) or 0
+	desiredBotQuota = math.max(math.floor(n), 0)
+end
+
+local function EnforceBotQuota()
+	if desiredBotQuota < 0 then
+		desiredBotQuota = 0
+	end
+
+	local current = CountManagedTFBots()
+	if current < desiredBotQuota then
+		-- Pace spawning to avoid large one-tick spikes.
+		local toAdd = math.min(desiredBotQuota - current, 2)
+		for _ = 1, toAdd do
+			LeadBot_S_Add()
+		end
+		return
+	end
+
+	if current <= desiredBotQuota then return end
+
+	local toRemove = current - desiredBotQuota
+	for _, bot in ipairs(player.GetBots()) do
+		if toRemove <= 0 then break end
+		if not IsManagedTFBot(bot) then continue end
+		bot:Kick("Bot quota reduced")
+		toRemove = toRemove - 1
+	end
+end
+
+hook.Add("Think", "TFBot_QuotaManager", function()
+	if desiredBotQuota <= 0 then return end
+	if game.SinglePlayer() then return end
+	if not navmesh.IsLoaded() then return end
+	if IsMvMMap() and TF_MVM and TF_MVM.Runtime and TF_MVM.Runtime.IsManagedActive and TF_MVM.Runtime:IsManagedActive() then
+		-- POP-driven MvM owns spawning; don't inject generic quota bots into active waves.
+		return
+	end
+	EnforceBotQuota()
+end)
+
+hook.Add("Think", "TFBot_MovementWatchdog", function()
+	if not navmesh.IsLoaded() then return end
+
+	local now = CurTime()
+	for _, bot in ipairs(player.GetBots()) do
+		if IsMvMMap() and IsValid(bot) and (bot.TF_MVMManaged or bot.IsMVMRobot) and bot:Team() ~= TEAM_BLU then
+			-- Recover from external team changes pushing managed MvM bots into invalid/unassigned teams.
+			bot:SetTeam(TEAM_BLU)
+			bot:SetSkin(1)
+		end
+
+		if not IsManagedTFBot(bot) then continue end
+		if not bot:Alive() then continue end
+		if bot:GetNWBool("Taunting", false) then continue end
+
+		local hasTarget = IsValid(bot.TargetEnt)
+		local hasObjective = bot.botPos ~= nil
+
+		-- Always maintain some objective anchor to prevent idle standstill.
+		if not hasObjective and not hasTarget then
+			if IsMvMMap() then
+				if IsMvMInvaderBot(bot) and bot:GetNWBool("InRespawnRoom", false) then
+					bot.botPos = GetSpawnExitTargetPos(bot) or bot.botPos
+				else
+					local deploy = GetMvMBombDeployZone()
+					bot.botPos = GetObjectivePos(deploy) or bot.botPos
+				end
+			elseif IsValid(bot.ControllerBot) then
+				bot.botPos = bot.ControllerBot:FindSpot("random", {radius = 2500}) or bot.botPos
+			end
+		end
+
+		local lastPos = bot._moveWatchPos
+		if not lastPos then
+			bot._moveWatchPos = bot:GetPos()
+			bot._moveWatchStamp = now
+			continue
+		end
+
+		local movedSqr = bot:GetPos():DistToSqr(lastPos)
+		if movedSqr > (32 * 32) then
+			bot._moveWatchPos = bot:GetPos()
+			bot._moveWatchStamp = now
+			continue
+		end
+
+		local stallFor = now - (bot._moveWatchStamp or now)
+		if stallFor < 2.2 then continue end
+		if bot._nextWatchdogUnstuck and bot._nextWatchdogUnstuck > now then continue end
+
+		-- Hard reset pathing state so StartCommand rebuilds a fresh route.
+		bot.path = nil
+		bot.targetArea = nil
+		bot.lastRePath = 0
+		bot.lastRePath2 = 0
+
+		if bot:GetNWBool("InRespawnRoom", false) and IsMvMInvaderBot(bot) then
+			bot.botPos = GetSpawnExitTargetPos(bot) or bot.botPos
+		elseif IsValid(bot.ControllerBot) then
+			local around = bot.botPos or bot:GetPos()
+			bot.botPos = bot.ControllerBot:FindSpot("random", {radius = 1400, pos = around, type = "exposed"}) or bot.botPos
+		end
+
+		bot._moveWatchPos = bot:GetPos()
+		bot._moveWatchStamp = now
+		bot._nextWatchdogUnstuck = now + 0.75
+	end
 end)
 
 hook.Add("OnPlayerReady", "leadbot_ready", function()
@@ -2419,11 +3182,8 @@ hook.Add("StartCommand", "leadbot_control", function(bot, cmd)
 					buttons = buttons + IN_SPEED
 				end
 			end
-			if (bot.botPos and !bot:GetNWBool("Taunting",false)) then
-				-- Keep airborne bots tucked in, but avoid random ground jump/strafe spam.
-				if (bot:GetVelocity():Length() < 50 and not bot:IsOnGround()) then
-					buttons = buttons + IN_DUCK
-				end
+			if IsBotForcedMeleeOnly(bot) then
+				ForceBotMeleeWeapon(bot)
 			end
 			local controller = bot.ControllerBot
 			--cmd:ClearMovement()
@@ -2533,7 +3293,11 @@ hook.Add("StartCommand", "leadbot_control", function(bot, cmd)
 			if (bot:GetPlayerClass() == "samuraidemo") then
 				bot:SetJumpPower(220 * 2.3)
 			end
-		if IsValid(bot.TargetEnt) and bot:GetNWBool("InRespawnRoom",false) == false and bot:GetNWBool("Taunting",false) != true then
+		local allowCarrierCombat = true
+		if IsMvMBombCarrier(bot) and bot.TF_MVM_IgnoreCombat then
+			allowCarrierCombat = IsValid(bot.TargetEnt) and bot:GetPos():DistToSqr(bot.TargetEnt:GetPos()) <= (440 * 440)
+		end
+		if IsValid(bot.TargetEnt) and allowCarrierCombat and bot:GetNWBool("InRespawnRoom",false) == false and bot:GetNWBool("Taunting",false) != true then
 			
 			if (bot.TargetEnt:Health() > 0 and !GAMEMODE.IsSetupPhase) then 
 
@@ -2706,7 +3470,8 @@ concommand.Add("tf_bot_add", function(ply, cmd, args, argStr)
 		return
 	end 
 	if IsValid(ply) and (ply:IsAdmin() or ply:IsSuperAdmin()) || !IsValid(ply) then 
-		for i=0, args[1]-1 do
+		local count = math.max(math.floor(tonumber(args[1] or 1) or 1), 1)
+		for i=1, count do
 			LeadBot_S_Add() 
 		end
 	end 
@@ -2721,9 +3486,9 @@ concommand.Add("tf_bot_quota", function(ply, cmd, args, argStr)
 		return
 	end 
 	if IsValid(ply) and (ply:IsAdmin() or ply:IsSuperAdmin()) || !IsValid(ply) then 
-		timer.Create("BotQuota",0.25,args[1]-1,function()
-			LeadBot_S_Add()
-		end)
+		SetQuotaTarget(args[1] or 0)
+		EnforceBotQuota()
+		MsgN("[LeadBot] tf_bot_quota set to " .. tostring(desiredBotQuota))
 	end
 end)
 
@@ -2970,6 +3735,10 @@ hook.Add( "StartCommand", "TFBot_Movement", function( ply, cmd )
 	// internal variable to limit how often the path can be (re)generated
 	ply.lastRePath2 = ply.lastRePath2 or 0 
 
+	if IsMvMMap() and IsMvMInvaderBot(ply) and ply:GetNWBool("InRespawnRoom", false) and not ply.botPos then
+		ply.botPos = GetSpawnExitTargetPos(ply)
+	end
+
 	local repathDelay = rePathDelay
 	if PerfEnabled() then
 		repathDelay = GetAdaptiveInterval(CVFloat(tf_bot_repath_interval, 1.75), 0.25)
@@ -2990,6 +3759,12 @@ hook.Add( "StartCommand", "TFBot_Movement", function( ply, cmd )
 		end
 
 		local targetPos = ply.botPos // target position to go to, the first player on the server
+		if targetPos and navmesh and navmesh.GetNearestNavArea then
+			local targetArea = navmesh.GetNearestNavArea(targetPos)
+			if IsValid(targetArea) then
+				targetPos = targetArea:GetCenter()
+			end
+		end
 		ply.targetArea = nil
 
 		if PerfEnabled() then
@@ -3014,32 +3789,65 @@ hook.Add( "StartCommand", "TFBot_Movement", function( ply, cmd )
 			ply.path = AstarVector( ply, ply:GetPos(), targetPos )
 		end
 			if ( !istable( ply.path ) ) then // We are in the same area as the target, or we can't navigate to the target
-				ply.path = nil // Clear the path, bail and try again next time
+				ply.path = nil -- let fallback recovery logic below run this tick
 				ply.lastRePath2 = CurTime()
-				return
 			end
+			if not istable(ply.path) then
+				-- Fall through to no-path recovery block below.
+			else
 			//PrintTable( ply.path )
 
 			// TODO: Add inbetween points on area intersections
 			// TODO: On last area, move towards the target position, not center of the last area
 			table.remove( ply.path ) // Just for this example, remove the starting area, we are already in it!
+			end
 	end
 
 	// We have no path, or its empty (we arrived at the goal), try to get a new path.
 	if ( !ply.path || #ply.path < 1 ) then
 		ply.path = nil
 		ply.targetArea = nil
-		local fallback = ply.botPos
-		if fallback then
-			local dir = (fallback - ply:GetPos())
+		-- If we cannot build a path, recover to a nearby nav position instead of
+		-- forcing straight-line movement into non-walkable space.
+		if not ply._nextObjectiveRecover or ply._nextObjectiveRecover < CurTime() then
+			local recoverPos = nil
+			if ply.botPos and navmesh and navmesh.GetNearestNavArea then
+				local goalArea = navmesh.GetNearestNavArea(ply.botPos)
+				if IsValid(goalArea) then
+					recoverPos = goalArea:GetCenter()
+				end
+			end
+			if not recoverPos and IsMvMMap() then
+				local anchor = GetMvMNavObjectiveAnchor(ply)
+				if anchor then
+					recoverPos = anchor
+				end
+			end
+			if not recoverPos and IsValid(ply.ControllerBot) then
+				recoverPos = ply.ControllerBot:FindSpot("random", {radius = 1200, pos = ply:GetPos(), type = "exposed"})
+			end
+			if recoverPos then
+				ply.botPos = recoverPos
+			end
+			ply._nextObjectiveRecover = CurTime() + 0.35
+		end
+
+		-- If we're still in spawn and pathing fails, force a short forward push toward
+		-- objective so bots can cross doors/thresholds and regain normal nav paths.
+		if ply:GetNWBool("InRespawnRoom", false) and ply.botPos then
+			local dir = ply.botPos - ply:GetPos()
+			dir.z = 0
 			if dir:LengthSqr() > 64 then
 				local ang = dir:GetNormalized():Angle()
-				cmd:SetForwardMove(350)
+				cmd:SetForwardMove(320)
 				cmd:SetViewAngles(ang)
+				if ShouldForceJumpAtObstacle(ply, ang) then
+					local b = cmd:GetButtons()
+					cmd:SetButtons(bit.bor(b, IN_JUMP))
+				end
 				if (!IsValid(ply.TargetEnt)) then
 					ply:SetEyeAngles(LerpAngle(FrameTime() * 5 * 1.2, ply:EyeAngles(), ang))
 				end
-				return
 			end
 		end
 		return

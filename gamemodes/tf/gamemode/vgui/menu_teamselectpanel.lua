@@ -145,7 +145,16 @@ function PANEL:JoinTeam(teamID)
 		TFJoinFlow.PendingTeamJoinUntil = CurTime() + 2
 	end
 
-	RunConsoleCommand("changeteam", tostring(teamID))
+	local teamToken = tostring(teamID)
+	if teamID == TEAM_RED then
+		teamToken = "red"
+	elseif teamID == TEAM_BLU then
+		teamToken = "blu"
+	elseif teamID == TEAM_SPECTATOR then
+		teamToken = "spectator"
+	end
+
+	RunConsoleCommand("changeteam", teamToken)
 	self:ClosePanel("join_team_" .. tostring(teamID))
 end
 

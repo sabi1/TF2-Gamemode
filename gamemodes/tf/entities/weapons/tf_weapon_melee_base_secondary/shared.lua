@@ -59,6 +59,35 @@ local FleshMaterials = {
 	[MAT_ALIENFLESH] = true,
 }
 
+local TF2BloodDecals = {
+	"decals/blood1",
+	"decals/blood2",
+	"decals/blood3",
+	"decals/blood4",
+	"decals/blood5",
+	"decals/blood6",
+}
+
+local function PlaceTF2BloodBrushDecal(attacker, victim, hitpos, dir)
+	if CLIENT then return end
+	if not IsValid(attacker) or not IsValid(victim) then return end
+	if victim.CanBleed and not victim:CanBleed() then return end
+
+	local tr = util.TraceLine({
+		start = hitpos + dir * 4,
+		endpos = hitpos + dir * 96,
+		filter = {attacker, victim},
+	})
+	if not tr.HitWorld then return end
+
+	local decal = ents.Create("infodecal")
+	if not IsValid(decal) then return end
+	decal:SetPos(tr.HitPos + tr.HitNormal)
+	decal:SetKeyValue("texture", TF2BloodDecals[math.random(1, #TF2BloodDecals)])
+	decal:Spawn()
+	decal:Activate()
+end
+
 local function MeleeDecalCallback(attacker, tr, dmginfo)
 	local ent = tr.Entity
 	if not IsValid(ent) then return end
@@ -278,6 +307,7 @@ function SWEP:MeleeAttack(dummy)
 					tr.Entity:TakeDamageInfo(dmginfo)
 				else
 					tr.Entity:DispatchTraceAttack(dmginfo, hitpos, hitpos + 5*dir)
+					PlaceTF2BloodBrushDecal(self.Owner, tr.Entity, hitpos, dir)
 				end
 				
 				local phys = tr.Entity:GetPhysicsObject()

@@ -194,8 +194,8 @@ function PANEL:Paint()
 		Defenses.text = LocalPlayer():Assists()
 		Domination.text = LocalPlayer():Revenges()
 		local wave = 1
-		if WaveManager and WaveManager.CurrentWave then
-			wave = math.max(1, tonumber(WaveManager.CurrentWave) or 1)
+		if TF_MVMState and TF_MVMState.Get then
+			wave = math.max(1, tonumber(TF_MVMState:Get("wave_current", 1)) or 1)
 		end
 		Revenge.text = wave
 	else

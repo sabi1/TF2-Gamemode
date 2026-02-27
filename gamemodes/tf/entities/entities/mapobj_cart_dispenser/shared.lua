@@ -16,6 +16,7 @@ ENT.BuildHull = {Vector(-24,-24,0), Vector(24,24,82)}
 ENT.Sound_Idle = Sound("Building_Dispenser.Idle")
 ENT.Sound_Heal = Sound("Building_Dispenser.Heal")
 ENT.ObjectName = "#TF_Object_Dispenser"
+ENT.TouchTriggerName = ""
 
 function ENT:SetAutomaticFrameAdvance(bUsingAnim)
 	self.AutomaticFrameAdvance = bUsingAnim

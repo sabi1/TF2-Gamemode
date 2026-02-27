@@ -44,8 +44,9 @@ SWEP.ProjectileShootOffset = Vector(0, 7, -6)
 SWEP.Force = 1500
 SWEP.AddPitch = 1
 if CLIENT then
-	SWEP.OffhandProjectileModel = "models/weapons/w_models/w_baseball.mdl"
-	SWEP.OffhandProjectileAttachment = "effect_hand_L"
+	SWEP.OffhandProjectileModel = "models/weapons/v_models/v_baseball.mdl"
+	SWEP.OffhandProjectileUseVMBonemerge = true
+	SWEP.OffhandProjectileAttachment = "weapon_bone_L"
 	SWEP.OffhandProjectileBone = "ValveBiped.Bip01_L_Hand"
 	SWEP.OffhandProjectileOffset = Vector(1.3, 1.9, -1.0)
 	SWEP.OffhandProjectileAngle = Angle(-6, 78, -98)
@@ -81,25 +82,45 @@ local function SendWBSequence(self, sequenceNames, fallbackAct)
 end
 
 local function QueueWBIdle(self, delay)
+	self.WBIdleLoopToken = (self.WBIdleLoopToken or 0) + 1
+	local token = self.WBIdleLoopToken
+
 	timer.Simple(math.max(0, delay or 0), function()
 		if not IsValid(self) or not IsValid(self.Owner) then return end
 		if self.Owner:GetActiveWeapon() ~= self then return end
+		if self.WBIdleLoopToken ~= token then return end
+
 		SendWBSequence(self, "wb_idle", ACT_VM_IDLE_SPECIAL)
+		self.NextIdle = nil
 	end)
 end
 
 function SWEP:ApplyWBAnimations()
-	self.VM_DRAW = ACT_VM_DRAW_SPECIAL
-	self.VM_IDLE = ACT_VM_IDLE_SPECIAL
-	self.VM_HITCENTER = {"wb_swing_a", "wb_swing_b", "wb_swing_c"}
-	self.VM_SWINGHARD = {"wb_swing_a", "wb_swing_b", "wb_swing_c"}
+	if self:Ammo1() >= 1 then
+		self.VM_DRAW = ACT_VM_DRAW_SPECIAL
+		self.VM_IDLE = "wb_idle"
+		self.VM_HITCENTER = {"wb_swing_a", "wb_swing_b", "wb_swing_c"}
+		self.VM_SWINGHARD = {"wb_swing_a", "wb_swing_b", "wb_swing_c"}
+	else
+		self.VM_DRAW = ACT_VM_DRAW
+		self.VM_IDLE = ACT_VM_IDLE
+		self.VM_HITCENTER = ACT_VM_HITCENTER
+		self.VM_SWINGHARD = ACT_VM_SWINGHARD
+	end
 	self.VM_INSPECT_START = ACT_MELEE_VM_INSPECT_START
 	self.VM_INSPECT_IDLE = ACT_MELEE_VM_INSPECT_IDLE
 	self.VM_INSPECT_END = ACT_MELEE_VM_INSPECT_END
 end
 
 function SWEP:OffhandProjectileReady()
-	return self:Ammo1() >= 1
+	local ready = self:Ammo1() >= 1
+	if ready then
+		self.WBLastOffhandReady = CurTime()
+		return true
+	end
+
+	-- Avoid one-frame visual drops from brief predicted ammo desync.
+	return (self.WBLastOffhandReady or 0) > 0 and (CurTime() - self.WBLastOffhandReady) < 0.2
 end
 
 function SWEP:PlayWBGrabSequence()
@@ -116,8 +137,12 @@ function SWEP:PlayWBGrabSequence()
 end
 
 function SWEP:Think()
+	self:ApplyWBAnimations()
 	self.BaseClass.Think(self)
 	self:ApplyWBAnimations()
+	if self:Ammo1() >= 1 then
+		self.NextIdle = nil
+	end
 	
 	if SERVER then
 		self:ProcessRechargeTimer()
@@ -131,6 +156,18 @@ function SWEP:Think()
 		end
 		if self.LastSandmanAmmo < 1 and ammo >= 1 then
 			self:PlayWBGrabSequence()
+		end
+
+		-- Fallback: if recharge completed while holding the bat but VM stayed on non-wb animation, force the transition once.
+		if ammo >= 1 and CurTime() >= (self.NextWBReadyTransitionCheck or 0) then
+			local vm = IsValid(self.Owner) and self.Owner:GetViewModel() or nil
+			if IsValid(vm) and IsValid(self.Owner) and self.Owner == LocalPlayer() and self.Owner:GetActiveWeapon() == self then
+				local seqName = string.lower(vm:GetSequenceName(vm:GetSequence()) or "")
+				if not string.StartWith(seqName, "wb_") then
+					self:PlayWBGrabSequence()
+					self.NextWBReadyTransitionCheck = CurTime() + 1.0
+				end
+			end
 		end
 		self.LastSandmanAmmo = ammo
 	end
@@ -159,11 +196,18 @@ end
 function SWEP:Deploy()
 	local r = self:CallBaseFunction("Deploy")
 	self:ApplyWBAnimations()
-	local drawSequence = self:Ammo1() >= 1 and {"wb_grab", "wb_draw"} or {"wb_draw", "wb_grab"}
-	local dur = SendWBSequence(self, drawSequence, ACT_VM_DRAW_SPECIAL)
+	local dur = 0
+	if self:Ammo1() >= 1 then
+		dur = SendWBSequence(self, {"wb_draw", "wb_grab"}, ACT_VM_DRAW_SPECIAL)
+	else
+		self:SendWeaponAnim(self.VM_DRAW)
+		dur = self:SequenceDuration(self:SelectWeightedSequence(self.VM_DRAW)) or 0
+	end
 	if dur > 0 then
 		self.NextIdle = CurTime() + dur
-		QueueWBIdle(self, dur)
+		if self:Ammo1() >= 1 then
+			QueueWBIdle(self, dur)
+		end
 	end
 	if SERVER then
 		self:ClampAmmo()
@@ -261,16 +305,22 @@ function SWEP:SecondaryAttack()
 		grenade:GetPhysicsObject():ApplyForceCenter(vel)
 	end
 	
+	self:ApplyWBAnimations()
+	self.WBIdleLoopToken = (self.WBIdleLoopToken or 0) + 1
 	self.NextIdle = CurTime() + (fireDur > 0 and fireDur or self:SequenceDuration())
-	QueueWBIdle(self, fireDur)
+	if self:Ammo1() >= 1 then
+		QueueWBIdle(self, fireDur)
+	end
 	self:StopTimers()
 	self:ShootEffects()
 end
 
 function SWEP:Holster()
+	self.WBIdleLoopToken = (self.WBIdleLoopToken or 0) + 1
 	if CLIENT and IsValid(HudBowCharge) then
 		HudBowCharge:SetProgress(0)
 		self.LastSandmanAmmo = nil
+		self.NextWBReadyTransitionCheck = nil
 	end
 	return self:CallBaseFunction("Holster")
 end

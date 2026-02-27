@@ -163,8 +163,13 @@ net.Receive("TF_OpenInitialJoinFlow", function()
 	jfLog("Received TF_OpenInitialJoinFlow")
 	timer.Simple(0.15, function()
 		if not IsValid(LocalPlayer()) then return end
-		TFJoinFlow:OpenInitialFlow(false)
+		-- Server explicitly requested initial flow: always show MOTD first.
+		TFJoinFlow:OpenInitialFlow(true)
 	end)
+end)
+
+hook.Add("InitPostEntity", "TFJoinFlow_ResetInitialFlow", function()
+	TFJoinFlow.InitialFlowShown = false
 end)
 
 concommand.Add("tf_open_motd", function()

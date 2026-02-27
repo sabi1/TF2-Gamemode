@@ -143,8 +143,8 @@ function ReadActivitiesFromModel(ent)
 	
 	if not RegisteredModels[ent:GetModel()] then
 		--MsgFN("Reading activities from '%s'", ent:GetModel())
-		local i = 0
-		while ent:GetSequenceName(i)~="Unknown" do
+		local maxseq = math.max(0, ent:GetSequenceCount() - 1)
+		for i = 0, maxseq do
 			local act = string.upper(ent:GetSequenceActivityName(i))
 			if act~="" and not _G[act] then
 				_G[act] = ent:GetSequenceActivity(i)
@@ -153,7 +153,6 @@ function ReadActivitiesFromModel(ent)
 					MsgFN("Setting %s to %d (model='%s' entity=%s owner=%s)", act, _G[act], ent:GetModel(), tostring(ent), tostring(ent:GetOwner()))
 				end]]
 			end
-			i = i+1
 		end
 		RegisteredModels[ent:GetModel()] = true
 	end

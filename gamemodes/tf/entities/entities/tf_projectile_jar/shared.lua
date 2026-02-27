@@ -51,10 +51,10 @@ function ENT:DoSpecialDamage(ent, dmginfo)
 	
 	if ent:IsTFPlayer() and ent~=att and ent:CanReceiveCrits() and att:IsValidEnemy(ent) then
 		if self.JarType == 2 then
-			ent:AddPlayerState(PLAYERSTATE_MILK, true)
+			ent:AddCond(TF_COND_MAD_MILK, 10, att)
 			ent.NextEndMilk = CurTime() + 10
 		else
-			ent:AddPlayerState(PLAYERSTATE_JARATED, true)
+			ent:AddCond(TF_COND_URINE, 10, att)
 			ent.NextEndJarate = CurTime() + 10
 		end
 		

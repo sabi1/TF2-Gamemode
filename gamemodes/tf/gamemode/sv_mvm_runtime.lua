@@ -1,0 +1,1465 @@
+TF_MVM = TF_MVM or {}
+
+local RUNTIME = {}
+TF_MVM.Runtime = RUNTIME
+
+RUNTIME.Enabled = false
+RUNTIME.Active = false
+RUNTIME.Setup = false
+RUNTIME.WaveActive = false
+RUNTIME.WaveIndex = 0
+RUNTIME.Mission = nil
+RUNTIME.ManagedBots = {}
+RUNTIME.ManagedTanks = {}
+RUNTIME.CurrentWaveState = nil
+RUNTIME.SpawnStatesByName = {}
+RUNTIME.CurrentMissionStates = {}
+RUNTIME.TimerNames = {}
+RUNTIME.LastError = ""
+RUNTIME.PendingSetupDuration = nil
+RUNTIME.LastWaveStatusHash = ""
+RUNTIME.ReadyPlayers = {}
+
+local function ToArray(v)
+    if v == nil then return {} end
+    if istable(v) and v[1] ~= nil then return v end
+    return { v }
+end
+
+local function ScalarValue(v)
+    if istable(v) then
+        return v[1] or select(2, next(v))
+    end
+    return v
+end
+
+local function NumValue(v, fallback)
+    local n = tonumber(ScalarValue(v))
+    if n == nil then
+        return fallback
+    end
+    return n
+end
+
+local function IsMvMMap()
+    return string.find(string.lower(game.GetMap() or ""), "mvm_", 1, true) ~= nil
+end
+
+local function IsReadyEligiblePlayer(ply)
+    return IsValid(ply)
+        and ply:IsPlayer()
+        and not ply:IsBot()
+        and not ply.TFBot
+        and ply:Team() == TEAM_RED
+end
+
+local function DebugEnabled()
+    local c = GetConVar("tf_mvm_debug")
+    return c and c:GetBool()
+end
+
+local function DebugPrint(...)
+    if not DebugEnabled() then return end
+    print("[TF_MVM][Runtime]", ...)
+end
+
+local function TimerName(tag)
+    return "TF_MVM_" .. tag
+end
+
+local function RemoveTimer(name)
+    if timer.Exists(name) then
+        timer.Remove(name)
+    end
+end
+
+local function AddTimerRef(self, name)
+    self.TimerNames[name] = true
+end
+
+local function TrimLower(s)
+    s = ScalarValue(s)
+    return string.lower(string.Trim(tostring(s or "")))
+end
+
+local function BoolValue(v, fallback)
+    local lower = TrimLower(v)
+    if lower == "" then
+        return fallback and true or false
+    end
+    if lower == "0" or lower == "false" or lower == "no" or lower == "off" then
+        return false
+    end
+    if lower == "1" or lower == "true" or lower == "yes" or lower == "on" then
+        return true
+    end
+    return true
+end
+
+local function HasMiniBossAttr(def)
+    if not istable(def) then return false end
+    for _, attr in ipairs(ToArray(def.Attributes)) do
+        local lower = TrimLower(attr)
+        if lower == "mini-boss" or lower == "miniboss" then
+            return true
+        end
+    end
+    return false
+end
+
+local function ClassAlias(name)
+    local lower = TrimLower(name)
+    if lower == "demoman" then return "demo" end
+    if lower == "heavyweapons" then return "heavy" end
+    return lower
+end
+
+local function PickRepresentativeBotDef(spawnDef)
+    if not istable(spawnDef) then return nil end
+    if spawnDef.TFBot then
+        return ToArray(spawnDef.TFBot)[1]
+    end
+    if spawnDef.Squad then
+        local first = ToArray(spawnDef.Squad)[1]
+        if istable(first) and first.TFBot then
+            return ToArray(first.TFBot)[1]
+        end
+        return first
+    end
+    if spawnDef.RandomChoice then
+        local firstChoice = ToArray(spawnDef.RandomChoice)[1]
+        if istable(firstChoice) then
+            if firstChoice.TFBot then
+                return ToArray(firstChoice.TFBot)[1]
+            end
+            if firstChoice.Squad then
+                return ToArray(firstChoice.Squad)[1]
+            end
+        end
+    end
+    return nil
+end
+
+local function BuildSpawnVisualInfo(spawnDef)
+    if not istable(spawnDef) then
+        return { class = "scout", giant = false, tank = false }
+    end
+    if spawnDef.Tank then
+        return { class = "tank", giant = true, tank = true }
+    end
+
+    local botDef = PickRepresentativeBotDef(spawnDef)
+    local className = ClassAlias((istable(botDef) and botDef.Class) or spawnDef.Class or "scout")
+    if className == "" then
+        className = "scout"
+    end
+
+    local giant = HasMiniBossAttr(spawnDef) or HasMiniBossAttr(botDef)
+    return { class = className, giant = giant, tank = false }
+end
+
+local function BuildSpawnVisualInfos(spawnDef)
+    if not istable(spawnDef) then
+        return { { class = "scout", giant = false, tank = false, weight = 1 } }
+    end
+    if spawnDef.Tank then
+        return { { class = "tank", giant = true, tank = true, weight = 1 } }
+    end
+
+    local grouped = {}
+    local ordered = {}
+
+    local function addInfo(className, giant, tank, weight)
+        className = ClassAlias(className)
+        if className == "" then
+            className = "scout"
+        end
+        local key = string.format("%s|%d|%d", className, giant and 1 or 0, tank and 1 or 0)
+        local node = grouped[key]
+        if not node then
+            node = {
+                class = className,
+                giant = giant and true or false,
+                tank = tank and true or false,
+                weight = 0,
+            }
+            grouped[key] = node
+            ordered[#ordered + 1] = node
+        end
+        node.weight = node.weight + math.max(1, math.floor(tonumber(weight) or 1))
+    end
+
+    local function addBotDef(botDef)
+        if not istable(botDef) then return end
+        addInfo(
+            botDef.Class or spawnDef.Class or "scout",
+            HasMiniBossAttr(spawnDef) or HasMiniBossAttr(botDef),
+            false,
+            NumValue(botDef.Count, 1)
+        )
+    end
+
+    local function walk(def)
+        if not istable(def) then return end
+        if def.Tank then
+            addInfo("tank", true, true, 1)
+            return
+        end
+        if def.TFBot then
+            for _, botDef in ipairs(ToArray(def.TFBot)) do
+                addBotDef(botDef)
+            end
+            return
+        end
+        if def.Squad then
+            for _, member in ipairs(ToArray(def.Squad)) do
+                if istable(member) and member.TFBot then
+                    for _, botDef in ipairs(ToArray(member.TFBot)) do
+                        addBotDef(botDef)
+                    end
+                else
+                    addBotDef(member)
+                end
+            end
+            return
+        end
+        if def.RandomChoice then
+            for _, choice in ipairs(ToArray(def.RandomChoice)) do
+                walk(choice)
+            end
+            return
+        end
+
+        -- Fallback for unusual defs with only Class on the spawn.
+        addInfo(def.Class or spawnDef.Class or "scout", HasMiniBossAttr(def), false, 1)
+    end
+
+    walk(spawnDef)
+
+    if #ordered == 0 then
+        local info = BuildSpawnVisualInfo(spawnDef)
+        return {
+            {
+                class = info.class,
+                giant = info.giant,
+                tank = info.tank,
+                weight = 1,
+            }
+        }
+    end
+
+    return ordered
+end
+
+local function MissionAppliesToWave(missionDef, waveIndex, totalWaves, isGlobal)
+    local beginDefault = isGlobal and 1 or waveIndex
+    local begin = math.max(1, math.floor(NumValue(missionDef.BeginAtWave, beginDefault) or beginDefault))
+    local runDefault = isGlobal and math.max(1, totalWaves - begin + 1) or 1
+    local runCount = math.max(1, math.floor(NumValue(missionDef.RunForThisManyWaves, runDefault) or runDefault))
+    local finish = begin + runCount - 1
+    return waveIndex >= begin and waveIndex <= finish
+end
+
+local function GetRoundTimer()
+    for _, ent in ipairs(ents.FindByClass("team_round_timer")) do
+        if IsValid(ent) then
+            return ent
+        end
+    end
+    return nil
+end
+
+function RUNTIME:IsEnabled()
+    local c = GetConVar("tf_mvm_enabled")
+    if c and not c:GetBool() then
+        return false
+    end
+    return true
+end
+
+function RUNTIME:IsManagedActive()
+    return self.Active == true
+end
+
+function RUNTIME:IsSetupPhase()
+    return self.Setup == true
+end
+
+function RUNTIME:IsWaveInProgress()
+    return self.WaveActive == true
+end
+
+function RUNTIME:GetReadyCounts()
+    if not self.Active or not self.Setup then
+        return 0, 0
+    end
+
+    local total = 0
+    local ready = 0
+    for _, ply in ipairs(player.GetAll()) do
+        if IsReadyEligiblePlayer(ply) then
+            total = total + 1
+            if self.ReadyPlayers[ply] then
+                ready = ready + 1
+            end
+        end
+    end
+
+    return ready, total
+end
+
+function RUNTIME:ResetReadyPlayers()
+    self.ReadyPlayers = {}
+    for _, ply in ipairs(player.GetAll()) do
+        if IsValid(ply) and ply:IsPlayer() then
+            ply:SetNWBool("TF_MVM_Ready", false)
+        end
+    end
+end
+
+function RUNTIME:StartWaveFromSetup(reason)
+    if not self.Active or not self.Setup then return false end
+
+    local nextWave = math.max(1, (tonumber(self.WaveIndex) or 0) + 1)
+    local setupTimer = TimerName("SetupStartWave")
+    RemoveTimer(setupTimer)
+    self.TimerNames[setupTimer] = nil
+
+    self:StartWave(nextWave)
+    hook.Run("TF_MVM_SetupEndedEarly", nextWave, reason or "manual")
+    return true
+end
+
+function RUNTIME:SetPlayerReady(ply, ready)
+    if not self.Active or not self.Setup then return false, "not_in_setup" end
+    if not IsReadyEligiblePlayer(ply) then return false, "not_eligible" end
+
+    ready = ready and true or false
+    if ready then
+        self.ReadyPlayers[ply] = true
+    else
+        self.ReadyPlayers[ply] = nil
+    end
+    ply:SetNWBool("TF_MVM_Ready", ready)
+    self:PushState()
+
+    local readyCount, totalCount = self:GetReadyCounts()
+    hook.Run("TF_MVM_PlayerReadyStateChanged", ply, ready, readyCount, totalCount)
+
+    if totalCount > 0 and readyCount >= totalCount then
+        self:StartWaveFromSetup("all_ready")
+    end
+
+    return true
+end
+
+function RUNTIME:TogglePlayerReady(ply)
+    local isReady = self.ReadyPlayers[ply] and true or false
+    return self:SetPlayerReady(ply, not isReady)
+end
+
+function RUNTIME:PushState()
+    if not TF_MVMState or not TF_MVMState.Set then return end
+
+    TF_MVMState:Set("enabled", self:IsEnabled())
+    TF_MVMState:Set("active", self.Active)
+    TF_MVMState:Set("in_setup", self.Setup)
+    TF_MVMState:Set("wave_active", self.WaveActive)
+    TF_MVMState:Set("wave_current", math.max(0, self.WaveIndex))
+    TF_MVMState:Set("wave_total", self.Mission and #self.Mission.Waves or 0)
+    TF_MVMState:Set("mission_name", self.Mission and (self.Mission.Path or "") or "")
+    TF_MVMState:Set("error", self.LastError or "")
+    local readyCount, readyTotal = self:GetReadyCounts()
+    TF_MVMState:Set("ready_count", readyCount)
+    TF_MVMState:Set("ready_total", readyTotal)
+
+    if self.Setup and self.SetupEndTime then
+        TF_MVMState:Set("setup_end_time", self.SetupEndTime)
+    else
+        TF_MVMState:Set("setup_end_time", 0)
+    end
+end
+
+function RUNTIME:SetError(msg)
+    self.LastError = tostring(msg or "")
+    self:PushState()
+end
+
+local function BuildStatusHash(entries)
+    local parts = {}
+    for _, e in ipairs(entries or {}) do
+        parts[#parts + 1] = string.format(
+            "%s|%d|%d|%d|%d",
+            tostring(e.class or "scout"),
+            tonumber(e.count or 0) or 0,
+            e.support and 1 or 0,
+            e.giant and 1 or 0,
+            e.tank and 1 or 0
+        )
+    end
+    table.sort(parts)
+    return table.concat(parts, ";")
+end
+
+local function BuildStatusFromItems(items)
+    local grouped = {}
+    local ordered = {}
+
+    local function addItem(info, count, support)
+        local key = string.format(
+            "%s|%d|%d|%d",
+            tostring(info.class or "scout"),
+            info.giant and 1 or 0,
+            info.tank and 1 or 0,
+            support and 1 or 0
+        )
+        local node = grouped[key]
+        if not node then
+            node = {
+                class = info.class or "scout",
+                giant = info.giant and true or false,
+                tank = info.tank and true or false,
+                support = support and true or false,
+                count = 0,
+            }
+            grouped[key] = node
+            ordered[#ordered + 1] = node
+        end
+        if not support then
+            node.count = node.count + math.max(0, math.floor(tonumber(count) or 0))
+        end
+    end
+
+    for _, item in ipairs(items or {}) do
+        addItem(item.info or {}, item.count or 0, item.support)
+    end
+
+    table.sort(ordered, function(a, b)
+        if a.support ~= b.support then
+            return not a.support
+        end
+        if a.tank ~= b.tank then
+            return a.tank
+        end
+        if a.giant ~= b.giant then
+            return a.giant
+        end
+        return tostring(a.class) < tostring(b.class)
+    end)
+
+    return ordered, BuildStatusHash(ordered)
+end
+
+function RUNTIME:BuildWavePreviewStatus(waveIndex)
+    local wave = self.Mission and self.Mission.Waves and self.Mission.Waves[waveIndex] or nil
+    if not wave then return {}, "" end
+
+    local items = {}
+    for _, spawnDef in ipairs(ToArray(wave.WaveSpawn)) do
+        local support = BoolValue(spawnDef.Support, false)
+        local count = support and 0 or NumValue(spawnDef.TotalCount, NumValue(spawnDef.MaxActive, NumValue(spawnDef.SpawnCount, 1)))
+        local totalCount = math.max(0, math.floor(tonumber(count) or 0))
+        local infos = BuildSpawnVisualInfos(spawnDef)
+        local n = math.max(1, #infos)
+        local shared = (not support and n > 0) and math.floor(totalCount / n) or 0
+        local rem = (not support and n > 0) and math.max(0, totalCount - (shared * n)) or 0
+
+        for i, info in ipairs(infos) do
+            local alloc = support and 0 or (shared + ((i <= rem) and 1 or 0))
+            items[#items + 1] = {
+                info = info,
+                count = alloc,
+                support = support,
+            }
+        end
+    end
+
+    return BuildStatusFromItems(items)
+end
+
+function RUNTIME:BuildWaveRuntimeStatus()
+    if not self.CurrentWaveState then return {}, "" end
+    local items = {}
+    for _, st in ipairs(self.CurrentWaveState.Spawns or {}) do
+        local support = st.Support and true or false
+        local remaining = support and 0 or math.max(0, (tonumber(st.TotalCount) or 0) - (tonumber(st.Spawned) or 0) + (tonumber(st.Alive) or 0))
+        local infos = BuildSpawnVisualInfos(st.Def)
+        local n = math.max(1, #infos)
+        local shared = (not support and n > 0) and math.floor(remaining / n) or 0
+        local rem = (not support and n > 0) and math.max(0, remaining - (shared * n)) or 0
+
+        for i, info in ipairs(infos) do
+            local alloc = support and 0 or (shared + ((i <= rem) and 1 or 0))
+            items[#items + 1] = {
+                info = info,
+                count = alloc,
+                support = support,
+            }
+        end
+    end
+    return BuildStatusFromItems(items)
+end
+
+function RUNTIME:UpdateWaveStatusState(force, explicitEntries, explicitHash)
+    if not TF_MVMState or not TF_MVMState.Set then return end
+
+    local entries, hash = explicitEntries, explicitHash
+    if entries == nil then
+        if self.WaveActive then
+            entries, hash = self:BuildWaveRuntimeStatus()
+        else
+            entries, hash = {}, ""
+        end
+    end
+
+    if force or hash ~= self.LastWaveStatusHash then
+        self.LastWaveStatusHash = hash
+        TF_MVMState:Set("wave_status", entries or {})
+    end
+end
+
+function RUNTIME:ClearTimers()
+    for name, _ in pairs(self.TimerNames) do
+        RemoveTimer(name)
+        self.TimerNames[name] = nil
+    end
+end
+
+function RUNTIME:CleanupManagedEntities()
+    for ent, _ in pairs(self.ManagedBots) do
+        if IsValid(ent) then
+            ent:Kick("MvM runtime cleanup")
+        end
+    end
+
+    for ent, _ in pairs(self.ManagedTanks) do
+        if IsValid(ent) then
+            ent.TF_MVM_SilentRemove = true
+            ent:Remove()
+        end
+    end
+
+    self.ManagedBots = {}
+    self.ManagedTanks = {}
+end
+
+function RUNTIME:ResetWaveState()
+    self.CurrentWaveState = nil
+    self.SpawnStatesByName = {}
+    self.CurrentMissionStates = {}
+end
+
+function RUNTIME:ClearMissionTimers()
+    for name, _ in pairs(self.TimerNames) do
+        if string.find(name, "TF_MVM_Mission_", 1, true) or string.find(name, "TF_MVM_MissionStart_", 1, true) then
+            RemoveTimer(name)
+            self.TimerNames[name] = nil
+        end
+    end
+end
+
+function RUNTIME:Stop(reason)
+    DebugPrint("Stopping runtime", reason or "")
+
+    self.Active = false
+    self.Setup = false
+    self.WaveActive = false
+    self.SetupEndTime = nil
+    self.PendingSetupDuration = nil
+    self.WaveIndex = 0
+    self.LastWaveStatusHash = ""
+    self:ResetReadyPlayers()
+
+    self:ClearTimers()
+    self:CleanupManagedEntities()
+    self:ResetWaveState()
+    self:UpdateWaveStatusState(true, {}, "")
+
+    self:PushState()
+
+    if reason then
+        hook.Run("TF_MVM_RuntimeStopped", reason)
+    end
+end
+
+function RUNTIME:LoadMission(path, scope)
+    scope = scope or "GAME"
+
+    if not TF_MVM.POPParser then
+        self:SetError("parser_missing")
+        return false
+    end
+
+    local parsed = TF_MVM.POPParser:Parse(path, scope)
+    if not parsed or not parsed.ok then
+        self:SetError(parsed and parsed.error or "parse_failed")
+        return false
+    end
+
+    self.Mission = parsed
+    self:SetError("")
+    self:PushState()
+
+    hook.Run("TF_MVM_MissionLoaded", parsed)
+    return true
+end
+
+function RUNTIME:LoadMissionForCurrentMap(override)
+    if not TF_MVM.MissionLookup then
+        self:SetError("lookup_missing")
+        return false
+    end
+
+    local result = TF_MVM.MissionLookup:FindMission({ override = override })
+    if not result.ok then
+        self:SetError("no_mission_found")
+
+        print("[TF_MVM] No mission found for map " .. tostring(result.map or game.GetMap()))
+        print("[TF_MVM] Searched paths:")
+        for _, p in ipairs(result.searched or {}) do
+            print("  - " .. tostring(p))
+        end
+        print("[TF_MVM] Hint: place a mission as scripts/population/<map>.pop or set tf_mvm_mission_override")
+
+        return false
+    end
+
+    return self:LoadMission(result.path, result.scope)
+end
+
+function RUNTIME:GetSetupDuration()
+    local c = GetConVar("tf_mvm_setup_time_override")
+    local override = c and tonumber(c:GetString() or "") or nil
+    if override and override > 0 then
+        return override
+    end
+
+    if self.PendingSetupDuration ~= nil then
+        local pending = tonumber(self.PendingSetupDuration) or 0
+        self.PendingSetupDuration = nil
+        if pending > 0 then
+            return pending
+        end
+    end
+
+    local nextWave = nil
+    if self.Mission and self.Mission.Waves then
+        nextWave = self.Mission.Waves[self.WaveIndex + 1]
+    end
+
+    local fromWave = nextWave and NumValue(nextWave.WaitBeforeStarting, nil) or nil
+    if fromWave and fromWave > 0 then
+        return fromWave
+    end
+
+    return 30
+end
+
+function RUNTIME:ApplyRoundTimerSetup(duration)
+    local roundTimer = GetRoundTimer()
+    if not IsValid(roundTimer) then return end
+
+    roundTimer.IsSetupPhase = true
+    if roundTimer.SetAndResumeTimer then
+        roundTimer:SetAndResumeTimer(duration, true)
+    end
+end
+
+function RUNTIME:ApplyRoundTimerWave()
+    local roundTimer = GetRoundTimer()
+    if not IsValid(roundTimer) then return end
+
+    roundTimer.IsSetupPhase = false
+    if roundTimer.SetAndPauseTimer then
+        roundTimer:SetAndPauseTimer(0, true)
+    end
+end
+
+function RUNTIME:StartSetupForWave(waveIndex)
+    local duration = self:GetSetupDuration()
+
+    self.Setup = true
+    self.WaveActive = false
+    self.WaveIndex = math.max(0, waveIndex - 1)
+    self.SetupEndTime = CurTime() + duration
+    self:ResetReadyPlayers()
+    local preview, hash = self:BuildWavePreviewStatus(waveIndex)
+    self:UpdateWaveStatusState(true, preview, hash)
+
+    self:PushState()
+    self:ApplyRoundTimerSetup(duration)
+
+    hook.Run("TF_MVM_WaveSetupStarted", waveIndex, duration)
+
+    local name = TimerName("SetupStartWave")
+    AddTimerRef(self, name)
+    timer.Create(name, duration, 1, function()
+        if not self.Active then return end
+        self:StartWave(waveIndex)
+    end)
+end
+
+function RUNTIME:CreateSpawnState(wave, index, def)
+    local isTank = def.Tank ~= nil
+
+    local spawnCount = NumValue(def.SpawnCount, 1)
+    spawnCount = math.max(1, math.floor(spawnCount))
+
+    local totalDefault = isTank and 1 or NumValue(def.MaxActive, spawnCount)
+    local totalCount = NumValue(def.TotalCount, totalDefault)
+    totalCount = math.max(0, math.floor(totalCount))
+
+    local maxActive = NumValue(def.MaxActive, totalCount)
+    maxActive = math.max(1, math.floor(maxActive))
+
+    local waitBetween = NumValue(def.WaitBetweenSpawns, 0)
+    waitBetween = math.max(0, waitBetween)
+
+    local waitBefore = NumValue(def.WaitBeforeStarting, 0)
+    waitBefore = math.max(0, waitBefore)
+
+    local totalCurrency = NumValue(def.TotalCurrency, 0)
+    totalCurrency = math.max(0, math.floor(totalCurrency))
+
+    local supportMode = TrimLower(def.Support)
+    local isSupport = supportMode ~= "" and supportMode ~= "0" and supportMode ~= "false" and supportMode ~= "no" and supportMode ~= "off"
+    local limitedSupport = isSupport and supportMode == "limited"
+    local infiniteSupport = isSupport and not limitedSupport
+    local waitBetweenAfterDeath = NumValue(def.WaitBetweenSpawnsAfterDeath, 0)
+    waitBetweenAfterDeath = math.max(0, waitBetweenAfterDeath)
+
+    local id = string.format("wave_%d_spawn_%d", self.WaveIndex, index)
+    local name = TrimLower(def.Name)
+    if name == "" then
+        name = id
+    end
+
+    local st = {
+        Id = id,
+        Name = name,
+        Def = def,
+        TotalCount = totalCount,
+        SpawnCount = spawnCount,
+        MaxActive = maxActive,
+        WaitBetween = waitBetween,
+        WaitBetweenAfterDeath = waitBetweenAfterDeath,
+        StartAt = CurTime() + waitBefore,
+        WaitForSpawned = TrimLower(def.WaitForAllSpawned),
+        WaitForDead = TrimLower(def.WaitForAllDead),
+        Support = isSupport,
+        SupportLimited = limitedSupport,
+        InfiniteSupport = infiniteSupport,
+        TotalCurrency = totalCurrency,
+        CurrencyRemaining = totalCurrency,
+        Spawned = 0,
+        Alive = 0,
+        Started = false,
+        CompletedSpawned = (totalCount <= 0),
+        CompletedDead = (totalCount <= 0),
+        NextSpawnAt = CurTime() + waitBefore,
+        FirstSpawnOutputFired = false,
+        DoneOutputFired = false,
+    }
+
+    if st.InfiniteSupport then
+        st.TotalCount = math.max(st.MaxActive, st.SpawnCount)
+        st.CompletedSpawned = false
+        st.CompletedDead = false
+    end
+
+    return st
+end
+
+function RUNTIME:DependenciesMet(st)
+    local function check(name, field)
+        if name == "" then return true end
+        local dep = self.SpawnStatesByName[name]
+        if not dep then
+            return true
+        end
+        return dep[field] == true
+    end
+
+    if not check(st.WaitForSpawned, "CompletedSpawned") then
+        return false
+    end
+
+    if not check(st.WaitForDead, "CompletedDead") then
+        return false
+    end
+
+    return true
+end
+
+function RUNTIME:AllocateCurrencyForSpawn(st)
+    if st.TotalCurrency <= 0 then
+        return 0
+    end
+
+    local remainingUnits = math.max(1, st.TotalCount - st.Spawned + 1)
+    local value = math.floor(st.CurrencyRemaining / remainingUnits)
+
+    if value <= 0 and st.CurrencyRemaining > 0 then
+        value = 1
+    end
+
+    value = math.min(value, st.CurrencyRemaining)
+    st.CurrencyRemaining = math.max(0, st.CurrencyRemaining - value)
+
+    return value
+end
+
+function RUNTIME:PickRawBotDef(st)
+    local def = st.Def
+
+    if def.RandomChoice then
+        local choice = table.Random(ToArray(def.RandomChoice))
+        if istable(choice) and choice.TFBot then
+            return table.Random(ToArray(choice.TFBot))
+        end
+        return choice
+    end
+
+    if def.Squad then
+        return table.Random(ToArray(def.Squad))
+    end
+
+    if def.TFBot then
+        return table.Random(ToArray(def.TFBot))
+    end
+
+    return def
+end
+
+function RUNTIME:SpawnOne(st)
+    if not TF_MVM.Spawner then
+        return false
+    end
+
+    local def = st.Def
+
+    if def.Tank then
+        local tankDef = table.Random(ToArray(def.Tank))
+        local tank, err = TF_MVM.Spawner:SpawnTank(self, tankDef, st, st.FixedSpawnEnt)
+        if not IsValid(tank) then
+            DebugPrint("Failed to spawn tank", err or "")
+            return false
+        end
+
+        st.Spawned = st.Spawned + 1
+        st.Alive = st.Alive + 1
+        tank.TF_MVM_CurrencyValue = self:AllocateCurrencyForSpawn(st)
+        if TF_MVM.Outputs then
+            TF_MVM.Outputs:Fire(st.Def.OnSpawnOutput)
+        end
+        return true
+    end
+
+    local rawBotDef = self:PickRawBotDef(st)
+    local bot, err = TF_MVM.Spawner:SpawnTFBot(self, rawBotDef, st, def.Where, nil, nil)
+    if not IsValid(bot) then
+        DebugPrint("Failed to spawn bot", err or "")
+        return false
+    end
+
+    st.Spawned = st.Spawned + 1
+    st.Alive = st.Alive + 1
+
+    bot.TF_MVM_CurrencyValue = self:AllocateCurrencyForSpawn(st)
+    if TF_MVM.Outputs then
+        TF_MVM.Outputs:Fire(st.Def.OnSpawnOutput)
+    end
+
+    return true
+end
+
+
+function RUNTIME:UpdateSpawnState(st, now)
+    if st.CompletedSpawned and st.Alive <= 0 and not st.CompletedDead then
+        st.CompletedDead = true
+        if not st.DoneOutputFired and TF_MVM.Outputs then
+            st.DoneOutputFired = true
+            TF_MVM.Outputs:Fire(st.Def.DoneOutput)
+        end
+    end
+
+    if st.CompletedDead then
+        return
+    end
+
+    if now < st.StartAt then
+        return
+    end
+
+    if not self:DependenciesMet(st) then
+        return
+    end
+
+    if not st.Started then
+        st.Started = true
+        if TF_MVM.Outputs then
+            TF_MVM.Outputs:Fire(st.Def.StartWaveOutput)
+            TF_MVM.Outputs:Fire(st.Def.FirstSpawnOutput)
+        end
+
+        if not self.CurrentWaveState.FirstSpawnOutputFired then
+            self.CurrentWaveState.FirstSpawnOutputFired = true
+            if TF_MVM.Outputs then
+                TF_MVM.Outputs:Fire(self.CurrentWaveState.Def.FirstSpawnOutput)
+            end
+        end
+    end
+
+    if st.CompletedSpawned then
+        if st.Support and st.Alive <= 0 then
+            st.CompletedDead = true
+        end
+        return
+    end
+
+    if st.Alive >= st.MaxActive then
+        return
+    end
+
+    if now < st.NextSpawnAt then
+        return
+    end
+
+    local spawnBudget
+    if st.InfiniteSupport then
+        spawnBudget = st.SpawnCount
+    else
+        spawnBudget = math.min(st.SpawnCount, st.TotalCount - st.Spawned)
+    end
+
+    while spawnBudget > 0 and st.Alive < st.MaxActive and (st.InfiniteSupport or st.Spawned < st.TotalCount) do
+        local ok = self:SpawnOne(st)
+        if not ok then
+            break
+        end
+        spawnBudget = spawnBudget - 1
+    end
+
+    st.NextSpawnAt = now + st.WaitBetween
+
+    if not st.InfiniteSupport and st.Spawned >= st.TotalCount then
+        st.CompletedSpawned = true
+        if st.Support and st.Alive <= 0 then
+            st.CompletedDead = true
+            if not st.DoneOutputFired and TF_MVM.Outputs then
+                st.DoneOutputFired = true
+                TF_MVM.Outputs:Fire(st.Def.DoneOutput)
+            end
+        end
+    end
+end
+
+function RUNTIME:GetMvMBombEntity()
+    local fallback = nil
+    for _, ent in ipairs(ents.FindByClass("item_teamflag_mvm")) do
+        if not IsValid(ent) then continue end
+        if IsValid(ent.Carrier) then
+            return ent
+        end
+        if not fallback then
+            fallback = ent
+        end
+    end
+    return fallback
+end
+
+function RUNTIME:TryAssignBombToBot(bot)
+    if not IsValid(bot) then return false end
+    if not self.WaveActive or not self.CurrentWaveState then return false end
+    if self.CurrentWaveState.BombAssigned then return false end
+    if bot:Team() ~= TEAM_BLU and bot:Team() ~= TF_TEAM_PVE_INVADERS then return false end
+
+    local bomb = self:GetMvMBombEntity()
+    if not IsValid(bomb) then return false end
+    if IsValid(bomb.Carrier) then
+        self.CurrentWaveState.BombAssigned = true
+        return true
+    end
+
+    bomb:SetPos(bot:GetPos() + Vector(0, 0, 8))
+    if bomb.Pickup then
+        bomb:Pickup(bot)
+    end
+
+    if IsValid(bomb.Carrier) and bomb.Carrier == bot then
+        self.CurrentWaveState.BombAssigned = true
+        return true
+    end
+
+    return false
+end
+
+function RUNTIME:ApplyDeathRespawnDelay(st)
+    if not st then return end
+    if st.CompletedSpawned then return end
+
+    local now = CurTime()
+    local delay = tonumber(st.WaitBetweenAfterDeath or st.WaitBetween or 0) or 0
+    if delay <= 0 then return end
+
+    st.NextSpawnAt = math.max(st.NextSpawnAt or now, now + delay)
+end
+
+function RUNTIME:CheckWaveCompleted()
+    if not self.CurrentWaveState then return false end
+
+    for _, st in ipairs(self.CurrentWaveState.Spawns) do
+        if st.Support then
+            continue
+        end
+        if not st.CompletedDead then
+            return false
+        end
+    end
+
+    return true
+end
+
+function RUNTIME:GetMissionAliveCount(missionId)
+    local count = 0
+    for bot, info in pairs(self.ManagedBots) do
+        if IsValid(bot) and info and info.missionId == missionId then
+            count = count + 1
+        end
+    end
+    return count
+end
+
+function RUNTIME:ScheduleMissionBotSpawns(wave)
+    self:ClearMissionTimers()
+    self.CurrentMissionStates = {}
+
+    local missionBlocks = {}
+    for _, missionDef in ipairs(ToArray(self.Mission and self.Mission.GlobalMissions)) do
+        missionBlocks[#missionBlocks + 1] = { def = missionDef, global = true }
+    end
+    for _, missionDef in ipairs(ToArray(wave.Mission)) do
+        missionBlocks[#missionBlocks + 1] = { def = missionDef, global = false }
+    end
+
+    local totalWaves = #(self.Mission and self.Mission.Waves or {})
+
+    for idx, missionEntry in ipairs(missionBlocks) do
+        local missionDef = missionEntry.def
+        if not istable(missionDef) then
+            continue
+        end
+        if not MissionAppliesToWave(missionDef, self.WaveIndex, totalWaves, missionEntry.global) then
+            continue
+        end
+
+        local desiredCount = math.max(1, math.floor(NumValue(missionDef.DesiredCount or missionDef.Count, 1)))
+        local maxTotal = NumValue(missionDef.Count, nil)
+        if maxTotal ~= nil then
+            maxTotal = math.max(1, math.floor(maxTotal))
+        end
+        local firstDelay = math.max(0, NumValue(missionDef.InitialCooldown, 0))
+        local cooldown = math.max(0.1, NumValue(missionDef.CooldownTime or missionDef.Cooldown, 20))
+
+        local missionId = string.format("wave_%d_mission_%d", self.WaveIndex, idx)
+        self.CurrentMissionStates[missionId] = {
+            Def = missionDef,
+            DesiredCount = desiredCount,
+            MaxTotal = maxTotal,
+            SpawnedTotal = 0,
+        }
+
+        local timerName = TimerName(string.format("Mission_%d_%d", self.WaveIndex, idx))
+        local startName = TimerName(string.format("MissionStart_%d_%d", self.WaveIndex, idx))
+
+        local function MissionTick()
+            if not self.Active or not self.WaveActive then
+                RemoveTimer(timerName)
+                self.TimerNames[timerName] = nil
+                return
+            end
+
+            local state = self.CurrentMissionStates[missionId]
+            if not state then
+                RemoveTimer(timerName)
+                self.TimerNames[timerName] = nil
+                return
+            end
+
+            if state.MaxTotal and state.SpawnedTotal >= state.MaxTotal then
+                RemoveTimer(timerName)
+                self.TimerNames[timerName] = nil
+                return
+            end
+
+            local alive = self:GetMissionAliveCount(missionId)
+            if alive >= state.DesiredCount then
+                return
+            end
+
+            if TF_MVM.Spawner then
+                local bot = TF_MVM.Spawner:SpawnMissionBot(self, missionDef, missionId)
+                if IsValid(bot) then
+                    state.SpawnedTotal = state.SpawnedTotal + 1
+                end
+            end
+        end
+
+        if firstDelay <= 0 then
+            MissionTick()
+            AddTimerRef(self, timerName)
+            timer.Create(timerName, cooldown, 0, MissionTick)
+        else
+            AddTimerRef(self, startName)
+            timer.Create(startName, firstDelay, 1, function()
+                self.TimerNames[startName] = nil
+                if not self.Active or not self.WaveActive then
+                    return
+                end
+
+                MissionTick()
+                AddTimerRef(self, timerName)
+                timer.Create(timerName, cooldown, 0, MissionTick)
+            end)
+        end
+    end
+end
+
+function RUNTIME:StartWave(waveIndex)
+    if not self.Active then return end
+    if not self.Mission then return end
+
+    local wave = self.Mission.Waves[waveIndex]
+    if not wave then
+        self:FinishMission()
+        return
+    end
+
+    self.Setup = false
+    self.WaveActive = true
+    self.SetupEndTime = nil
+    self.WaveIndex = waveIndex
+    self:ResetReadyPlayers()
+
+    self:ApplyRoundTimerWave()
+
+    self.CurrentWaveState = {
+        Def = wave,
+        Spawns = {},
+        FirstSpawnOutputFired = false,
+        BombAssigned = false,
+    }
+
+    self.SpawnStatesByName = {}
+
+    for idx, spawnDef in ipairs(ToArray(wave.WaveSpawn)) do
+        local st = self:CreateSpawnState(wave, idx, spawnDef)
+        self.CurrentWaveState.Spawns[#self.CurrentWaveState.Spawns + 1] = st
+        self.SpawnStatesByName[st.Name] = st
+        self.SpawnStatesByName[st.Id] = st
+        if TF_MVM.Outputs then
+            TF_MVM.Outputs:Fire(spawnDef.InitWaveOutput)
+        end
+    end
+
+    if TF_MVM.Outputs then
+        TF_MVM.Outputs:Fire(wave.InitWaveOutput)
+        TF_MVM.Outputs:Fire(wave.StartWaveOutput)
+    end
+
+    self:ScheduleMissionBotSpawns(wave)
+    self:UpdateWaveStatusState(true)
+
+    hook.Run("TF_MVM_WaveStarted", waveIndex, wave)
+    self:PushState()
+
+    if #self.CurrentWaveState.Spawns == 0 then
+        local name = TimerName("ImmediateWaveComplete")
+        AddTimerRef(self, name)
+        timer.Create(name, 0.25, 1, function()
+            if self.Active and self.WaveActive then
+                self:CompleteWave()
+            end
+        end)
+    end
+end
+
+function RUNTIME:DespawnSupportEntities()
+    for bot, info in pairs(self.ManagedBots) do
+        if IsValid(bot) and info and info.spawn and info.spawn.Support then
+            bot:Kick("MvM support cleanup")
+        end
+    end
+
+    for tank, info in pairs(self.ManagedTanks) do
+        if IsValid(tank) and info and info.spawn and info.spawn.Support then
+            tank.TF_MVM_SilentRemove = true
+            tank:Remove()
+        end
+    end
+end
+
+function RUNTIME:CompleteWave()
+    if not self.Active then return end
+    if not self.WaveActive then return end
+
+    local wave = self.CurrentWaveState and self.CurrentWaveState.Def or nil
+
+    self.WaveActive = false
+    self:ClearMissionTimers()
+    self:DespawnSupportEntities()
+
+    if TF_MVM.Outputs and wave then
+        TF_MVM.Outputs:Fire(wave.DoneOutput)
+    end
+    self:UpdateWaveStatusState(true, {}, "")
+
+    hook.Run("TF_MVM_WaveCompleted", self.WaveIndex, wave)
+
+    if self.WaveIndex >= #(self.Mission and self.Mission.Waves or {}) then
+        self:FinishMission()
+        return
+    end
+
+    self.PendingSetupDuration = NumValue(wave and wave.WaitWhenDone, nil)
+    self:StartSetupForWave(self.WaveIndex + 1)
+end
+
+function RUNTIME:FinishMission()
+    if not self.Active then return end
+
+    self.Active = false
+    self.Setup = false
+    self.WaveActive = false
+    self.SetupEndTime = nil
+    self.PendingSetupDuration = nil
+    self.LastWaveStatusHash = ""
+    self:ResetReadyPlayers()
+
+    hook.Run("TF_MVM_MissionCompleted", self.Mission)
+
+    if GAMEMODE and GAMEMODE.RoundWin then
+        GAMEMODE:RoundWin(TEAM_RED)
+    end
+
+    self:ClearTimers()
+    self:CleanupManagedEntities()
+    self:ResetWaveState()
+    self:UpdateWaveStatusState(true, {}, "")
+
+    self:PushState()
+end
+
+function RUNTIME:FailMission(reason)
+    if not self.Active then return end
+
+    self.Active = false
+    self.Setup = false
+    self.WaveActive = false
+    self.SetupEndTime = nil
+    self.PendingSetupDuration = nil
+    self.LastWaveStatusHash = ""
+    self:ResetReadyPlayers()
+
+    hook.Run("TF_MVM_MissionFailed", reason or "failed")
+
+    if GAMEMODE and GAMEMODE.RoundWin then
+        GAMEMODE:RoundWin(TEAM_BLU)
+    end
+
+    self:ClearTimers()
+    self:CleanupManagedEntities()
+    self:ResetWaveState()
+    self:UpdateWaveStatusState(true, {}, "")
+
+    self:PushState()
+end
+
+function RUNTIME:Start()
+    if not IsMvMMap() then
+        self:SetError("not_mvm_map")
+        return false
+    end
+
+    if not self:IsEnabled() then
+        self:SetError("disabled")
+        return false
+    end
+
+    if not self.Mission then
+        if not self:LoadMissionForCurrentMap() then
+            return false
+        end
+    end
+
+    self:Stop()
+
+    self.Active = true
+    self.Setup = false
+    self.WaveActive = false
+    self.PendingSetupDuration = nil
+    self.WaveIndex = 0
+    self.ManagedBots = {}
+    self.ManagedTanks = {}
+    self.LastWaveStatusHash = ""
+    self.ReadyPlayers = {}
+
+    if TF_MVM.Economy then
+        TF_MVM.Economy:ResetAll(self.Mission.StartingCurrency or 600)
+    end
+
+    hook.Run("TF_MVM_MissionStarted", self.Mission)
+
+    self:StartSetupForWave(1)
+    self:PushState()
+
+    return true
+end
+
+function RUNTIME:RegisterManagedBot(bot, spawnState, def, missionId)
+    if not IsValid(bot) then return end
+
+    self.ManagedBots[bot] = {
+        spawn = spawnState,
+        def = def,
+        missionId = missionId,
+    }
+
+    bot.TF_MVMManaged = true
+
+    timer.Simple(0, function()
+        if not IsValid(bot) then return end
+        self:TryAssignBombToBot(bot)
+    end)
+end
+
+function RUNTIME:RegisterManagedTank(tank, spawnState, def)
+    if not IsValid(tank) then return end
+
+    self.ManagedTanks[tank] = {
+        spawn = spawnState,
+        def = def,
+    }
+end
+
+function RUNTIME:OnManagedTankDestroyed(spawnState, tank, attacker)
+    if spawnState then
+        spawnState.Alive = math.max(0, (spawnState.Alive or 1) - 1)
+        self:ApplyDeathRespawnDelay(spawnState)
+        if spawnState.CompletedSpawned and spawnState.Alive <= 0 then
+            spawnState.CompletedDead = true
+        end
+    end
+
+    local currency = tonumber(IsValid(tank) and tank.TF_MVM_CurrencyValue or 0) or 0
+    if currency > 0 and TF_MVM.Economy then
+        TF_MVM.Economy:Distribute(currency, attacker)
+    end
+
+    self.ManagedTanks[tank] = nil
+end
+
+function RUNTIME:OnManagedTankDeployed(spawnState, tank)
+    self.ManagedTanks[tank] = nil
+    self:FailMission("tank_deployed")
+end
+
+function RUNTIME:HandleManagedBotDeath(bot, attacker)
+    local info = self.ManagedBots[bot]
+    if not info then return end
+
+    self.ManagedBots[bot] = nil
+
+    local st = info.spawn
+    if st then
+        st.Alive = math.max(0, (st.Alive or 1) - 1)
+        self:ApplyDeathRespawnDelay(st)
+        if st.CompletedSpawned and st.Alive <= 0 then
+            st.CompletedDead = true
+        end
+    end
+
+    local currency = tonumber(bot.TF_MVM_CurrencyValue or 0) or 0
+    if currency > 0 and TF_MVM.Economy then
+        TF_MVM.Economy:Distribute(currency, attacker)
+    end
+
+    timer.Simple(0.2, function()
+        if IsValid(bot) then
+            bot:Kick("MvM bot removed")
+        end
+    end)
+end
+
+function RUNTIME:HandleManagedBotDisconnected(bot)
+    local info = self.ManagedBots[bot]
+    if not info then return end
+
+    self.ManagedBots[bot] = nil
+
+    local st = info.spawn
+    if st then
+        st.Alive = math.max(0, (st.Alive or 1) - 1)
+        self:ApplyDeathRespawnDelay(st)
+        if st.CompletedSpawned and st.Alive <= 0 then
+            st.CompletedDead = true
+        end
+    end
+end
+
+function RUNTIME:Tick()
+    if not self.Active then return end
+    if not self.WaveActive then return end
+    if not self.CurrentWaveState then return end
+
+    local now = CurTime()
+
+    for _, st in ipairs(self.CurrentWaveState.Spawns) do
+        self:UpdateSpawnState(st, now)
+    end
+    self:UpdateWaveStatusState(false)
+
+    if self:CheckWaveCompleted() then
+        self:CompleteWave()
+    end
+end
+
+hook.Add("Think", "TF_MVM_RuntimeThink", function()
+    if not TF_MVM or not TF_MVM.Runtime then return end
+    TF_MVM.Runtime:Tick()
+end)
+
+hook.Add("PlayerDeath", "TF_MVM_ManagedBotDeath", function(victim, inflictor, attacker)
+    if not TF_MVM or not TF_MVM.Runtime then return end
+    if not IsValid(victim) or not victim.TF_MVMManaged then return end
+
+    TF_MVM.Runtime:HandleManagedBotDeath(victim, attacker)
+end)
+
+hook.Add("PlayerDisconnected", "TF_MVM_ManagedBotDisconnect", function(ply)
+    if not TF_MVM or not TF_MVM.Runtime then return end
+    if not IsValid(ply) then return end
+
+    TF_MVM.Runtime:HandleManagedBotDisconnected(ply)
+    if TF_MVM.Runtime.ReadyPlayers then
+        TF_MVM.Runtime.ReadyPlayers[ply] = nil
+    end
+    if TF_MVM.Runtime:IsManagedActive() and TF_MVM.Runtime:IsSetupPhase() then
+        TF_MVM.Runtime:PushState()
+    end
+end)
+
+hook.Add("PlayerChangedTeam", "TF_MVM_ReadyStateTeamChange", function(ply)
+    if not TF_MVM or not TF_MVM.Runtime then return end
+    if TF_MVM.Runtime.ReadyPlayers then
+        TF_MVM.Runtime.ReadyPlayers[ply] = nil
+    end
+    if IsValid(ply) and ply:IsPlayer() then
+        ply:SetNWBool("TF_MVM_Ready", false)
+    end
+    if TF_MVM.Runtime:IsManagedActive() and TF_MVM.Runtime:IsSetupPhase() then
+        TF_MVM.Runtime:PushState()
+    end
+end)
+
+return RUNTIME

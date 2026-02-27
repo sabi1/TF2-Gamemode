@@ -3,28 +3,33 @@
 -- loadout should be done through data rather than convars, some custom classes may not work with convars
 -- should probably open a list of weapons like before but only for the selected thing
 
-CreateConVar("loadout_scout", "-1,-1,-1,-1,-1,-1", {FCVAR_ARCHIVE,FCVAR_USERINFO}, "")
-CreateConVar("loadout_soldier", "-1,-1,-1,-1,-1,-1", {FCVAR_ARCHIVE,FCVAR_USERINFO}, "")
-CreateConVar("loadout_pyro", "-1,-1,-1,-1,-1,-1", {FCVAR_ARCHIVE,FCVAR_USERINFO}, "")
-CreateConVar("loadout_demoman", "-1,-1,-1,-1,-1,-1", {FCVAR_ARCHIVE,FCVAR_USERINFO}, "")
-CreateConVar("loadout_heavy", "-1,-1,-1,-1,-1,-1", {FCVAR_ARCHIVE,FCVAR_USERINFO}, "")
-CreateConVar("loadout_engineer", "-1,-1,-1,-1,-1,-1", {FCVAR_ARCHIVE,FCVAR_USERINFO}, "")
-CreateConVar("loadout_sniper", "-1,-1,-1,-1,-1,-1", {FCVAR_ARCHIVE,FCVAR_USERINFO}, "")
-CreateConVar("loadout_medic", "-1,-1,-1,-1,-1,-1", {FCVAR_ARCHIVE,FCVAR_USERINFO}, "")
-CreateConVar("loadout_spy", "-1,-1,-1,-1,-1,-1", {FCVAR_ARCHIVE,FCVAR_USERINFO}, "")
+CreateConVar("loadout_scout", "-1,-1,-1,-1,-1,-1,-1", {FCVAR_ARCHIVE,FCVAR_USERINFO}, "")
+CreateConVar("loadout_soldier", "-1,-1,-1,-1,-1,-1,-1", {FCVAR_ARCHIVE,FCVAR_USERINFO}, "")
+CreateConVar("loadout_pyro", "-1,-1,-1,-1,-1,-1,-1", {FCVAR_ARCHIVE,FCVAR_USERINFO}, "")
+CreateConVar("loadout_demoman", "-1,-1,-1,-1,-1,-1,-1", {FCVAR_ARCHIVE,FCVAR_USERINFO}, "")
+CreateConVar("loadout_heavy", "-1,-1,-1,-1,-1,-1,-1", {FCVAR_ARCHIVE,FCVAR_USERINFO}, "")
+CreateConVar("loadout_engineer", "-1,-1,-1,-1,-1,-1,-1", {FCVAR_ARCHIVE,FCVAR_USERINFO}, "")
+CreateConVar("loadout_sniper", "-1,-1,-1,-1,-1,-1,-1", {FCVAR_ARCHIVE,FCVAR_USERINFO}, "")
+CreateConVar("loadout_medic", "-1,-1,-1,-1,-1,-1,-1", {FCVAR_ARCHIVE,FCVAR_USERINFO}, "")
+CreateConVar("loadout_spy", "-1,-1,-1,-1,-1,-1,-1", {FCVAR_ARCHIVE,FCVAR_USERINFO}, "")
 
 local nextLoadoutUpdate = 0
+local LOADOUT_SLOT_COUNT = 7
+
+local function normalizeLoadout(split)
+    local out = {}
+    for i = 1, LOADOUT_SLOT_COUNT do
+        out[i] = tostring(tonumber(split and split[i]) or -1)
+    end
+    return out
+end
 
 local function updateLoadout(type, id, update)
     local convar = GetConVar("loadout_" .. LocalPlayer():GetPlayerClass())
-    local split = string.Split(convar:GetString(), ",")
-
-    if #split == 6 then
-        split[type] = id
-    else
-        split = {-1, -1, -1, -1, -1, -1}
-        split[type] = id
-    end
+    type = tonumber(type)
+    if not type or type < 1 or type > LOADOUT_SLOT_COUNT then return end
+    local split = normalizeLoadout(string.Split(convar:GetString(), ","))
+    split[type] = tostring(tonumber(id) or -1)
 
     convar:SetString(table.concat(split, ","))
     if update then
@@ -38,14 +43,10 @@ local function select(self, i, val, update)
     local type = self.type
     local id = self:GetOptionData(i)
     local convar = GetConVar("loadout_" .. LocalPlayer():GetPlayerClass())
-    local split = string.Split(convar:GetString(), ",")
-
-    if #split == 6 then
-        split[type] = id
-    else
-        split = {-1, -1, -1, -1, -1, -1}
-        split[type] = id
-    end
+    type = tonumber(type)
+    if not type or type < 1 or type > LOADOUT_SLOT_COUNT then return end
+    local split = normalizeLoadout(string.Split(convar:GetString(), ","))
+    split[type] = tostring(tonumber(id) or -1)
 
     convar:SetString(table.concat(split, ","))
     timer.Simple(0.3, function()

@@ -5,6 +5,9 @@ function ENT:Initialize()
 	self.Team = 0
 	self.Players = {}
 	self.Opened = false
+
+	local mins, maxs = self:WorldSpaceAABB()
+	self.Pos = (mins + maxs) * 0.5
 	
 	timer.Stop("Warning!")
 end
@@ -34,6 +37,7 @@ function ENT:StartTouch(ent)
 		for k,v in pairs(ents.FindByClass("item_teamflag_mvm")) do
 			if v.Carrier == ent then
 				if string.find(game.GetMap(), "mvm_") then
+					self.Opened = true
 					for _,ply in ipairs(player.GetAll()) do
 						ply:SendLua([[surface.PlaySound("vo/mvm_bomb_alerts0"..math.random(4,5)..".mp3")]])
 						if (ply.TFBot and !ply:IsFriendly(ent)) then
@@ -68,3 +72,11 @@ function ENT:EndTouch(ent)
 		end
 	end
 end
+
+hook.Add("TF_MVM_MissionStarted", "TF_MVM_ResetGateDetectionZones", function()
+	for _, zone in ipairs(ents.FindByClass("func_flagdetectionzone")) do
+		if IsValid(zone) then
+			zone.Opened = false
+		end
+	end
+end)

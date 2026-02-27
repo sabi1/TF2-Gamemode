@@ -63,6 +63,13 @@ CLASS.AmmoMax = {
 if SERVER then
 
 	function CLASS:Initialize()
+		local introLoopTimer = "SentryBusterIntroLoop" .. self:EntIndex()
+		local explodeNearTimer = "SentryBusterExplodeNearSentry" .. self:EntIndex()
+		local explodeOnDeathTimer = "SentryBusterExplodeOnDeath" .. self:EntIndex()
+		timer.Remove(introLoopTimer)
+		timer.Remove(explodeNearTimer)
+		timer.Remove(explodeOnDeathTimer)
+
 		self:SetModel("models/bots/demo/bot_sentry_buster.mdl")
 		self:SetModelScale(1.75)
 		self:SetViewOffset(Vector(0, 0, 126))
@@ -92,17 +99,17 @@ if SERVER then
 			self:StripWeapon("tf_weapon_pipebomblauncher")
 			self:SetModelScale(1.75)
 
-			timer.Create("SentryBusterIntroLoop", 4, 0, function()
-				if not self:Alive() then timer.Stop("SentryBusterIntroLoop") return end
-				if self:GetPlayerClass() != "sentrybuster"	then timer.Stop("SentryBusterIntroLoop") return end
+			timer.Create(introLoopTimer, 4, 0, function()
+				if not self:Alive() then timer.Remove(introLoopTimer) return end
+				if self:GetPlayerClass() != "sentrybuster"	then timer.Remove(introLoopTimer) return end
 				self:EmitSound("MVM.SentryBusterIntro")
 			end)
 		
-			timer.Create("SentryBusterExplodeNearSentry"..self:EntIndex(), 0.1, 0, function()
-				if self:GetPlayerClass() != "sentrybuster"	then timer.Stop("SentryBusterExplodeNearSentry"..self:EntIndex()) return end
+			timer.Create(explodeNearTimer, 0.1, 0, function()
+				if self:GetPlayerClass() != "sentrybuster"	then timer.Remove(explodeNearTimer) return end
 				if self:GetPlayerClass() != "sentrybuster"	then return end
 				for _,building in pairs(ents.FindInSphere(self:GetPos(), 44)) do
-					if building:GetClass() == "obj_sentrygun" then	
+					if (building:GetClass() == "obj_sentrygun" or building:GetClass() == "obj_dispenser" or building:GetClass() == "obj_teleporter") and not building:IsFriendly(self) then	
 					self:SetNoDraw(true)
 					self:EmitSound("MVM.SentryBusterSpin")
 					self:SetNWBool("Taunting", true)
@@ -175,13 +182,13 @@ if SERVER then
 						end
 						self:Kill(self)
 					end)
-					timer.Stop("SentryBusterExplodeNearSentry"..self:EntIndex())
+					timer.Remove(explodeNearTimer)
 					end
 				end
 			end)
-			timer.Create("SentryBusterExplodeOnDeath", 0.1, 0, function()
-				if !self:Alive() then timer.Stop("SentryBusterExplodeOnDeath"..self:EntIndex()) return end
-				if self:GetPlayerClass() != "sentrybuster"	then timer.Stop("SentryBusterExplodeOnDeath"..self:EntIndex()) return end
+			timer.Create(explodeOnDeathTimer, 0.1, 0, function()
+				if !self:Alive() then timer.Remove(explodeOnDeathTimer) return end
+				if self:GetPlayerClass() != "sentrybuster"	then timer.Remove(explodeOnDeathTimer) return end
 				if self:GetPlayerClass() != "sentrybuster"	then return end
 				if self:Health() <= 100 then
 				self:EmitSound("MVM.SentryBusterLoop")
@@ -256,7 +263,7 @@ if SERVER then
 					self:Kill()
 				end)
 				end)
-				timer.Stop("SentryBusterExplodeOnDeath")
+				timer.Remove(explodeOnDeathTimer)
 				end
 			end)
 	end

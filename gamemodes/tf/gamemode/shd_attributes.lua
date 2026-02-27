@@ -7,6 +7,69 @@ local function ISSELFDMG(e,d)	return d and d:GetAttacker() == e and not d:GetInf
 local CURRENT_ENT = NULL
 local CURRENT_PLAYER = NULL
 
+local BOOST_METER_MAX = 100
+local BOOST_MIN_GAIN = 5
+local BOOST_SPEED_AT_MAX = 0.4
+local BOOST_METER_NWKEY = "TFBoostMeter"
+
+local function SetBoostMeter(weapon, owner, value)
+	if not IsValid(weapon) then return end
+
+	local oldvalue = weapon.BoostMeter or 0
+	value = math.Clamp(value or 0, 0, BOOST_METER_MAX)
+	if weapon.BoostMeter == value then return end
+
+	weapon.BoostMeter = value
+
+	if SERVER then
+		weapon:SetNWFloat(BOOST_METER_NWKEY, value)
+
+		if not weapon.BoostBaseSpeedBonus then
+			weapon.BoostBaseSpeedBonus = (weapon.SpeedBonus or 1) - BOOST_SPEED_AT_MAX * (oldvalue / BOOST_METER_MAX)
+		end
+
+		weapon.SpeedBonus = weapon.BoostBaseSpeedBonus + BOOST_SPEED_AT_MAX * (value / BOOST_METER_MAX)
+
+		if IsValid(owner) and owner:IsPlayer() and not owner:IsHL2() then
+			owner:ResetClassSpeed()
+		end
+	end
+end
+
+local function AddBoostMeter(weapon, owner, delta)
+	SetBoostMeter(weapon, owner, (weapon.BoostMeter or 0) + (delta or 0))
+end
+
+local function SetupBoostMeterHUD(weapon)
+	if not IsValid(weapon) then return end
+	if not weapon.CustomHUD then weapon.CustomHUD = {} end
+	if weapon.CustomHUD.HudBowCharge == nil then
+		weapon.CustomHUD.HudBowCharge = true
+	end
+
+	if weapon.UpdateBoostHUD then return end
+	weapon.UpdateBoostHUD = function(self)
+		if not CLIENT then return end
+		if not IsValid(self.Owner) or self.Owner ~= LocalPlayer() or not IsValid(HudBowCharge) then return end
+		if self.Owner:GetActiveWeapon() ~= self then return end
+
+		local value = self:GetNWFloat(BOOST_METER_NWKEY, self.BoostMeter or 0)
+		HudBowCharge:SetProgress(math.Clamp(value / BOOST_METER_MAX, 0, 1))
+	end
+end
+
+if CLIENT then
+	hook.Add("Think", "TFBoostMeterHUD", function()
+		local pl = LocalPlayer()
+		if not IsValid(pl) then return end
+
+		local weapon = pl:GetActiveWeapon()
+		if not IsValid(weapon) or not weapon.UpdateBoostHUD then return end
+
+		weapon:UpdateBoostHUD()
+	end)
+end
+
 function GetAttributeEntity()
 	return CURRENT_ENT
 end
@@ -780,6 +843,111 @@ local ATTRIBUTES = {
 	end,
 },
 
+["boost_on_damage"] = {
+	equip = function(v,weapon,owner)
+		if not IsValid(weapon) then return end
+
+		SetupBoostMeterHUD(weapon)
+
+		if weapon.BoostBaseSpeedBonus then
+			weapon.SpeedBonus = weapon.BoostBaseSpeedBonus
+		elseif weapon.BoostMeter and weapon.BoostMeter > 0 then
+			weapon.SpeedBonus = (weapon.SpeedBonus or 1) - BOOST_SPEED_AT_MAX * (weapon.BoostMeter / BOOST_METER_MAX)
+		end
+
+		weapon.BoostBaseSpeedBonus = nil
+		weapon.BoostGainTick = nil
+		weapon.BoostGainAccum = nil
+		weapon.BoostGainApplied = nil
+
+		weapon.BoostMeter = 0
+		if SERVER then
+			weapon:SetNWFloat(BOOST_METER_NWKEY, 0)
+
+			timer.Simple(0, function()
+				if not IsValid(weapon) then return end
+
+				local ow = owner
+				if not IsValid(ow) then
+					ow = weapon.Owner
+				end
+
+				weapon.BoostBaseSpeedBonus = weapon.SpeedBonus or 1
+				weapon.SpeedBonus = weapon.BoostBaseSpeedBonus
+
+				if IsValid(ow) and ow:IsPlayer() and not ow:IsHL2() then
+					ow:ResetClassSpeed()
+				end
+			end)
+		end
+	end,
+
+	_global_post_damage = function(v,ent,hitgroup,dmginfo)
+		if not SERVER then return end
+
+		local weapon = GetAttributeEntity()
+		local owner = GetAttributeOwner()
+		if not IsValid(weapon) or not IsValid(owner) or not owner:IsPlayer() then return end
+
+		if dmginfo:GetAttacker() ~= owner or ent == owner then return end
+
+		local damage = dmginfo:GetDamage()
+		if damage <= 0 then return end
+
+		local now = CurTime()
+		if weapon.BoostGainTick ~= now then
+			weapon.BoostGainTick = now
+			weapon.BoostGainAccum = 0
+			weapon.BoostGainApplied = 0
+		end
+
+		weapon.BoostGainAccum = weapon.BoostGainAccum + math.max(damage * v, 0)
+
+		local desired = weapon.BoostGainAccum
+		if desired > 0 and desired < BOOST_MIN_GAIN then
+			desired = BOOST_MIN_GAIN
+		end
+
+		local delta = desired - (weapon.BoostGainApplied or 0)
+		if delta > 0 then
+			weapon.BoostGainApplied = desired
+			AddBoostMeter(weapon, owner, delta)
+		end
+	end,
+},
+
+["hype_resets_on_jump"] = {
+	_global_double_jump = function(v,pl)
+		if not SERVER then return end
+
+		local weapon = GetAttributeEntity()
+		if not IsValid(weapon) then return end
+
+		local meter = weapon.BoostMeter or 0
+		if meter <= 0 then return end
+
+		local remain = meter * math.Clamp(1 - (v * 0.01), 0, 1)
+		SetBoostMeter(weapon, pl, remain)
+	end,
+},
+
+["lose_hype_on_take_damage"] = {
+	_global_post_damage_received = function(v,pl,hitgroup,dmginfo)
+		if not SERVER then return end
+
+		local weapon = GetAttributeEntity()
+		if not IsValid(weapon) then return end
+
+		local attacker = dmginfo:GetAttacker()
+		if IsValid(attacker) and attacker == pl then return end
+
+		local loss = dmginfo:GetDamage() * v
+		if loss <= 0 then return end
+
+		AddBoostMeter(weapon, pl, -loss)
+	end,
+},
+
 ["speed_boost_on_hit"] = {
 	post_damage = function(v,ent,hitgroup,dmginfo)
 		if not ISSELFDMG(ent,dmginfo) and ISPLAYER(ent) and ent:Health()>0 and not ISBUILDING(ent) then
@@ -980,10 +1148,8 @@ local ATTRIBUTES = {
 		end
 		
 		local att = dmginfo:GetAttacker()
-		
-		ent:AddPlayerState(PLAYERSTATE_JARATED, true)
-		--timer.Simple(0, function() if IsValid(ent) then ent:AddPlayerState(PLAYERSTATE_JARATED, true) end end)
-		
+
+		ent:AddCond(TF_COND_URINE, v, att)
 		ent.NextEndJarate = CurTime() + v
 		
 	end,
@@ -1055,8 +1221,12 @@ local ATTRIBUTES = {
 	post_damage = function(v,ent,hitgroup,dmginfo)
 		local att = dmginfo:GetAttacker()
 		if att:IsValidEnemy(ent) then
-			if (!ent:HasPlayerState(PLAYERSTATE_MARKED)) then
-				ent:AddPlayerState(PLAYERSTATE_MARKED, true)
+			if (!ent:InCond(TF_COND_MARKEDFORDEATH)) then
+				if isnumber(v) and v > 0 then
+					ent:AddCond(TF_COND_MARKEDFORDEATH, v, att)
+				else
+					ent:AddCond(TF_COND_MARKEDFORDEATH, PERMANENT_CONDITION, att)
+				end
 				if (ent:IsPlayer()) then
 					if SERVER then
 						ent:SendLua('LocalPlayer():GetActiveWeapon():EmitSound("Weapon_Marked_for_Death.Indicator")')

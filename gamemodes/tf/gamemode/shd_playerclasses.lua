@@ -254,6 +254,47 @@ GM:LoadPlayerClasses()
 local meta = FindMetaTable( "Player" )
 if (!meta) then return end 
 
+-- Mirrors Source SDK 2013 MP class/model switch behavior:
+-- reset sequence + activity and clear transient anim state when class changes.
+local function ResetPlayerAnimStateForClassChange(pl)
+	if not IsValid(pl) then return end
+
+	pl.anim_Deployed = false
+	pl.anim_Jumping = false
+	pl.anim_FirstJumpFrame = false
+	pl.anim_JumpStartTime = 0
+	pl.anim_GroundTime = nil
+	pl.anim_Airwalk = false
+	pl.anim_InSwim = false
+	pl.anim_FirstSwimFrame = true
+	pl.anim_CalcIdeal = nil
+	pl.anim_CalcSeqOverride = -1
+	pl.PlayerBodyYaw = nil
+	pl.TargetBodyYaw = nil
+	pl.ChatGestureWeight = 0
+
+	if pl.SetPlaybackRate then pl:SetPlaybackRate(1) end
+	if pl.SetCycle then pl:SetCycle(0) end
+	if pl.SetSequence then pl:SetSequence(-1) end
+	if pl.SetActivity then pl:SetActivity(ACT_INVALID) end
+	if pl.AnimRestartMainSequence then pl:AnimRestartMainSequence() end
+
+	local resetSlots = {
+		GESTURE_SLOT_ATTACK_AND_RELOAD,
+		GESTURE_SLOT_FLINCH,
+		GESTURE_SLOT_JUMP,
+		GESTURE_SLOT_CUSTOM,
+		GESTURE_SLOT_GRENADE,
+		GESTURE_SLOT_VCD,
+	}
+
+	for _, slot in ipairs(resetSlots) do
+		if isnumber(slot) and pl.AnimResetGestureSlot then
+			pl:AnimResetGestureSlot(slot)
+		end
+	end
+end
+
 -- Serverside only
 if SERVER then
 
@@ -268,7 +309,7 @@ local function InitPlayerBodygroups(pl)
 end
 
 function meta:SetPlayerClass(class)
-	self.anim_Deployed = false
+	ResetPlayerAnimStateForClassChange(self)
 	class = string.lower(class)
 
 	if dgmod:GetBool() and (class == "gmodplayer" or class == "civilian") and !self:IsAdmin() then
@@ -763,6 +804,51 @@ local function PlayerClassChanged(id, oldclass, newclass, timeout)
 	
 	pl:SetDuckSpeed(0.2)
 	pl.TempAttributes = {}
+	ResetPlayerAnimStateForClassChange(pl)
+
+	if pl == LocalPlayer() then
+		local function ResetLocalFirstPersonState(retries)
+			if not IsValid(pl) then return end
+
+			local needsRetry = false
+			local vm = pl:GetViewModel()
+			if IsValid(vm) then
+				if vm.SetPlaybackRate then vm:SetPlaybackRate(1) end
+				if vm.SetCycle then vm:SetCycle(0) end
+				if vm.SetSequence then vm:SetSequence(-1) end
+				if vm.ResetSequenceInfo then vm:ResetSequenceInfo() end
+			else
+				needsRetry = true
+			end
+
+			local hands = pl.GetHands and pl:GetHands() or nil
+			if IsValid(hands) then
+				if GAMEMODE and GAMEMODE.PlayerSetHandsModel then
+					GAMEMODE:PlayerSetHandsModel(pl, hands)
+				end
+				hands:SetSequence(-1)
+				hands:SetCycle(0)
+				if hands.ResetSequenceInfo then hands:ResetSequenceInfo() end
+			else
+				needsRetry = true
+			end
+
+			local w = pl:GetActiveWeapon()
+			if IsValid(w) and w.SendWeaponAnim then
+				w:SendWeaponAnim(ACT_VM_DRAW)
+			else
+				needsRetry = true
+			end
+
+			if needsRetry and (retries or 0) > 0 then
+				timer.Simple(0.05, function()
+					ResetLocalFirstPersonState((retries or 0) - 1)
+				end)
+			end
+		end
+
+		ResetLocalFirstPersonState(20)
+	end
 	
 	if pl == LocalPlayer() then
 		--GAMEMODE:InitWeaponSelection(newclass)

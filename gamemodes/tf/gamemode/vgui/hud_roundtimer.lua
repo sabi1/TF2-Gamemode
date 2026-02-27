@@ -12,6 +12,9 @@ local objectives_timepanel_bg = {
 }
 local objectives_timepanel_progressbar = surface.GetTextureID("hud/objectives_timepanel_progressbar")
 local objectives_timepanel_suddendeath = surface.GetTextureID("hud/objectives_timepanel_suddendeath")
+local function IsMvMMap()
+	return string.find(string.lower(game.GetMap() or ""), "mvm_", 1, true) ~= nil
+end
 
 function PANEL:Init()
 	self:SetPaintBackgroundEnabled(false)
@@ -21,8 +24,12 @@ end
 
 function PANEL:PerformLayout()
 	if not IsValid(LocalPlayer()) then return end
-	
-	self:SetPos(W/2-55*Scale,0*Scale)
+
+	if IsMvMMap() then
+		self:SetPos(W/2-55*Scale, H-40*Scale)
+	else
+		self:SetPos(W/2-55*Scale,0*Scale)
+	end
 	self:SetSize(110*Scale,150*Scale)
 end
 
@@ -36,6 +43,11 @@ end
 
 function PANEL:GetFormattedTime()
 	local sec = math.ceil(self:GetTime())
+
+	if IsMvMMap() then
+		return tostring(math.max(0, sec))
+	end
+
 	local min = math.floor(sec/60)
 	sec = sec - 60*min
 	
@@ -44,8 +56,12 @@ function PANEL:GetFormattedTime()
 end
 
 function PANEL:Paint()
-	if string.find(game.GetMap(), "mvm_", 1, true) then return end
 	if not GAMEMODE.RoundTimeReference and not GAMEMODE.RoundTimePaused then return end
+
+	-- In MvM this panel is setup/waiting-only; active wave uses the bomb/status HUD.
+	if IsMvMMap() and not GAMEMODE.RoundTimeIsSetupPhase and not GAMEMODE.RoundTimeIsWaitingForPlayers then
+		return
+	end
 	
 	surface.SetDrawColor(255,255,255,255)
 	if GAMEMODE.RoundTimeIsSetupPhase then

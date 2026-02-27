@@ -93,6 +93,23 @@ if CLIENT then
 	include("cl_joinflow.lua")
 end  
 
+do
+	local PLAYER = FindMetaTable("Player")
+	if PLAYER and PLAYER.Nick and not PLAYER._TFBotDisplayNamePatched then
+		local rawNick = PLAYER.Nick
+		function PLAYER:Nick()
+			if self.IsBot and self:IsBot() and self.GetNWString then
+				local display = self:GetNWString("TF_BotDisplayName", "")
+				if isstring(display) and display ~= "" then
+					return display
+				end
+			end
+			return rawNick(self)
+		end
+		PLAYER._TFBotDisplayNamePatched = true
+	end
+end
+
 sound.Add( {
 	name = "Telecon.Death",
 	volume = 0.820,
@@ -1531,6 +1548,7 @@ include("shd_ragdolls2.lua")
 
 include("shd_items_game.lua")    
 include("shd_conflict.lua") 
+include("shd_mvm_state.lua")
 include("shd_mvm_shop.lua")
 if (IsMounted("tf")) then 
 	player_manager.AddValidModel("!tf_scout","models/player/scout.mdl")
@@ -2045,6 +2063,21 @@ TEAM_NEUTRAL = 6
 TEAM_FRIENDLY = 7
 TF_TEAM_PVE_INVADERS = -1
 TF_TEAM_PVE_INVADERS_GIANT = -1
+
+do
+	-- Keep spectator team distinct from gameplay teams even when other addons redefine globals.
+	local fallbackSpectator = 1
+	local resolvedSpectator = tonumber(rawget(_G, "TEAM_SPECTATOR")) or fallbackSpectator
+	if resolvedSpectator == TEAM_RED
+		or resolvedSpectator == TEAM_BLU
+		or resolvedSpectator == TEAM_YELLOW
+		or resolvedSpectator == TEAM_GREEN
+		or resolvedSpectator == TEAM_NEUTRAL
+		or resolvedSpectator == TEAM_FRIENDLY then
+		resolvedSpectator = fallbackSpectator
+	end
+	TEAM_SPECTATOR = resolvedSpectator
+end
 
 TeamSecondaryColors = {}
 function SetTeamSecondaryColor(t, c)

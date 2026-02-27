@@ -6,6 +6,19 @@ include("shared.lua")
 
 local tf_minidispenser_allow_upgrade = CreateConVar("tf_minidispenser_allow_upgrade", "0", {FCVAR_CHEAT})
 
+local function ResolveEntByName(name)
+	if not isstring(name) or name == "" then
+		return NULL
+	end
+
+	local list = ents.FindByName(name)
+	if not list or #list == 0 then
+		return NULL
+	end
+
+	return list[1]
+end
+
 ENT.NPCCallRange = 512
 ENT.NPCCallHealthFraction = 0.75
 ENT.NPCCallProbability = 0.5
@@ -38,7 +51,148 @@ ENT.Sapped = false
 
 ENT.Range = 100
 
+function ENT:KeyValue(key, value)
+	if self.BaseClass and self.BaseClass.KeyValue then
+		self.BaseClass.KeyValue(self, key, value)
+	end
+
+	key = string.lower(key)
+	self.Properties = self.Properties or {}
+	self.Properties[key] = value
+
+	if key == "touch_trigger" then
+		self.TouchTriggerName = tostring(value or "")
+	end
+end
+
+function ENT:ResolveTouchTrigger(force)
+	if IsValid(self.TouchTrigger) and not force then
+		return self.TouchTrigger
+	end
+
+	local triggerName = self.TouchTriggerName or (self.Properties and self.Properties.touch_trigger) or ""
+	self.TouchTrigger = ResolveEntByName(triggerName)
+	return self.TouchTrigger
+end
+
+function ENT:InitPostEntity()
+	self.PostEntityDone = true
+	self:ResolveTouchTrigger(true)
+end
+
+function ENT:GetTouchTriggerOccupants()
+	local trigger = self:ResolveTouchTrigger(false)
+	if not IsValid(trigger) then
+		return nil
+	end
+
+	if trigger.GetOccupants then
+		return trigger:GetOccupants()
+	end
+
+	if trigger.Occupants then
+		local list = {}
+		for ply in pairs(trigger.Occupants) do
+			if IsValid(ply) and ply:IsPlayer() and ply:Alive() then
+				list[#list + 1] = ply
+			end
+		end
+		return list
+	end
+
+	return nil
+end
+
+function ENT:IsValidSupplyTarget(ent)
+	if not IsValid(ent) then return false end
+	if self:Team() ~= TEAM_NEUTRAL and GAMEMODE:EntityTeam(ent) ~= self:Team() then
+		return false
+	end
+
+	if ent:IsPlayer() then
+		return not ent:IsBuilding()
+	end
+
+	if self:GetBuildingType() == 2 and ent:IsBuilding() then
+		return true
+	end
+
+	return false
+end
+
+function ENT:CollectSupplyTargets()
+	local targets = {}
+	local seen = {}
+
+	local triggerOccupants = self:GetTouchTriggerOccupants()
+	if triggerOccupants then
+		for _, ent in ipairs(triggerOccupants) do
+			if self:IsValidSupplyTarget(ent) and not seen[ent] then
+				seen[ent] = true
+				targets[#targets + 1] = ent
+			end
+		end
+	end
+
+	if not triggerOccupants or self:GetBuildingType() == 2 then
+		for _, ent in pairs(ents.FindInSphere(self:GetPos(), self.Range)) do
+			if self:IsValidSupplyTarget(ent) and not seen[ent] then
+				seen[ent] = true
+				targets[#targets + 1] = ent
+			end
+		end
+	end
+
+	return targets
+end
+
+function ENT:ApplyDispenserLevelStats(level)
+	level = math.Clamp(math.floor(tonumber(level) or 1), 1, self.NumLevels)
+	if level == 1 then
+		self.MetalPerGeneration = 40
+		self.HealRate = 0.1
+		self.AmmoPerSupply = 40
+	elseif level == 2 then
+		self.MetalPerGeneration = 50
+		self.HealRate = 0.066
+		self.AmmoPerSupply = 50
+	else
+		self.MetalPerGeneration = 60
+		self.HealRate = 0.05
+		self.AmmoPerSupply = 60
+	end
+end
+
+function ENT:SetDispenserLevel(level)
+	level = math.Clamp(math.floor(tonumber(level) or self:GetLevel() or 1), 1, self.NumLevels)
+	self:SetLevel(level)
+	self:ApplyDispenserLevelStats(level)
+
+	if self:GetState() >= 3 then
+		local modelData = self.Levels[level]
+		if modelData then
+			local activeModel = modelData[2] or modelData[1]
+			if self:GetBuildingType() == 2 then
+				if IsValid(self.Model) then
+					self.Model:SetModel(activeModel)
+				end
+				self:SetModel("models/buildables/dispenser_light.mdl")
+			else
+				self:SetModel(activeModel)
+				if IsValid(self.Model) then
+					self.Model:SetModel(activeModel)
+				end
+			end
+		end
+	end
+end
+
 function ENT:StartSupply(pl)
+	self.Clients = self.Clients or {}
+	if self.Clients and self.Clients[pl] then
+		return
+	end
+
 	self.NumClients = self.NumClients + 1
 	
 	local target = ents.Create("info_dummy")
@@ -69,10 +223,10 @@ function ENT:StartSupply(pl)
 end
 
 function ENT:StopSupply(pl)
-	self.NumClients = self.NumClients - 1
-	
 	local t = self.Clients[pl]
 	if not t then return end
+
+	self.NumClients = math.max(self.NumClients - 1, 0)
 	
 	if IsValid(t[1]) then t[1]:Remove() end
 	if IsValid(t[2]) then t[2]:Remove() end
@@ -115,9 +269,7 @@ end
 function ENT:OnDoneBuilding()
 	self:EmitSoundEx(self.Sound_DoneBuilding, 100, 100)
 	
-	self.MetalPerGeneration = 40
-	self.HealRate = 0.1
-	self.AmmoPerSupply = 40
+	self:ApplyDispenserLevelStats(1)
 
 	self.Clients = {}
 	self.NumClients = 0
@@ -190,6 +342,10 @@ function ENT:OnStartUpgrade()
 end
 
 function ENT:OnThinkActive()
+	if GAMEMODE.PostEntityDone and not self.PostEntityDone then
+		self:InitPostEntity()
+	end
+
 	for k,v in ipairs(player.GetBots()) do
 		if (IsValid(v.TargetEnt)) then
 			if (v.TargetEnt:EntIndex() == self:EntIndex()) then
@@ -229,21 +385,21 @@ function ENT:OnThinkActive()
 	
 	if not self.NextSearch or CurTime()>=self.NextSearch then
 		local removedclients = table.Copy(self.Clients)
-		for _,v in pairs(ents.FindInSphere(self:GetPos(), self.Range)) do
-			if (v:IsPlayer()) and not v:IsBuilding() and (self:Team()==TEAM_NEUTRAL or GAMEMODE:EntityTeam(v)==self:Team()) then
-				if self.Clients[v] then
+		for _, target in ipairs(self:CollectSupplyTargets()) do
+			if target:IsPlayer() then
+				if self.Clients[target] then
 					-- Don't remove that client
-					removedclients[v] = nil
+					removedclients[target] = nil
 				else
-					self:StartSupply(v)
+					self:StartSupply(target)
 				end 
 			end
-			if (self:GetBuildingType() == 2) and v:IsBuilding() and (self:Team()==TEAM_NEUTRAL or GAMEMODE:EntityTeam(v)==self:Team()) then
-				if self.Clients[v] then 
+			if (self:GetBuildingType() == 2) and target:IsBuilding() then
+				if self.Clients[target] then
 					-- Don't remove that client
-					removedclients[v] = nil
+					removedclients[target] = nil
 				else
-					self:StartSupply(v)
+					self:StartSupply(target)
 				end
 			end
 		end
@@ -315,7 +471,19 @@ function ENT:OnThinkActive()
 end
 
 function ENT:OnRemove()
-	for _,v in pairs(self.Clients or {}) do
-		self:StopSupply()
+	for ent in pairs(self.Clients or {}) do
+		self:StopSupply(ent)
+	end
+end
+
+function ENT:Input_SetDispenserLevel(_, _, data)
+	self:SetDispenserLevel(data)
+end
+
+function ENT:AcceptInput(name, activator, caller, data)
+	local fn = self["Input_" .. tostring(name or "")]
+	if fn then
+		fn(self, activator, caller, data)
+		return true
 	end
 end

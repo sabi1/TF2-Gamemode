@@ -195,6 +195,66 @@ function GM:CommonScaleDamage(ent, hitgroup, dmginfo)
 		end
 	end
 
+	-- TF2 condition-based immunity/resistance (CTFPlayerShared-style core effects)
+	if ent:IsTFPlayer() and ent.InCond then
+		local full_invuln = ent:InCond(TF_COND_INVULNERABLE)
+			or ent:InCond(TF_COND_INVULNERABLE_USER_BUFF)
+			or ent:InCond(TF_COND_INVULNERABLE_CARD_EFFECT)
+			or ent:InCond(TF_COND_INVULNERABLE_HIDE_UNLESS_DAMAGED)
+		if full_invuln then
+			dmginfo:SetDamage(0)
+			return
+		end
+
+		if ent:InCond(TF_COND_PHASE) or ent:InCond(TF_COND_PASSTIME_INTERCEPTION) then
+			dmginfo:SetDamage(0)
+			return
+		end
+
+		local scale = 1
+		if ent:InCond(TF_COND_DEFENSEBUFF) or ent:InCond(TF_COND_DEFENSEBUFF_NO_CRIT_BLOCK) then
+			scale = math.min(scale, 0.65)
+		end
+		if ent:InCond(TF_COND_DEFENSEBUFF_HIGH) then
+			scale = math.min(scale, 0.25)
+		end
+
+		if dmginfo:IsDamageType(DMG_BULLET) then
+			if ent:InCond(TF_COND_BULLET_IMMUNE) then
+				scale = 0
+			elseif ent:InCond(TF_COND_MEDIGUN_UBER_BULLET_RESIST) then
+				scale = math.min(scale, 0.25)
+			elseif ent:InCond(TF_COND_MEDIGUN_SMALL_BULLET_RESIST) then
+				scale = math.min(scale, 0.9)
+			end
+		end
+		if dmginfo:IsDamageType(DMG_BLAST) or dmginfo:IsExplosionDamage() then
+			if ent:InCond(TF_COND_BLAST_IMMUNE) then
+				scale = 0
+			elseif ent:InCond(TF_COND_MEDIGUN_UBER_BLAST_RESIST) then
+				scale = math.min(scale, 0.25)
+			elseif ent:InCond(TF_COND_MEDIGUN_SMALL_BLAST_RESIST) then
+				scale = math.min(scale, 0.9)
+			end
+		end
+		if dmginfo:IsDamageType(DMG_BURN) then
+			if ent:InCond(TF_COND_FIRE_IMMUNE) or ent:InCond(TF_COND_AFTERBURN_IMMUNE) then
+				scale = 0
+			elseif ent:InCond(TF_COND_MEDIGUN_UBER_FIRE_RESIST) then
+				scale = math.min(scale, 0.25)
+			elseif ent:InCond(TF_COND_MEDIGUN_SMALL_FIRE_RESIST) then
+				scale = math.min(scale, 0.9)
+			end
+		end
+
+		if scale <= 0 then
+			dmginfo:SetDamage(0)
+			return
+		elseif scale < 1 then
+			dmginfo:ScaleDamage(scale)
+		end
+	end
+
 	-- Self damage
 	if ent == att then
 		dontscaledamage = true

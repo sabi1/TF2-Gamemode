@@ -28,15 +28,14 @@ function PANEL:UpdateAttributePanel()
 	if not self.AttributePanel then
 		return
 	end
-	
-	local x, y = self:GetPos()
-	if self.attributes then
-		PrintTable(self.attributes)
-	end
---	self.AttributePanel:SetPos(x+self.Offset.x, y+self.Offset.y)
-	self.AttributePanel.text = self.text
-	self.AttributePanel.attributes = self.attributes
+
+	self.AttributePanel.text = self.tooltip_name or self.text
+	self.AttributePanel.attributes = self.tooltip_attributes or self.attributes
 	self.AttributePanel.qualitycolor = self.qualitycolor
+	self.AttributePanel.itemImage = self.tooltip_image or self.itemImage
+	self.AttributePanel.levelText = self.tooltip_leveltext
+	self.AttributePanel.description = self.tooltip_description
+	self.AttributePanel.flavorText = self.tooltip_flavor
 end
 
 function PANEL:SetAttributePanel(p, offsetx, offsety)

@@ -8,6 +8,7 @@ local blacklist = {["Frying Pan"] = true, ["Golden Frying Pan"] = true, ["The PA
 local name_blacklist = {["The AK47"] = true,} -- Weapons that have names of other weapons must have their item.name put in here
 
 include("cl_scheme.lua")
+include("cl_payload.lua")
 include("cl_hud.lua")
 include("tf_lang_module.lua")
 include("shd_items.lua")
@@ -40,6 +41,233 @@ include("proxies/itemtintcolor.lua")
 include("proxies/sniperriflecharge.lua")
 include("proxies/weapon_invis.lua")
 include("shd_gravitygun.lua")
+
+local TFBlueBotNameCache = TFBlueBotNameCache or {}
+local tfBlueBotNameCacheNext = 0
+local TFBlueBotSeenNames = TFBlueBotSeenNames or {}
+local TFBlueBotRecentNames = TFBlueBotRecentNames or {}
+
+local function NameKey(name)
+	if not isstring(name) then return "" end
+	return string.lower(string.Trim(name))
+end
+
+local function MarkRecentBlueBotName(name, ttl)
+	local key = NameKey(name)
+	if key == "" then return end
+	TFBlueBotRecentNames[key] = CurTime() + (tonumber(ttl) or 20)
+end
+
+local function IsRecentBlueBotName(name)
+	local key = NameKey(name)
+	if key == "" then return false end
+	local untilTime = TFBlueBotRecentNames[key]
+	if not untilTime then return false end
+	if untilTime < CurTime() then
+		TFBlueBotRecentNames[key] = nil
+		return false
+	end
+	return true
+end
+
+local function RefreshBlueBotNameCache()
+	if CurTime() < tfBlueBotNameCacheNext then return end
+	tfBlueBotNameCacheNext = CurTime() + 1
+
+	TFBlueBotNameCache = {}
+	for _, ply in ipairs(player.GetAll()) do
+		if not IsValid(ply) then continue end
+		if not ply:IsBot() then continue end
+		local teamId = ply:Team()
+		if teamId ~= TEAM_BLU and teamId ~= TF_TEAM_PVE_INVADERS then continue end
+		local nick = ply:Nick()
+		if isstring(nick) and nick ~= "" then
+			local key = NameKey(nick)
+			if key ~= "" then
+				TFBlueBotNameCache[key] = true
+				TFBlueBotSeenNames[key] = true
+			end
+			MarkRecentBlueBotName(nick, 30)
+		end
+	end
+end
+
+local function MessageMentionsBlueBot(name, text)
+	if TFBlueBotNameCache[NameKey(name)] then
+		return true
+	end
+	if not isstring(text) or text == "" then
+		return false
+	end
+	local lowerText = string.lower(text)
+	for botName in pairs(TFBlueBotNameCache) do
+		if string.find(text, botName, 1, true) then
+			return true
+		end
+		if string.find(lowerText, botName, 1, true) then
+			return true
+		end
+	end
+	return false
+end
+
+hook.Add("Think", "TF_BlueBotNameCache", function()
+	RefreshBlueBotNameCache()
+end)
+
+gameevent.Listen("player_connect_client")
+hook.Add("player_connect_client", "TF_BlueBotConnectTrack", function(data)
+	if not istable(data) then return end
+	local isBot = tonumber(data.bot or 0) == 1
+	if not isBot then return end
+	local name = tostring(data.name or "")
+	if name ~= "" then
+		TFBlueBotSeenNames[NameKey(name)] = true
+		MarkRecentBlueBotName(name, 60)
+	end
+end)
+
+gameevent.Listen("player_disconnect")
+hook.Add("player_disconnect", "TF_BlueBotDisconnectTrack", function(data)
+	if not istable(data) then return end
+	local networkid = string.upper(tostring(data.networkid or ""))
+	if networkid ~= "BOT" then return end
+	local name = tostring(data.name or "")
+	if name ~= "" then
+		TFBlueBotSeenNames[NameKey(name)] = true
+		MarkRecentBlueBotName(name, 60)
+	end
+end)
+
+gameevent.Listen("player_changename")
+hook.Add("player_changename", "TF_BlueBotRenameTrack", function(data)
+	if not istable(data) then return end
+	local oldname = tostring(data.oldname or "")
+	local newname = tostring(data.newname or "")
+	local uid = tonumber(data.userid or 0) or 0
+	local ply = uid > 0 and Player(uid) or nil
+
+	if IsValid(ply) and ply:IsBot() and (ply:Team() == TEAM_BLU or ply:Team() == TF_TEAM_PVE_INVADERS or string.find(game.GetMap() or "", "mvm_", 1, true)) then
+		if oldname ~= "" then
+			TFBlueBotSeenNames[NameKey(oldname)] = true
+			MarkRecentBlueBotName(oldname, 60)
+		end
+		if newname ~= "" then
+			TFBlueBotSeenNames[NameKey(newname)] = true
+			MarkRecentBlueBotName(newname, 60)
+		end
+		return
+	end
+
+	if oldname ~= "" and (TFBlueBotSeenNames[NameKey(oldname)] or IsRecentBlueBotName(oldname)) then
+		if newname ~= "" then
+			TFBlueBotSeenNames[NameKey(newname)] = true
+			MarkRecentBlueBotName(newname, 60)
+		end
+	end
+end)
+
+local BOT_CLASS_NAME_KEYS = {
+	scout = true,
+	soldier = true,
+	pyro = true,
+	demoman = true,
+	heavy = true,
+	engineer = true,
+	medic = true,
+	sniper = true,
+	spy = true,
+}
+
+local function LooksLikeClassBotName(name)
+	local key = NameKey(name)
+	if key == "" then return false end
+	key = string.gsub(key, "^%(%d+%)", "")
+	key = string.Trim(key)
+	return BOT_CLASS_NAME_KEYS[key] == true
+end
+
+local function IsKnownHumanName(name)
+	local key = NameKey(name)
+	if key == "" then return false end
+	for _, human in ipairs(player.GetHumans()) do
+		if IsValid(human) and NameKey(human:Nick()) == key then
+			return true
+		end
+	end
+	return false
+end
+
+hook.Add("ChatText", "TF_SuppressBlueBotJoinLeaveNameSpam", function(index, name, text, msgType)
+	local t = string.lower(tostring(msgType or ""))
+	local rawText = tostring(text or "")
+	local lowerText = string.lower(rawText)
+	local looksLikeJoinLeave = t == "joinleave"
+		or t == "namechange"
+		or t == "teamchange"
+		or string.find(lowerText, "has joined the game", 1, true) ~= nil
+		or string.find(lowerText, "left the game", 1, true) ~= nil
+		or string.find(lowerText, "changed name to", 1, true) ~= nil
+	if not looksLikeJoinLeave then return end
+
+	RefreshBlueBotNameCache()
+
+	local ply = player.GetByID(tonumber(index) or -1)
+	if IsValid(ply) and ply:IsBot() then
+		local teamId = ply:Team() or TEAM_UNASSIGNED
+		if teamId == TEAM_BLU or teamId == TF_TEAM_PVE_INVADERS or string.find(game.GetMap() or "", "mvm_", 1, true) then
+			return true
+		end
+	end
+
+	local joinName = string.match(rawText, "^Player%s+(.+)%s+has joined the game$")
+	local leftName = string.match(rawText, "^Player%s+(.+)%s+left the game")
+	local oldName, newName = string.match(rawText, "^Player%s+(.+)%s+changed name to%s+(.+)$")
+
+	local function NameLooksBot(n)
+		local key = NameKey(n)
+		return key ~= "" and (TFBlueBotNameCache[key] or TFBlueBotSeenNames[key] or IsRecentBlueBotName(n))
+	end
+
+	if NameLooksBot(name) or NameLooksBot(joinName) or NameLooksBot(leftName) or NameLooksBot(oldName) or NameLooksBot(newName) then
+		return true
+	end
+
+	if string.find(lowerText, "(mvm bot removed)", 1, true) then
+		return true
+	end
+
+	local onMvMMap = string.find(string.lower(game.GetMap() or ""), "mvm_", 1, true) ~= nil
+	if onMvMMap then
+		local candidateNames = { name, joinName, leftName, oldName, newName }
+		for _, candidate in ipairs(candidateNames) do
+			if LooksLikeClassBotName(candidate) and not IsKnownHumanName(candidate) then
+				return true
+			end
+		end
+	end
+
+	local mentionsBluTeam = string.find(lowerText, "team blu", 1, true) ~= nil
+		or string.find(lowerText, "team invaders", 1, true) ~= nil
+	if (t == "joinleave" or t == "teamchange") and mentionsBluTeam then
+		local isHuman = false
+		if isstring(name) and name ~= "" then
+			for _, human in ipairs(player.GetHumans()) do
+				if IsValid(human) and human:Nick() == name then
+					isHuman = true
+					break
+				end
+			end
+		end
+		if not isHuman then
+			return true
+		end
+	end
+
+	if MessageMentionsBlueBot(name, text) then
+		return true
+	end
+end)
 
 
 	hook.Add( "PopulateToolMenu", "Civ2Settings1", function()
@@ -179,6 +407,7 @@ end)
 
 local TF2InspectHeld = false
 local TF2InspectSentReload = false
+local TF2LastInspectKey = nil
 
 local function TF2CanInspectFromReload(wep)
 	if not IsValid(wep) then return false end
@@ -238,6 +467,7 @@ hook.Add("PlayerBindPress", "TF2Gamemode_InspectBind_BlockOriginalBind", functio
 	local isInspectKey = code == inspectKey
 	local loweredBind = isstring(bind) and string.lower(bind) or ""
 	local isKnownInspectSpam = string.find(loweredBind, "tf_itempicker", 1, true) ~= nil
+		or string.find(loweredBind, "tf_applyfixup", 1, true) ~= nil
 
 	-- Let UI/menu/chat key usage pass through untouched.
 	if gui.IsGameUIVisible() or vgui.CursorVisible() then return end
@@ -247,6 +477,17 @@ hook.Add("PlayerBindPress", "TF2Gamemode_InspectBind_BlockOriginalBind", functio
 	if isInspectKey or (isKnownInspectSpam and input.IsKeyDown(inspectKey)) then
 		return true
 	end
+end)
+
+hook.Add("Think", "TF2Gamemode_InspectBind_NeutralizeBoundKey", function()
+	local inspectKeyConVar = GetConVar("tf_inspect_key")
+	if not inspectKeyConVar then return end
+
+	local inspectKey = math.max(0, inspectKeyConVar:GetInt())
+	if TF2LastInspectKey == inspectKey then return end
+	TF2LastInspectKey = inspectKey
+
+	-- GMod blocks clientside `bind` via RunConsoleCommand; key blocking is handled in PlayerBindPress.
 end)
 
 hook.Add("InitPostEntity", "TF2Gamemode_InspectKeyInit", function()
@@ -1047,6 +1288,16 @@ local function StartClassSelectMusic()
 	PlayMenuUISound(isMVM and "music/mvm_class_menu_bg.wav" or "music/class_menu_bg.wav")
 end
 
+local function PlayClassHoverSound(index)
+	if not isnumber(index) then return end
+	local n = math.Clamp(math.floor(index), 1, 9)
+	if string.find(game.GetMap(), "mvm_") then
+		PlayMenuUISound(string.format("music/mvm_class_menu_%02d.wav", n))
+	else
+		PlayMenuUISound(string.format("music/class_menu_%02d.wav", n))
+	end
+end
+
 if IsValid(TFClassSelectionFrame) then
 	TFClassSelectionFrame:Remove()
 end
@@ -1116,6 +1367,37 @@ local loadout_solid_line = surface.GetTextureID("vgui/loadout_solid_line")
 local loadout_round_rect = surface.GetTextureID("vgui/loadout_round_rect")
 local loadout_round_rect_selected = surface.GetTextureID("vgui/loadout_round_rect_selected")
 
+local function PaintPanelLikeClassLoadout(self, w, h)
+	if not IsValid(self.Entity) then return end
+
+	local x, y = self:LocalToScreen(0, 0)
+	self:LayoutEntity(self.Entity)
+
+	local ang = self.aLookAngle
+	if not ang then
+		ang = (self.vLookatPos - self.vCamPos):Angle()
+	end
+
+	cam.Start3D(self.vCamPos, ang, self.fFOV, x, y, w, h)
+	cam.IgnoreZ(true)
+
+	render.SuppressEngineLighting(true)
+	render.SetLightingOrigin(self.Entity:GetPos() + Vector(0, 0, 68))
+	render.ResetModelLighting(0.5, 0.5, 0.5)
+
+	if self.spotlight then
+		render.SetModelLighting(BOX_TOP, 1, 1, 1)
+	end
+
+	self:DrawModel()
+
+	render.SuppressEngineLighting(false)
+	cam.IgnoreZ(false)
+	cam.End3D()
+
+	self.LastPaint = RealTime()
+end
+
 function iconC:Paint()
 
 	if ( !IsValid( self.Entity ) ) then return end
@@ -1180,6 +1462,8 @@ icon:SetFOV(50)
 icon:SetLookAt(Vector(-85,0,-5))
 icon:SetAnimated(true)
 icon.AutomaticFrameAdvance = true
+icon.spotlight = true
+icon.Paint = PaintPanelLikeClassLoadout
 icon:SetZPos(10)
 
 local icon2 = vgui.Create( "DModelPanel", ClassFrame )
@@ -1190,6 +1474,7 @@ icon2:SetFOV(50)
 icon2:SetZPos(12)
 icon2:SetLookAt(Vector(-85,0,-5))
 icon2:SetModel( "models/weapons/w_models/w_minigun.mdl" ) -- you can only change colors on playermodels
+icon2.Paint = PaintPanelLikeClassLoadout
 local icon3 = vgui.Create( "DModelPanel", ClassFrame )
 icon3:SetSize(ScrW() * 0.412, ScrH() * 1)
 icon3:SetPos(ScrW() * 0.012, ScrH() * 0.301)
@@ -1198,6 +1483,7 @@ icon3:SetFOV(50)
 icon3:SetZPos(12)
 icon3:SetLookAt(Vector(-85,0,-5))
 icon3:SetModel( "models/empty.mdl" ) -- you can only change colors on playermodels
+icon3.Paint = PaintPanelLikeClassLoadout
 local icon4 = vgui.Create( "DModelPanel", ClassFrame )
 icon4:SetSize(ScrW() * 0.412, ScrH() * 1)
 icon4:SetPos(ScrW() * 0.012, ScrH() * 0.301)
@@ -1206,6 +1492,7 @@ icon4:SetFOV(50)
 icon4:SetZPos(12)
 icon4:SetLookAt(Vector(-85,0,-5))
 icon4:SetModel( "models/empty.mdl" ) -- you can only change colors on playermodels
+icon4.Paint = PaintPanelLikeClassLoadout
 local icon5 = vgui.Create( "DModelPanel", ClassFrame )
 icon5:SetSize(ScrW() * 0.412, ScrH() * 1)
 icon5:SetPos(ScrW() * 0.012, ScrH() * 0.301)
@@ -1214,6 +1501,7 @@ icon5:SetFOV(50)
 icon5:SetZPos(12)
 icon5:SetLookAt(Vector(-85,0,-5))
 icon5:SetModel( "models/empty.mdl" ) -- you can only change colors on playermodels
+icon5.Paint = PaintPanelLikeClassLoadout
 local convar = GetConVar("loadout_heavy")
 local split = string.Split(convar:GetString(), ",")
 --print(split[1])
@@ -1395,6 +1683,15 @@ function icon:LayoutEntity( ent )
 end
 function icon2:LayoutEntity( ent )
     return
+end
+function icon3:LayoutEntity( ent )
+	return
+end
+function icon4:LayoutEntity( ent )
+	return
+end
+function icon5:LayoutEntity( ent )
+	return
 end
 	local lastPreviewTeamSkin = nil
 	timer.Remove("SetSkinForClassModels")
@@ -1831,6 +2128,44 @@ else
 		menutext:SizeToContents()
 	end 
 end
+
+ClassFrame.OnKeyCodePressed = function(pnl, key)
+	if not pnl:IsVisible() then return end
+
+	local keyActions = {
+		[KEY_1] = function() if IsValid(ScoutButton) then ScoutButton:DoClick() end end,
+		[KEY_2] = function() if IsValid(SoldierButton) then SoldierButton:DoClick() end end,
+		[KEY_3] = function() if IsValid(PyroButton) then PyroButton:DoClick() end end,
+		[KEY_4] = function() if IsValid(DemomanButton) then DemomanButton:DoClick() end end,
+		[KEY_5] = function() if IsValid(HeavyButton) then HeavyButton:DoClick() end end,
+		[KEY_6] = function() if IsValid(EngineerButton) then EngineerButton:DoClick() end end,
+		[KEY_7] = function() if IsValid(MedicButton) then MedicButton:DoClick() end end,
+		[KEY_8] = function() if IsValid(SniperButton) then SniperButton:DoClick() end end,
+		[KEY_9] = function() if IsValid(SpyButton) then SpyButton:DoClick() end end,
+		[KEY_0] = function() if IsValid(GmodButton) then GmodButton:DoClick() end end,
+		[KEY_PAD_1] = function() if IsValid(ScoutButton) then ScoutButton:DoClick() end end,
+		[KEY_PAD_2] = function() if IsValid(SoldierButton) then SoldierButton:DoClick() end end,
+		[KEY_PAD_3] = function() if IsValid(PyroButton) then PyroButton:DoClick() end end,
+		[KEY_PAD_4] = function() if IsValid(DemomanButton) then DemomanButton:DoClick() end end,
+		[KEY_PAD_5] = function() if IsValid(HeavyButton) then HeavyButton:DoClick() end end,
+		[KEY_PAD_6] = function() if IsValid(EngineerButton) then EngineerButton:DoClick() end end,
+		[KEY_PAD_7] = function() if IsValid(MedicButton) then MedicButton:DoClick() end end,
+		[KEY_PAD_8] = function() if IsValid(SniperButton) then SniperButton:DoClick() end end,
+		[KEY_PAD_9] = function() if IsValid(SpyButton) then SpyButton:DoClick() end end,
+		[KEY_PAD_0] = function() if IsValid(GmodButton) then GmodButton:DoClick() end end,
+	}
+
+	if key == KEY_ESCAPE then
+		pnl:Close()
+		return
+	end
+
+	local action = keyActions[key]
+	if action then
+		action()
+	end
+end
+
 ScoutButton.OnCursorEntered = function() 
 	hoveredClassName = "scout"
 	if (LocalPlayer():GetInfoNum("tf_tfc_model_override",0) == 1  and file.Exists("models/player/tfc_"..(c.ModelName or "scout")..".mdl", "WORKSHOP") ) then
@@ -1861,7 +2196,7 @@ double jump while in the air!]] )
 			end
 		end
 	end
-	PlayMenuUISound("music/class_menu_01.wav")
+	PlayClassHoverSound(1)
 	applyPreviewWearables("scout")
 	
       icon:GetEntity():SetSequence("selectionmenu_startpose")
@@ -1923,7 +2258,7 @@ Use your rocket launcher to rocket jump!]] )
 			end
 		end
 	end
-	PlayMenuUISound("music/class_menu_02.wav")
+	PlayClassHoverSound(2)
 	applyPreviewWearables("soldier")
 	
       icon:GetEntity():SetSequence("selectionmenu_startpose")
@@ -1977,7 +2312,7 @@ PyroButton.OnCursorEntered = function()
 			end
 		end
 	end
-	PlayMenuUISound("music/class_menu_03.wav")
+	PlayClassHoverSound(3)
 	applyPreviewWearables("pyro")
 	menuname:SetText( "PYRO" ) 
 	menutext:SetText( [[Ambush enemies at corners!
@@ -2045,7 +2380,7 @@ a stickybomb and jumping as you detonate it!]] )
 			end
 		end
 	end
-	PlayMenuUISound("music/class_menu_04.wav")
+	PlayClassHoverSound(4)
 	applyPreviewWearables("demoman")
 	
       icon:GetEntity():SetSequence("selectionmenu_startpose")
@@ -2102,7 +2437,7 @@ HeavyButton.OnCursorEntered = function()
 		end
 	end
 
-	PlayMenuUISound("music/class_menu_05.wav")
+	PlayClassHoverSound(5)
 	applyPreviewWearables("heavy")
 	
       icon:GetEntity():SetSequence("selectionmenu_startpose")
@@ -2177,7 +2512,7 @@ team mates get to the front lines!]] )
 			end
 		end
 	end
-	PlayMenuUISound("music/class_menu_06.wav")
+	PlayClassHoverSound(6)
 	applyPreviewWearables("engineer")
 	
       icon:GetEntity():SetSequence("selectionmenu_startpose")
@@ -2235,7 +2570,7 @@ MedicButton.OnCursorEntered = function()
 			end
 		end
 	end
-	PlayMenuUISound("music/class_menu_07.wav")
+	PlayClassHoverSound(7)
 	applyPreviewWearables("medic")
 	menuname:SetText( "MEDIC" ) 
 	menutext:SetText( [[Fill your ÜberCharge by 
@@ -2300,7 +2635,7 @@ SniperButton.OnCursorEntered = function()
 			end
 		end
 	end
-	PlayMenuUISound("music/class_menu_08.wav")
+	PlayClassHoverSound(8)
 	applyPreviewWearables("sniper")
 	
       icon:GetEntity():SetSequence("selectionmenu_startpose")
@@ -2361,7 +2696,7 @@ SpyButton.OnCursorEntered = function()
 			end
 		end
 	end
-	PlayMenuUISound("music/class_menu_09.wav")
+	PlayClassHoverSound(9)
 	applyPreviewWearables("spy")
 	
       icon:GetEntity():SetSequence("selectionmenu_startpose")
@@ -3439,344 +3774,89 @@ local function MergeSteamInventory(ply)
 				file.Write("tf_loadout_table.json", table.ToString(json))
 
 
-				--If the response does not contain the following table items.
-		
-				local status = json.status
-				local item1scout = 200
-				local item2scout = 209
-				local item3scout = 190
-				local item4scout = -1
-				local item5scout = -1
-				local item6scout = -1
-				local item1soldier = 205
-				local item2soldier = 10
-				local item3soldier = 196
-				local item4soldier = -1
-				local item5soldier = -1
-				local item6soldier = -1
-				local item1pyro = 208
-				local item2pyro = 12
-				local item3pyro = 192
-				local item4pyro = -1
-				local item5pyro = -1
-				local item6pyro = -1
-				local item1demoman = 206
-				local item2demoman = 207
-				local item3demoman = 191
-				local item4demoman = -1
-				local item5demoman = -1
-				local item6demoman = -1
-				local item1heavy = 202
-				local item2heavy = 11
-				local item3heavy = 195
-				local item4heavy = -1
-				local item5heavy = -1
-				local item6heavy = -1
-				local item1engineer = 9
-				local item2engineer = 209
-				local item3engineer = 197
-				local item4engineer = -1
-				local item5engineer = -1
-				local item6engineer = -1
-				local item1medic = 204
-				local item2medic = 211
-				local item3medic = 198
-				local item4medic = -1
-				local item5medic = -1
-				local item6medic = -1
-				local item1sniper = 201
-				local item2sniper = 203
-				local item3sniper = 193
-				local item4sniper = -1
-				local item5sniper = -1
-				local item6sniper = -1
-				local item1spy = 210
-				local item2spy = 736
-				local item3spy = 194
-				local item4spy = -1
-				local item5spy = -1
-				local item6spy = -1
-				if (json.result) then
-					local items = json.result.items
-					for tbl1,tbl2 in ipairs(items) do
-								local v = items[tbl1]
-								if (v["equipped"]) then
-									for a,b in ipairs(v["equipped"]) do
-										PrintTable(v["equipped"][a])
-										local classes = v["equipped"][a]
-										-- scout
-										if (classes["class"] == 1) then
-											if (classes["slot"] == 0) then
-												item1scout = v.defindex
-											elseif (classes["slot"] == 1) then
-												item2scout = v.defindex
-											elseif (classes["slot"] == 2) then
-												item3scout = v.defindex
-											elseif (classes["slot"] == 7) then
-												item4scout = v.defindex
-											elseif (classes["slot"] == 8) then
-												item5scout = v.defindex
-											elseif (classes["slot"] == 10) then
-												item6scout = v.defindex
-											end
-											
-										-- soldier
-										elseif (classes["class"] == 3) then
-											if (classes["slot"] == 0) then
-												if (v.defindex == 199 or v.defindex == 1141 or v.defindex == 9 or v.defindex == 12 or v.defindex == 10 or v.defindex == 415 or v.defindex == 1153 or v.defindex == 199) then
-													item2soldier = v.defindex
-												else
-													item1soldier = v.defindex
-												end
-											elseif (classes["slot"] == 1) then
-												item2soldier = v.defindex
-											elseif (classes["slot"] == 2) then
-												item3soldier = v.defindex
-											elseif (classes["slot"] == 7) then
-												item4soldier = v.defindex
-											elseif (classes["slot"] == 8) then
-												item5soldier = v.defindex
-											elseif (classes["slot"] == 10) then
-												item6soldier = v.defindex
-											end
-											
-										-- pyro
-										elseif (classes["class"] == 7) then
-											if (classes["slot"] == 0) then
-												if (v.defindex == 199 or v.defindex == 1141 or v.defindex == 9 or v.defindex == 12 or v.defindex == 10 or v.defindex == 415 or v.defindex == 1153 or v.defindex == 199) then
-													item2pyro = v.defindex
-												else
-													item1pyro = v.defindex
-												end
-											elseif (classes["slot"] == 1) then
-												item2pyro = v.defindex
-											elseif (classes["slot"] == 2) then
-												item3pyro = v.defindex
-											elseif (classes["slot"] == 7) then
-												item4pyro = v.defindex
-											elseif (classes["slot"] == 8) then
-												item5pyro = v.defindex
-											elseif (classes["slot"] == 10) then
-												item6pyro = v.defindex
-											end
+				-- If the response does not contain equipped items for a slot, keep class defaults.
+				local loadouts = {
+					scout = {200, 209, 190, -1, -1, -1, -1},
+					soldier = {205, 10, 196, -1, -1, -1, -1},
+					pyro = {208, 12, 192, -1, -1, -1, -1},
+					demoman = {206, 207, 191, -1, -1, -1, -1},
+					heavy = {202, 11, 195, -1, -1, -1, -1},
+					engineer = {9, 209, 197, -1, -1, -1, -1},
+					medic = {204, 211, 198, -1, -1, -1, -1},
+					sniper = {201, 203, 193, -1, -1, -1, -1},
+					spy = {210, 736, 194, -1, -1, -1, -1},
+				}
 
-										-- demoman
-										elseif (classes["class"] == 4) then
-											if (classes["slot"] == 0) then
-												item1demoman = v.defindex
-											elseif (classes["slot"] == 1) then
-												item2demoman = v.defindex
-											elseif (classes["slot"] == 2) then
-												item3demoman = v.defindex
-											elseif (classes["slot"] == 7) then
-												item4demoman = v.defindex
-											elseif (classes["slot"] == 8) then
-												item5demoman = v.defindex
-											elseif (classes["slot"] == 10) then
-												item6demoman = v.defindex
-											end
-											
-										-- heavy
-										elseif (classes["class"] == 6) then
-											if (classes["slot"] == 0) then
-												if (v.defindex == 199 or v.defindex == 1141 or v.defindex == 9 or v.defindex == 12 or v.defindex == 10 or v.defindex == 415 or v.defindex == 1153 or v.defindex == 199) then
-													item2heavy = v.defindex
-												else
-													item1heavy = v.defindex
-												end
-											elseif (classes["slot"] == 1) then
-												item2heavy = v.defindex
-											elseif (classes["slot"] == 2) then
-												item3heavy = v.defindex
-											elseif (classes["slot"] == 7) then
-												item4heavy = v.defindex
-											elseif (classes["slot"] == 8) then
-												item5heavy = v.defindex
-											elseif (classes["slot"] == 10) then
-												item6heavy = v.defindex
-											end
-											
-										-- engineer
-										elseif (classes["class"] == 9) then
-											if (classes["slot"] == 0) then
-												item1engineer = v.defindex
-											elseif (classes["slot"] == 1) then
-												item2engineer = v.defindex
-											elseif (classes["slot"] == 2) then
-												item3engineer = v.defindex
-											elseif (classes["slot"] == 7) then
-												item4engineer = v.defindex
-											elseif (classes["slot"] == 8) then
-												item5engineer = v.defindex
-											elseif (classes["slot"] == 10) then
-												item6engineer = v.defindex
-											end
-											
-										-- medic
-										elseif (classes["class"] == 5) then
-											if (classes["slot"] == 0) then
-												item1medic = v.defindex
-											elseif (classes["slot"] == 1) then
-												item2medic = v.defindex
-											elseif (classes["slot"] == 2) then
-												item3medic = v.defindex
-											elseif (classes["slot"] == 7) then
-												item4medic = v.defindex
-											elseif (classes["slot"] == 8) then
-												item5medic = v.defindex
-											elseif (classes["slot"] == 10) then
-												item6medic = v.defindex
-											end
-											
-										-- sniper
-										elseif (classes["class"] == 2) then
-											if (classes["slot"] == 0) then
-												item1sniper = v.defindex
-											elseif (classes["slot"] == 1) then
-												item2sniper = v.defindex
-											elseif (classes["slot"] == 2) then
-												item3sniper = v.defindex
-											elseif (classes["slot"] == 7) then
-												item4sniper = v.defindex
-											elseif (classes["slot"] == 8) then
-												item5sniper = v.defindex
-											elseif (classes["slot"] == 10) then
-												item6sniper = v.defindex
-											end
-										-- spy
-										elseif (classes["class"] == 8) then
-											if (classes["slot"] == 1) then
-												item1spy = v.defindex
-											elseif (classes["slot"] == 4) then
-												item2spy = v.defindex
-											elseif (classes["slot"] == 2) then
-												item3spy = v.defindex
-											elseif (classes["slot"] == 7) then
-												item4spy = v.defindex
-											elseif (classes["slot"] == 8) then
-												item5spy = v.defindex
-											elseif (classes["slot"] == 10) then
-												item6spy = v.defindex
-											end
-										end
+				local classSlots = {
+					[1] = {name = "scout", slots = {[0] = 1, [1] = 2, [2] = 3, [7] = 4, [8] = 5, [10] = 6, [11] = 7, [12] = 7}},
+					[2] = {name = "sniper", slots = {[0] = 1, [1] = 2, [2] = 3, [7] = 4, [8] = 5, [10] = 6, [11] = 7, [12] = 7}},
+					[3] = {name = "soldier", slots = {[0] = 1, [1] = 2, [2] = 3, [7] = 4, [8] = 5, [10] = 6, [11] = 7, [12] = 7}, swapPrimary = true},
+					[4] = {name = "demoman", slots = {[0] = 1, [1] = 2, [2] = 3, [7] = 4, [8] = 5, [10] = 6, [11] = 7, [12] = 7}},
+					[5] = {name = "medic", slots = {[0] = 1, [1] = 2, [2] = 3, [7] = 4, [8] = 5, [10] = 6, [11] = 7, [12] = 7}},
+					[6] = {name = "heavy", slots = {[0] = 1, [1] = 2, [2] = 3, [7] = 4, [8] = 5, [10] = 6, [11] = 7, [12] = 7}, swapPrimary = true},
+					[7] = {name = "pyro", slots = {[0] = 1, [1] = 2, [2] = 3, [7] = 4, [8] = 5, [10] = 6, [11] = 7, [12] = 7}, swapPrimary = true},
+					[8] = {name = "spy", slots = {[1] = 1, [4] = 2, [2] = 3, [7] = 4, [8] = 5, [10] = 6, [11] = 7, [12] = 7}},
+					[9] = {name = "engineer", slots = {[0] = 1, [1] = 2, [2] = 3, [7] = 4, [8] = 5, [10] = 6, [11] = 7, [12] = 7}},
+				}
+
+				local slotZeroSecondaryDefs = {
+					[9] = true,
+					[10] = true,
+					[12] = true,
+					[199] = true,
+					[415] = true,
+					[1141] = true,
+					[1153] = true,
+				}
+
+				if (json.result) then
+					local items = json.result.items or {}
+					for _, v in ipairs(items) do
+						if (v["equipped"]) then
+							for _, equippedData in ipairs(v["equipped"]) do
+								PrintTable(equippedData)
+								local classData = classSlots[equippedData["class"]]
+								if classData then
+									local slot = equippedData["slot"]
+									local targetIndex = classData.slots[slot]
+									if targetIndex and classData.swapPrimary and slot == 0 and slotZeroSecondaryDefs[v.defindex] then
+										targetIndex = 2
+									end
+									if targetIndex then
+										loadouts[classData.name][targetIndex] = v.defindex
 									end
 								end
+							end
+						end
 					end
+
 					timer.Simple(2.0, function()
-						-- scout
-						local convar = GetConVar("loadout_scout")
-						local split = {-1,-1,-1,-1,-1,-1}
-						--print(item1scout,item2scout,item3scout,item4scout,item5scout,item6scout)
+						local outputOrder = {"scout", "soldier", "pyro", "demoman", "heavy", "engineer", "medic", "sniper", "spy"}
+						local outputSlotMap = {
+							scout = {1, 2, 3, 4, 5, 6, 7},
+							soldier = {1, 2, 3, 4, 5, 6, 7},
+							pyro = {1, 2, 3, 4, 5, 6, 7},
+							demoman = {2, 1, 3, 4, 5, 6, 7},
+							heavy = {1, 2, 3, 4, 5, 6, 7},
+							engineer = {1, 2, 3, 4, 5, 6, 7},
+							medic = {1, 2, 3, 4, 5, 6, 7},
+							sniper = {1, 2, 3, 4, 5, 6, 7},
+							spy = {2, 1, 3, 4, 5, 6, 7},
+						}
 
-						split[1] = item1scout
-						split[2] = item2scout
-						split[3] = item3scout
-						split[4] = item4scout
-						split[5] = item5scout
-						split[6] = item6scout
-						convar:SetString(table.concat(split, ","))
+						for _, className in ipairs(outputOrder) do
+							local convar = GetConVar("loadout_" .. className)
+							if convar then
+								local split = {-1, -1, -1, -1, -1, -1, -1}
+								local source = loadouts[className]
+								local mapping = outputSlotMap[className]
+								for i = 1, 7 do
+									split[i] = source[mapping[i]] or -1
+								end
+								convar:SetString(table.concat(split, ","))
+							end
+						end
 
-						-- soldier
-						convar = GetConVar("loadout_soldier")
-						split = {-1,-1,-1,-1,-1,-1}
-						--print(item1soldier,item2soldier,item3soldier,item4soldier,item5soldier,item6soldier)
-						split[1] = item1soldier
-						split[2] = item2soldier
-						split[3] = item3soldier
-						split[4] = item4soldier
-						split[5] = item5soldier
-						split[6] = item6soldier
-					
-						convar:SetString(table.concat(split, ","))
-
-						-- pyro
-						convar = GetConVar("loadout_pyro")
-						split = {-1,-1,-1,-1,-1,-1}
-						--print(item1pyro,item2pyro,item3pyro,item4pyro,item5pyro,item6pyro)
-						split[1] = item1pyro
-						split[2] = item2pyro
-						split[3] = item3pyro
-						split[4] = item4pyro
-						split[5] = item5pyro
-						split[6] = item6pyro
-					
-						convar:SetString(table.concat(split, ","))
-						
-						-- demoman
-						convar = GetConVar("loadout_demoman")
-						split = {-1,-1,-1,-1,-1,-1}
-						--print(item1demoman,item2demoman,item3demoman,item4demoman,item5demoman,item6demoman)
-						split[2] = item1demoman
-						split[1] = item2demoman
-						split[3] = item3demoman
-						split[4] = item4demoman
-						split[5] = item5demoman
-						split[6] = item6demoman
-						convar:SetString(table.concat(split, ","))
-
-						-- heavy
-						convar = GetConVar("loadout_heavy")
-						split = {-1,-1,-1,-1,-1,-1}
-						--print(item1heavy,item2heavy,item3heavy,item4heavy,item5heavy,item6heavy)
-						split[1] = item1heavy
-						split[2] = item2heavy
-						split[3] = item3heavy
-						split[4] = item4heavy
-						split[5] = item5heavy
-						split[6] = item6heavy
-					
-						convar:SetString(table.concat(split, ","))
-
-						-- engineer
-						convar = GetConVar("loadout_engineer")
-						split = {-1,-1,-1,-1,-1,-1}
-						--print(item1engineer,item2engineer,item3engineer,item4engineer,item5engineer,item6engineer)
-						split[1] = item1engineer
-						split[2] = item2engineer
-						split[3] = item3engineer
-						split[4] = item4engineer
-						split[5] = item5engineer
-						split[6] = item6engineer
-					
-						convar:SetString(table.concat(split, ","))
-
-						-- medic
-						convar = GetConVar("loadout_medic")
-						split = {-1,-1,-1,-1,-1,-1}
-						--print(item1medic,item2medic,item3medic,item4medic,item5medic,item6medic)
-						split[1] = item1medic
-						split[2] = item2medic
-						split[3] = item3medic
-						split[4] = item4medic
-						split[5] = item5medic
-						split[6] = item6medic
-					
-						convar:SetString(table.concat(split, ","))
-
-						-- sniper
-						convar = GetConVar("loadout_sniper")
-						split = {-1,-1,-1,-1,-1,-1}
-						--print(item1sniper,item2sniper,item3sniper,item4sniper,item5sniper,item6sniper)
-						split[1] = item1sniper
-						split[2] = item2sniper
-						split[3] = item3sniper
-						split[4] = item4sniper
-						split[5] = item5sniper
-						split[6] = item6sniper
-						convar:SetString(table.concat(split, ","))
-
-						-- spy
-						convar = GetConVar("loadout_spy")
-						split = {-1,-1,-1,-1,-1,-1}
-						--print(item1spy,item2spy,item3spy,item4spy,item5spy,item6spy)
-						split[2] = item1spy
-						split[1] = item2spy
-						split[3] = item3spy
-						split[4] = item4spy
-						split[5] = item5spy
-						split[6] = item6spy
-					
-						convar:SetString(table.concat(split, ","))
 						RunConsoleCommand("loadout_update")
 						hook.Run("TFInventoryCacheUpdated")
 						if TFDebugBridge and TFDebugBridge.Emit then

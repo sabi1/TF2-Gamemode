@@ -46,35 +46,26 @@ end
  
 hook.Add( "ShouldCollide", "RespawnRoomVisualizerCollision", function( ent1, ent2 )
 
+	local function IsBlueSideTeam(teamNum)
+		return teamNum == TEAM_BLU or teamNum == TF_TEAM_PVE_INVADERS
+	end
+
+	local function IsAllowedInVisualizer(playerTeam, visualizerTeam)
+		if visualizerTeam == TEAM_RED then
+			return playerTeam == TEAM_RED
+		end
+		if visualizerTeam == TEAM_BLU then
+			return IsBlueSideTeam(playerTeam)
+		end
+		-- Unknown team mapping should never hard-block movement.
+		return true
+	end
+
     -- If players are about to collide with each other, then they won't collide.
     if ( ent1:GetClass() == "func_respawnroomvisualizer" and ent2:IsPlayer() ) then 
-		if (ent1.TeamNum == TEAM_RED) then
-			if (ent2:Team() != TEAM_RED) then
-				return true
-			else
-				return false
-			end
-		elseif (ent1.TeamNum == TEAM_BLU) then
-			if (ent2:Team() != TEAM_BLU) then
-				return true
-			else
-				return false
-			end
-		end
+		return not IsAllowedInVisualizer(ent2:Team(), ent1.TeamNum)
     elseif ( ent2:GetClass() == "func_respawnroomvisualizer" and ent1:IsPlayer() ) then 
-		if (ent2.TeamNum == TEAM_RED) then
-			if (ent1:Team() != TEAM_RED) then
-				return true
-			else
-				return false
-			end
-		elseif (ent2.TeamNum == TEAM_BLU) then
-			if (ent1:Team() != TEAM_BLU) then
-				return true
-			else
-				return false
-			end
-		end
+		return not IsAllowedInVisualizer(ent1:Team(), ent2.TeamNum)
 	end
 
 end )

@@ -29,6 +29,8 @@ util.AddNetworkString("TFRagdollCreate")
 util.AddNetworkString("TauntAnim")
 util.AddNetworkString("TFGestureAnim")
 util.AddNetworkString("UpdatePhonemes")
+util.AddNetworkString("TF_PayloadSyncFull")
+util.AddNetworkString("TF_PayloadSyncDelta")
 
 -- Quickfix for Valve's typo in tf_reponse_rules.txt 
 
@@ -100,52 +102,140 @@ concommand.Add("voicemenu_gesture", function(pl, cmd, args)
 		end
 end)
 
+local function tfcc_print(ply, msg)
+	if IsValid(ply) then
+		ply:PrintMessage(HUD_PRINTTALK, "[TF2-Gamemode] " .. msg)
+	else
+		print("[TF2-Gamemode] " .. msg)
+	end
+end
+
+local function tfcc_find_player(invoker, token)
+	if not token or token == "" or token == "me" then
+		return IsValid(invoker) and invoker or nil
+	end
+
+	local n = tonumber(token)
+	if n then
+		local ent = Entity(n)
+		if IsValid(ent) and ent:IsPlayer() then
+			return ent
+		end
+	end
+
+	token = string.lower(token)
+	for _, p in ipairs(player.GetAll()) do
+		if string.find(string.lower(p:Nick()), token, 1, true) then
+			return p
+		end
+	end
+
+	return nil
+end
+
 concommand.Add("addcond", function(pl, cmd, args)
-	local a, b = tonumber(args[1]), tonumber(args[2])
-	if !GetConVar("sv_cheats"):GetBool() then return end
-	if not a then return end
-		if a == 5 then
-			pl:GodEnable()
-			if pl:Team() == TEAM_RED or pl:Team() != TEAM_BLU then
-				pl:SetSkin(2)
-			else
-				pl:SetSkin(3)
-			end
-		end
-		if a == 11 or a == 37 or a == 35 then
-			GAMEMODE:StartCritBoost(pl)
-		end
-		if a == 91 then
-			pl:GetWeapons()[1].Primary.ClipSize = pl:GetWeapons()[1].Primary.ClipSize + 6
-			pl:GetWeapons()[2].Primary.ClipSize = pl:GetWeapons()[1].Primary.ClipSize + 6
-			pl:GetWeapons()[1].ReloadTime = pl:GetWeapons()[1].ReloadTime - 0.6 
-			pl:GetWeapons()[2].ReloadTime = pl:GetWeapons()[2].ReloadTime - 0.6
-			pl:GetWeapons()[1].Primary.Delay = pl:GetWeapons()[1].Primary.Delay - 0.4
-			pl:GetWeapons()[2].Primary.Delay = pl:GetWeapons()[2].Primary.Delay - 0.4
-			pl:GetWeapons()[3].Primary.Delay = pl:GetWeapons()[3].Primary.Delay - 0.4
-			pl:EmitSound("items/powerup_pickup_haste.wav")
-			timer.Create("Haste1"..pl:EntIndex(), 0.00, 0, function()
-				if !pl:Alive() then timer.Stop("Haste1"..pl:EntIndex()) return end
-			
-				pl:SetClassSpeed(pl:GetPlayerClassTable().Speed + 60)
+	if not GetConVar("sv_cheats"):GetBool() then
+		tfcc_print(pl, "sv_cheats must be enabled.")
+		return
+	end
 
-			end)
-		end 
-		if a == 666 then
-			pl:GetWeapons()[3].DamageType = DMG_DISSOLVE
-		end 
-		if a == 72 then
-			pl:GetWeapons()[1].Primary.Delay = pl:GetWeapons()[1].Primary.Delay - 0.1
-			pl:GetWeapons()[2].Primary.Delay = pl:GetWeapons()[2].Primary.Delay - 0.1
-			pl:GetWeapons()[3].Primary.Delay = pl:GetWeapons()[3].Primary.Delay - 0.1
-			pl:EmitSound("items/powerup_pickup_haste.wav", 95, 110)
-			timer.Create("Haste2"..pl:EntIndex(), 0.00, 0, function()
-				if !pl:Alive() then timer.Stop("Haste2"..pl:EntIndex()) return end
-			
-				pl:SetClassSpeed(pl:GetPlayerClassTable().Speed * 1.2)
+	if #args < 1 then
+		tfcc_print(pl, "Usage: addcond <cond> [duration] [target]  OR  addcond <target> <cond> [duration]")
+		return
+	end
 
-			end)
-		end 
+	local target, cond, duration
+	local first_num = tonumber(args[1])
+	local second_num = tonumber(args[2])
+
+	if first_num then
+		target = IsValid(pl) and pl or nil
+		cond = first_num
+		duration = tonumber(args[2])
+		if args[3] then
+			target = tfcc_find_player(pl, args[3])
+		end
+	else
+		target = tfcc_find_player(pl, args[1])
+		cond = second_num
+		duration = tonumber(args[3])
+	end
+
+	if not IsValid(target) then
+		tfcc_print(pl, "Target player not found.")
+		return
+	end
+
+	if not cond then
+		tfcc_print(pl, "Invalid condition. Example: addcond 11 5 me")
+		return
+	end
+
+	if cond < 0 or (TF_COND_LAST and cond >= TF_COND_LAST) then
+		tfcc_print(pl, "Condition out of range.")
+		return
+	end
+
+	if duration == nil then
+		duration = PERMANENT_CONDITION or -1
+	end
+
+	local provider = IsValid(pl) and pl or target
+	target:AddCond(cond, duration, provider)
+
+	local label = "TF_COND_" .. tostring(cond)
+	for k, v in pairs(TF_COND or {}) do
+		if v == cond then
+			label = k
+			break
+		end
+	end
+
+	if duration == (PERMANENT_CONDITION or -1) then
+		tfcc_print(pl, string.format("Added %s to %s permanently.", label, target:Nick()))
+	else
+		tfcc_print(pl, string.format("Added %s to %s for %.2fs.", label, target:Nick(), duration))
+	end
+end)
+
+concommand.Add("removecond", function(pl, cmd, args)
+	if not GetConVar("sv_cheats"):GetBool() then
+		tfcc_print(pl, "sv_cheats must be enabled.")
+		return
+	end
+
+	if #args < 1 then
+		tfcc_print(pl, "Usage: removecond <cond> [target]  OR  removecond <target> <cond>")
+		return
+	end
+
+	local target, cond
+	local first_num = tonumber(args[1])
+	local second_num = tonumber(args[2])
+
+	if first_num then
+		target = IsValid(pl) and pl or nil
+		cond = first_num
+		if args[2] then
+			target = tfcc_find_player(pl, args[2])
+		end
+	else
+		target = tfcc_find_player(pl, args[1])
+		cond = second_num
+	end
+
+	if not IsValid(target) then
+		tfcc_print(pl, "Target player not found.")
+		return
+	end
+
+	if not cond then
+		tfcc_print(pl, "Invalid condition.")
+		return
+	end
+
+	target:RemoveCond(cond, true)
+	tfcc_print(pl, string.format("Removed condition %d from %s.", cond, target:Nick()))
 end)
 concommand.Add("taunt", function(pl)
 	GAMEMODE:PlayerStartTaunt(pl, ACT_DIESIMPLE, 1 )
@@ -186,14 +276,13 @@ hook.Add("PlayerSelectSpawn", "PlayerSelectTeamSpawn", function(pl)
 			end
 		end
 	else
-		for k,v in pairs( ents.FindByClass("info_player_bluspawn")) do
-			if v:IsValid() then
-				local spawns1 = ents.FindByClass( "info_player_bluspawn" )
-				local random_entry = math.random( #spawns1 )
-				if pl:Team() == TEAM_BLU then
-					return spawns1[ random_entry ] 
-				end
-			end
+		local redSpawns = ents.FindByClass("info_player_redspawn")
+		local bluSpawns = ents.FindByClass("info_player_bluspawn")
+		if pl:Team() == TEAM_RED and #redSpawns > 0 then
+			return redSpawns[math.random(#redSpawns)]
+		end
+		if (pl:Team() == TEAM_BLU or pl:Team() == TF_TEAM_PVE_INVADERS) and #bluSpawns > 0 then
+			return bluSpawns[math.random(#bluSpawns)]
 		end
 	end
 end)
@@ -1411,15 +1500,65 @@ concommand.Add( "random_team", function( ply, cmd, args )
 	if ply:Alive() and ply:Team() != TEAM_SPECTATOR then ply:Kill() end 
 
 end)
+
+local function TFEnsureCanonicalTeams()
+	local redName = string.upper(team.GetName(TEAM_RED) or "")
+	local bluName = string.upper(team.GetName(TEAM_BLU) or "")
+	local specName = string.upper(team.GetName(TEAM_SPECTATOR) or "")
+
+	if redName ~= "RED" or bluName ~= "BLU" or specName ~= "SPECTATOR" then
+		if GAMEMODE and GAMEMODE.CreateTeams then
+			GAMEMODE:CreateTeams()
+		end
+	end
+end
+
+local function ShouldSuppressBlueBotAnnounce(ply, teamId)
+	if not IsValid(ply) or not ply:IsBot() then return false end
+	local t = tonumber(teamId) or ply:Team()
+	return t == TEAM_BLU or t == TF_TEAM_PVE_INVADERS
+end
+
 concommand.Add( "changeteam", function( pl, cmd, args )
-	local requestedTeam = tonumber(args[1])
+	TFEnsureCanonicalTeams()
+
+	local rawTeamArg = args[1]
+	local requestedTeam = tonumber(rawTeamArg)
+	if requestedTeam == nil and isstring(rawTeamArg) then
+		local token = string.Trim(string.lower(rawTeamArg))
+		if token == "red" then
+			requestedTeam = TEAM_RED
+		elseif token == "blu" or token == "blue" then
+			requestedTeam = TEAM_BLU
+		elseif token == "spec" or token == "spectator" then
+			requestedTeam = TEAM_SPECTATOR
+		elseif token == "yellow" or token == "ylw" then
+			requestedTeam = TEAM_YELLOW
+		elseif token == "green" or token == "grn" then
+			requestedTeam = TEAM_GREEN
+		elseif token == "neutral" then
+			requestedTeam = TEAM_NEUTRAL
+		elseif token == "friendly" then
+			requestedTeam = TEAM_FRIENDLY
+		end
+	end
+	local requestedIsGameplayTeam = requestedTeam == TEAM_RED
+		or requestedTeam == TEAM_BLU
+		or requestedTeam == TEAM_YELLOW
+		or requestedTeam == TEAM_GREEN
+		or requestedTeam == TEAM_NEUTRAL
+		or requestedTeam == TEAM_FRIENDLY
+	local requestedIsSpectator = requestedTeam == TEAM_SPECTATOR and not requestedIsGameplayTeam
 	--if ( tonumber( args[ 1 ] ) >= 5 and args[ 1 ] ~= 1002 ) then return end
 	if requestedTeam == nil then
 		pl:ChatPrint("Invalid Team!")
 		return
 	end
-	if ( requestedTeam ~= TEAM_SPECTATOR and (requestedTeam == 0 or requestedTeam < 0 or requestedTeam > TEAM_FRIENDLY) ) then pl:ChatPrint("Invalid Team!") return end
-	if requestedTeam == TEAM_SPECTATOR and pl:Team() == TEAM_SPECTATOR then
+	if not requestedIsGameplayTeam and not requestedIsSpectator then
+		pl:ChatPrint("Invalid Team!")
+		return
+	end
+	if requestedIsSpectator and pl:Team() == TEAM_SPECTATOR then
 		-- Allow re-selecting spectator to refresh spectate target/mode without chat spam.
 		timer.Simple(0, function()
 			if IsValid(pl) and pl:Team() == TEAM_SPECTATOR then
@@ -1437,7 +1576,7 @@ concommand.Add( "changeteam", function( pl, cmd, args )
 	if ( GetConVar("tf_competitive"):GetBool() and requestedTeam == 4 and !pl:IsAdmin() ) then pl:ChatPrint("Green Team is disabled!") return end
 	if ( GetConVar("tf_competitive"):GetBool() and requestedTeam == 3 and !pl:IsAdmin() ) then pl:ChatPrint("Yellow Team is disabled!") return end
 
-	if requestedTeam == TEAM_SPECTATOR then
+	if requestedIsSpectator then
 		if pl:Alive() then
 			pl:Kill() -- Team switch should always produce a death ragdoll.
 		end
@@ -1452,6 +1591,7 @@ concommand.Add( "changeteam", function( pl, cmd, args )
 		end)
 		timer.Simple(0.3, function()
 			if !IsValid(pl) then return end
+			if ShouldSuppressBlueBotAnnounce(pl, pl:Team()) then return end
 			PrintMessage(HUD_PRINTTALK, 'Player ' .. pl:Nick() .. ' joined team ' .. team.GetName(pl:Team()))
 		end)
 		return
@@ -1504,16 +1644,25 @@ concommand.Add( "changeteam", function( pl, cmd, args )
 		pl:SetTeam(requestedTeam)
 	end
 
-	if requestedTeam == TEAM_SPECTATOR then
+	if requestedIsSpectator then
 		timer.Simple(0.1, function()
 			if IsValid(pl) and pl:Team() == TEAM_SPECTATOR then
 				pl:ConCommand("tf_spectate")
 			end
 		end)
 	else
+		pl.TFPreventSpectatorUntil = CurTime() + 1.5
+		pl.IsSpectating = false
+		if pl:GetObserverMode() ~= OBS_MODE_NONE then
+			pl:UnSpectate()
+		end
 		pl:ConCommand("tf_changeclass")
 	end
-	timer.Simple(0.3, function() if !IsValid(pl) then return end PrintMessage(HUD_PRINTTALK, 'Player '.. pl:Nick() ..	' joined team '.. team.GetName(pl:Team()) ) end) 
+	timer.Simple(0.3, function()
+		if !IsValid(pl) then return end
+		if ShouldSuppressBlueBotAnnounce(pl, pl:Team()) then return end
+		PrintMessage(HUD_PRINTTALK, 'Player '.. pl:Nick() ..	' joined team '.. team.GetName(pl:Team()) )
+	end) 
 end )
 
 
@@ -1556,6 +1705,11 @@ function GM:PlayerInitialSpawn(ply)
 			ply:SpectateEntity(GetFirstObserverPoint())
 		end
 	else
+		-- Keep bots on the MvM invader side; do not run generic team balancer there.
+		if string.find(string.lower(game.GetMap() or ""), "mvm_", 1, true) then
+			-- Use BLU as runtime team; -1 pseudo-team can fall into invalid/unassigned states in GMod.
+			ply:SetTeam(TEAM_BLU)
+		else
 	
 		local nDiffBetweenTeams = 0;
 		local m_iLightestTeam = 0;
@@ -1584,6 +1738,7 @@ function GM:PlayerInitialSpawn(ply)
 			ply:SetTeam(TEAM_RED)	
 		else
 			ply:SetTeam(table.Random({TEAM_RED,TEAM_BLU}))	
+		end
 		end
 		
 	end
@@ -1614,7 +1769,9 @@ function GM:OnPlayerChangedTeam(ply, oldteam, newteam)
 		ply:Spawn()
 	end
  
-	PrintMessage(HUD_PRINTTALK, Format("%s joined '%s'", ply:Nick(), team.GetName(newteam)))
+	if not ShouldSuppressBlueBotAnnounce(ply, newteam) then
+		PrintMessage(HUD_PRINTTALK, Format("%s joined '%s'", ply:Nick(), team.GetName(newteam)))
+	end
 	
 	self:ClearDominations(ply)
 	self:UpdateEntityRelationship(ply)
@@ -1853,8 +2010,15 @@ end)
   
 concommand.Add("changeclass", function(pl, cmd, args)
 	if SERVER then
+		if not args[1] then return end
 		if pl:Team()==TEAM_SPECTATOR then return end
 		if pl:GetObserverMode() ~= OBS_MODE_NONE then pl:Spectate(OBS_MODE_NONE) end
+		if pl:Alive() and pl:GetNWBool("InRespawnRoom", false) then
+			pl:SetPlayerClass(args[1])
+			pl:KillSilent()
+			pl:Spawn()
+			return
+		end
 		if (!pl:Alive()) then 
 			timer.Simple(0.1, function() 
 				pl:Spawn() 
@@ -1868,8 +2032,15 @@ end, function() return GAMEMODE.PlayerClassesAutoComplete end)
 
 concommand.Add("join_class", function(pl, cmd, args)
 	if SERVER then
+		if not args[1] then return end
 		if pl:Team()==TEAM_SPECTATOR then return end
 		if pl:GetObserverMode() ~= OBS_MODE_NONE then pl:Spectate(OBS_MODE_NONE) end
+		if pl:Alive() and pl:GetNWBool("InRespawnRoom", false) then
+			pl:SetPlayerClass(args[1])
+			pl:KillSilent()
+			pl:Spawn()
+			return
+		end
 		if pl:Alive() and GetConVar("tf_kill_on_change_class"):GetInt() ~= 0 then pl:Kill() end	
 		--if GetConVar("tf_kill_on_change_class"):GetInt() ~= 0 then pl:SetPlayerClass("gmodplayer") end
 		pl:SetPlayerClass(args[1])
@@ -2447,9 +2618,14 @@ function GM:PlayerSetHandsModel( ply, ent )
 					else 
 						
 						if ((IsValid(ply:GetActiveWeapon()) and string.find(ply:GetActiveWeapon():GetClass(),"tf_weapon")) or !IsValid(ply:GetActiveWeapon())) then
-	
-							if (file.Exists("models/weapons/c_models/c_"..ply:GetPlayerClass().."_arms.mdl", "GAME")) then
-								ent:SetModel( "models/weapons/c_models/c_"..ply:GetPlayerClass().."_arms.mdl" )
+							local armClass = (t and t.ModelName) or ply:GetPlayerClass()
+							if armClass == "demoman" then
+								armClass = "demo"
+							end
+							local armModel = "models/weapons/c_models/c_"..armClass.."_arms.mdl"
+
+							if (file.Exists(armModel, "GAME")) then
+								ent:SetModel(armModel)
 							else
 								ent:SetModel( "models/weapons/c_models/c_sniper_arms.mdl" )
 							end
@@ -2491,10 +2667,13 @@ function GM:PlayerSelectSpawn(pl)
 
 	for k, v in pairs(ents.FindByClass("info_player_teamspawn")) do
 		----print(v, "says")
-		if v:GetKeyValues()["StartDisabled"] == 0 then
-		if v:GetKeyValues()["TeamNum"] == 3 then
+		local kv = v:GetKeyValues() or {}
+		local startDisabled = tonumber(kv["StartDisabled"] or 0) or 0
+		local teamNum = tonumber(kv["TeamNum"] or -1) or -1
+		if startDisabled == 0 then
+		if teamNum == 3 then
 			table.insert(spawnsblu, v)
-		elseif v:GetKeyValues()["TeamNum"] == 2 then
+		elseif teamNum == 2 then
 			table.insert(spawnsred, v)
 		end
 		end
@@ -2600,6 +2779,13 @@ function GM:ShowSpare1(ply)
 end
 
 function GM:ShowSpare2(ply)
+	if string.find(string.lower(game.GetMap() or ""), "mvm_", 1, true)
+		and TF_MVM and TF_MVM.Runtime and TF_MVM.Runtime:IsManagedActive()
+		and IsValid(ply) and ply:IsPlayer() and not ply:IsBot() and not ply.TFBot and ply:Team() == TEAM_RED
+	then
+		ply:ConCommand("use_action_slot_item")
+		return
+	end
 	ply:ConCommand("open_charinfo_direct")
 end
 

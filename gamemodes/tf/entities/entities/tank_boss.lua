@@ -23,6 +23,10 @@ local TRACK_MODEL_LEFT = "models/bots/boss_bot/tank_track_L.mdl"
 local TRACK_MODEL_RIGHT = "models/bots/boss_bot/tank_track_R.mdl"
 local TANK_HEALTH = 10000
 local MOVE_SPEED = 75
+local FALLBACK_CAPTURE_CLASSES = {
+    "func_capturezone",
+    "trigger_capture_area",
+}
 
 local function CatmullRom(p0, p1, p2, p3, t)
     local t2 = t * t
@@ -43,8 +47,10 @@ function ENT:Initialize()
 		self:SetMoveType(MOVETYPE_STEP)
 		self:PhysicsInit(SOLID_VPHYSICS)
 
-		self:SetHealth(TANK_HEALTH)
-		self:SetMaxHealth(TANK_HEALTH)
+		local configuredHealth = self:GetConfiguredHealth()
+		self.MoveSpeed = self:GetConfiguredSpeed()
+		self:SetHealth(configuredHealth)
+		self:SetMaxHealth(configuredHealth)
 		self:SetCollisionBounds(Vector(-100, -100, 0), Vector(100, 100, 180))
 		self:SetBloodColor(BLOOD_COLOR_MECH)
 		self.damageModelIndex = 1
@@ -53,7 +59,7 @@ function ENT:Initialize()
 		self:SetUseType(SIMPLE_USE)
 		self:SetPlaybackRate(1)
 
-		-- Find first path_track
+		-- Resolve path node from POP pathtrack name when provided.
 		self.currentNode = self:FindFirstPathNode()
 		if IsValid(self.currentNode) then
 			self:SetPos(self.currentNode:GetPos())
@@ -91,7 +97,12 @@ function ENT:Initialize()
 		self.lastTrackUpdate = CurTime()
 		self.lastPos = self:GetPos()
 		self.rawPath = self:BuildRawPath()
-		self.smoothPath = self:GenerateSmoothPath(self.rawPath, 8) -- 8 points per segment
+		if #self.rawPath >= 4 then
+			self.smoothPath = self:GenerateSmoothPath(self.rawPath, 8)
+		else
+			self.smoothPath = self.rawPath
+		end
+		self.fallbackTargetPos = self:FindFallbackTargetPos()
 		self.pathIndex = 1
 		
 		local tankCount = 0
@@ -121,12 +132,81 @@ function ENT:Initialize()
 end
 function ENT:BuildRawPath()
     local nodes = {}
-    local node = self:FindFirstPathNode()
+    local node = self.currentNode or self:FindFirstPathNode()
     while IsValid(node) do
         table.insert(nodes, node:GetPos())
         node = node:GetInternalVariable("m_pNext")
     end
     return nodes
+end
+
+function ENT:GetConfiguredHealth()
+    local hp = tonumber(self.MvMTankHealth or self.TankHealthOverride)
+    return math.max(1, math.floor(hp or TANK_HEALTH))
+end
+
+function ENT:GetConfiguredSpeed()
+    local speed = tonumber(self.MvMMoveSpeed or self.TankSpeedOverride)
+    return math.max(1, speed or MOVE_SPEED)
+end
+
+function ENT:NotifyDestroyed()
+    if self._mvmDestroyedNotified then return end
+    self._mvmDestroyedNotified = true
+    if TF_MVM and TF_MVM.Outputs and self.MvMOnKilledOutput then
+        TF_MVM.Outputs:Fire(self.MvMOnKilledOutput)
+    end
+    if self.MvMOnDestroyed then
+        self.MvMOnDestroyed(self, self.LastDamageAttacker)
+    end
+end
+
+function ENT:NotifyDeploy()
+    if self._mvmDeployNotified then return end
+    self._mvmDeployNotified = true
+    if TF_MVM and TF_MVM.Outputs and self.MvMOnBombDroppedOutput then
+        TF_MVM.Outputs:Fire(self.MvMOnBombDroppedOutput)
+    end
+    if self.MvMOnDeploy then
+        self.MvMOnDeploy(self)
+    end
+end
+
+function ENT:FindNamedPathTrack()
+    local nodeName = tostring(self.MvMPathTrackName or "")
+    if nodeName == "" then return nil end
+
+    for _, ent in ipairs(ents.FindByName(nodeName)) do
+        if IsValid(ent) and ent:GetClass() == "path_track" then
+            return ent
+        end
+    end
+
+    return nil
+end
+
+function ENT:FindFallbackTargetPos()
+    local origin = self:GetPos()
+    local bestPos
+    local bestDist
+
+    for _, className in ipairs(FALLBACK_CAPTURE_CLASSES) do
+        for _, node in ipairs(ents.FindByClass(className)) do
+            if IsValid(node) then
+                local pos = node:WorldSpaceCenter()
+                local dist = origin:DistToSqr(pos)
+                if not bestDist or dist < bestDist then
+                    bestDist = dist
+                    bestPos = pos
+                end
+            end
+        end
+    end
+
+    if bestPos then
+        return bestPos
+    end
+    return origin + self:GetForward() * 4096
 end
 
 function ENT:GenerateSmoothPath(points, resolution)
@@ -162,7 +242,17 @@ function ENT:UpdateTrackAnimations(dt)
 end
 
 function ENT:FindFirstPathNode()
-    local first = ents.FindByClass("path_track")[1]
+    local namedNode = self:FindNamedPathTrack()
+    if IsValid(namedNode) then
+        return namedNode
+    end
+
+    local pathTracks = ents.FindByClass("path_track")
+    local first = pathTracks and pathTracks[1] or nil
+    if not IsValid(first) then
+        return nil
+    end
+
     while IsValid(first:GetInternalVariable("m_pPrevious")) do
         first = first:GetInternalVariable("m_pPrevious")
     end
@@ -175,7 +265,7 @@ end
 
 function ENT:CalculatePathLength()
     local total = 0
-    local node = self:FindFirstPathNode()
+    local node = self.currentNode or self:FindFirstPathNode()
     while IsValid(node) do
         local next = node:GetInternalVariable("m_pNext")
         if not IsValid(next) then break end
@@ -196,8 +286,13 @@ function ENT:Think()
 
 		if self.bombDeployed then return end
 
-		local path = self.smoothPath
+		local path = self.smoothPath or {}
 		local target = path[self.pathIndex]
+		local usingFallbackTarget = false
+		if not target then
+			target = self.fallbackTargetPos
+			usingFallbackTarget = true
+		end
 
 		if not target then
 			self:DeployBomb()
@@ -209,19 +304,28 @@ function ENT:Think()
 		local dist = dir:Length()
 
 		if dist < 10 then
+			if usingFallbackTarget then
+				self:DeployBomb()
+				return
+			end
 			self.pathIndex = self.pathIndex + 1
 		else
-			local step = dir:GetNormalized() * MOVE_SPEED * delta
+			local step = dir:GetNormalized() * (self.MoveSpeed or MOVE_SPEED) * delta
 			self:SetPos(self:GetPos() + step)
-			self:SetAngles(step:Angle() )
+			local ang = step:Angle()
+			ang.p = 0
+			ang.r = 0
+			self:SetAngles(ang)
 		end
 
 		self:UpdateTrackAnimations(delta)
 		
-
-		for _, ent in ipairs(ents.FindInSphere(self:GetPos(), 100)) do
-			if (ent:EntIndex() == self:GetNextPathNode():EntIndex()) then
-				ent:Fire("InPass")
+		local nextNode = self:GetNextPathNode()
+		if IsValid(nextNode) then
+			for _, ent in ipairs(ents.FindInSphere(self:GetPos(), 100)) do
+				if ent:EntIndex() == nextNode:EntIndex() then
+					ent:Fire("InPass")
+				end
 			end
 		end
 		for _, ent in ipairs(ents.FindInSphere(self:GetPos(), 100)) do
@@ -250,7 +354,7 @@ function ENT:UpdateModelByHealth()
 end
 
 function ENT:UpdateProgressAlerts()
-    if not self.totalDistance then return end
+    if not self.totalDistance or self.totalDistance <= 0 then return end
     local progress = self:GetPos():Distance(self.startPos) / self.totalDistance
     if not self.halfwayAlerted and progress > 0.5 then
         self.halfwayAlerted = true
@@ -293,9 +397,12 @@ function ENT:DeployBomb()
 
     timer.Simple(self:SequenceDuration("deploy"), function()
         if IsValid(self) then 
+			self:NotifyDeploy()
 			self:ExplodeEffect() 
 			self:Remove()
-			GAMEMODE:RoundWin(3)
+			if not self.MvMOnDeploy and GAMEMODE and GAMEMODE.RoundWin then
+				GAMEMODE:RoundWin(3)
+			end
 		end
 		self:TriggerOutput("OnBombDropped")
     end)
@@ -322,10 +429,12 @@ end
 
 function ENT:OnInjured(dmginfo)
 	self:EmitSound("MVM_Tank.BulletImpact")
+	self.LastDamageAttacker = dmginfo:GetAttacker()
     if self:Health() <= 0 then
+		self:NotifyDestroyed()
         self:ExplodeEffect()
         umsg.Start("TF_PlayGlobalSound")
-			umsg.String("Announcer.Announcer.MVM_General_Destruction")
+			umsg.String("Announcer.MVM_General_Destruction")
 		umsg.End() 
         umsg.Start("TF_PlayGlobalSound")
 			umsg.String("MVM.TankEnd")
@@ -335,6 +444,18 @@ function ENT:OnInjured(dmginfo)
 end
 function ENT:OnRemove()
 	self:StopSound("MVM.TankEngineLoop")
+	timer.Remove("TankPing" .. self:EntIndex())
+
+	if IsValid(self.leftTrack) then
+		self.leftTrack:Remove()
+	end
+	if IsValid(self.rightTrack) then
+		self.rightTrack:Remove()
+	end
+
+	if not self.bombDeployed and not self.TF_MVM_SilentRemove then
+		self:NotifyDestroyed()
+	end
 end
 
 -- Console Commands

@@ -213,12 +213,31 @@ if CLIENT then
 			self.OffhandProjectileCModel:SetModel(model)
 		end
 
+		if self.OffhandProjectileUseVMBonemerge then
+			local hasLeftBone = vm:LookupBone("weapon_bone_L") or vm:LookupBone("vm_weapon_bone_L")
+			if hasLeftBone then
+				self.OffhandProjectileCModel:SetParent(vm)
+				self.OffhandProjectileCModel:AddEffects(bit.bor(EF_BONEMERGE, EF_BONEMERGE_FASTCULL))
+				self.OffhandProjectileCModel:SetLocalPos(self.OffhandProjectileOffset or vector_origin)
+				self.OffhandProjectileCModel:SetLocalAngles(self.OffhandProjectileAngle or angle_zero)
+				self.OffhandProjectileCModel:SetMaterial(self.OffhandProjectileMaterial or "")
+				self.OffhandProjectileCModel:SetupBones()
+				self.OffhandProjectileCModel:DrawModel()
+				return
+			end
+		end
+
 		local pos, ang
 		local hostModels = {}
-		if IsValid(self.CModel) then
+		local class = self:GetClass()
+		local preferViewModelFirst = class == "tf_weapon_bat_wood" or class == "tf_weapon_bat_giftwrap"
+		if not preferViewModelFirst and IsValid(self.CModel) then
 			table.insert(hostModels, self.CModel)
 		end
 		table.insert(hostModels, vm)
+		if preferViewModelFirst and IsValid(self.CModel) then
+			table.insert(hostModels, self.CModel)
+		end
 
 		local attachmentNames = {
 			self.OffhandProjectileAttachment,
@@ -237,6 +256,7 @@ if CLIENT then
 
 		for _, host in ipairs(hostModels) do
 			if not IsValid(host) then continue end
+			host:SetupBones()
 
 			for _, attachmentName in ipairs(attachmentNames) do
 				if isstring(attachmentName) and attachmentName ~= "" then
@@ -1424,8 +1444,15 @@ end
  
 function SWEP:OnRemove()
 	self:StopTimers()
-	if CLIENT and IsValid(self.OffhandProjectileCModel) then
-		self.OffhandProjectileCModel:Remove()
+	if CLIENT then
+		if IsValid(self.CModel) then self.CModel:Remove() end
+		if IsValid(self.WModel) then self.WModel:Remove() end
+		if IsValid(self.WModel2) then self.WModel2:Remove() end
+		if IsValid(self.AttachedVModel) then self.AttachedVModel:Remove() end
+		if IsValid(self.AttachedWModel) then self.AttachedWModel:Remove() end
+		if IsValid(self.ExtraCModel) then self.ExtraCModel:Remove() end
+		if IsValid(self.ExtraWModel) then self.ExtraWModel:Remove() end
+		if IsValid(self.OffhandProjectileCModel) then self.OffhandProjectileCModel:Remove() end
 	end
 	if (IsValid(self:GetOwner())) then
 		local VModel = self:GetOwner():GetViewModel()
@@ -1463,6 +1490,10 @@ end
 
 function SWEP:RustyBulletHole()
 	----print(self.ProjectileShootOffset)
+	if self.Base == "tf_weapon_gun_base" then
+		return
+	end
+
 	if self.Base ~= "tf_weapon_melee_base" and self.GetClass ~= "tf_weapon_builder" and not self.IsPDA and self.ProjectileShootOffset == Vector(0,0,0) or self.ProjectileShootOffset == Vector(3,8,-5) and self.IsDeployed == true then
 		--self:ShootBullet(0, self.BulletsPerShot, self.BulletSpread)
 		if (self.Owner:GetEyeTrace()) then  
