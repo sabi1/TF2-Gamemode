@@ -411,12 +411,175 @@ local function ForceSelectMelee(bot)
     end
 end
 
+local function ResolveAttributeID(nameOrID)
+    local n = tonumber(ScalarValue(nameOrID))
+    if n then
+        return n
+    end
+
+    local key = string.lower(string.Trim(tostring(ScalarValue(nameOrID) or "")))
+    if key == "" then return nil end
+    if not tf_items or not tf_items.Attributes then return nil end
+
+    local def = tf_items.Attributes[key]
+    if def and def.id then
+        return tonumber(def.id)
+    end
+    return nil
+end
+
+local function BuildExtraAttributes(attrSource, skipKeys)
+    local out = {}
+    if not istable(attrSource) then return out end
+
+    for k, v in pairs(attrSource) do
+        local keyLower = string.lower(string.Trim(tostring(k or "")))
+        if not (skipKeys and skipKeys[keyLower]) then
+            local attrID = ResolveAttributeID(k)
+            local attrValue = tonumber(ScalarValue(v))
+            if attrID and attrValue ~= nil then
+                out[#out + 1] = { attrID, attrValue }
+            end
+        end
+    end
+
+    return out
+end
+
+local function MergeExtraAttributes(base, extra)
+    local merged = {}
+    local indexByID = {}
+
+    local function PushPair(pair)
+        local id = tonumber(pair and pair[1])
+        local value = tonumber(pair and pair[2])
+        if not id or value == nil then return end
+        local existing = indexByID[id]
+        if existing then
+            merged[existing][2] = value
+        else
+            merged[#merged + 1] = { id, value }
+            indexByID[id] = #merged
+        end
+    end
+
+    for _, pair in ipairs(ToArray(base)) do
+        PushPair(pair)
+    end
+    for _, pair in ipairs(ToArray(extra)) do
+        PushPair(pair)
+    end
+
+    return merged
+end
+
+local function ApplyExtraAttributesToWeapon(wep, extra)
+    if not IsValid(wep) or not wep.SetExtraAttributes then return end
+    if not istable(extra) or #extra == 0 then return end
+
+    local merged = MergeExtraAttributes(wep.ExtraAttributesTable or {}, extra)
+    if #merged == 0 then return end
+    wep:SetExtraAttributes(merged)
+end
+
+local function NormalizeItemToken(text)
+    local s = string.lower(string.Trim(tostring(ScalarValue(text) or "")))
+    if s == "" then return "" end
+    s = string.gsub(s, "^tf_weapon_", "")
+    s = string.gsub(s, "[^%w]", "")
+    return s
+end
+
+local function WeaponMatchesItemToken(wep, token)
+    if not IsValid(wep) then return false end
+    if token == "" then return false end
+
+    local classToken = NormalizeItemToken(wep:GetClass())
+    if classToken == token then return true end
+    if string.find(classToken, token, 1, true) then return true end
+
+    if wep.GetItemData then
+        local data = wep:GetItemData()
+        if istable(data) then
+            local dataName = NormalizeItemToken(data.name)
+            local dataItemName = NormalizeItemToken(data.item_name)
+            if dataName == token or dataItemName == token then return true end
+            if dataName ~= "" and string.find(dataName, token, 1, true) then return true end
+            if dataItemName ~= "" and string.find(dataItemName, token, 1, true) then return true end
+        end
+    end
+
+    return false
+end
+
+local function ParseItemAttributeDefs(rawItemAttrs)
+    local defs = {}
+
+    for _, entry in ipairs(ToArray(rawItemAttrs)) do
+        if not istable(entry) then continue end
+
+        local selector = ScalarValue(entry.ItemName or entry.itemname or entry.Item or entry.item)
+        local attrBlock = entry.Attributes or entry.attributes or entry
+        local attrs = BuildExtraAttributes(attrBlock, {
+            itemname = true,
+            item = true,
+            attributes = true,
+        })
+        if selector and selector ~= "" and #attrs > 0 then
+            defs[#defs + 1] = {
+                token = NormalizeItemToken(selector),
+                attrs = attrs,
+            }
+        end
+
+        -- Alternate format: ItemAttributes { "tf_weapon_x" { ... } }
+        for k, v in pairs(entry) do
+            local keyLower = string.lower(tostring(k or ""))
+            if keyLower == "itemname" or keyLower == "item" or keyLower == "attributes" then continue end
+            if istable(v) then
+                local nested = BuildExtraAttributes(v.Attributes or v.attributes or v, nil)
+                if #nested > 0 then
+                    defs[#defs + 1] = {
+                        token = NormalizeItemToken(k),
+                        attrs = nested,
+                    }
+                end
+            end
+        end
+    end
+
+    return defs
+end
+
+local function ApplyCharacterAndItemAttributes(bot, def)
+    if not IsValid(bot) or not istable(def) then return end
+
+    local charRaw = def.CharacterAttributes or def.characterattributes
+    local charExtra = BuildExtraAttributes(charRaw, nil)
+    local itemDefs = ParseItemAttributeDefs(def.ItemAttributes or def.itemattributes)
+    if #charExtra == 0 and #itemDefs == 0 then return end
+
+    for _, wep in ipairs(bot:GetWeapons()) do
+        if not IsValid(wep) then continue end
+
+        if #charExtra > 0 then
+            ApplyExtraAttributesToWeapon(wep, charExtra)
+        end
+
+        for _, itemDef in ipairs(itemDefs) do
+            if WeaponMatchesItemToken(wep, itemDef.token) then
+                ApplyExtraAttributesToWeapon(wep, itemDef.attrs)
+            end
+        end
+    end
+end
+
 local function ApplyBotItems(bot, items)
     for _, item in ipairs(ToArray(items)) do
         if not IsValid(bot) then return end
 
         if bot.EquipInLoadout then
-            bot:EquipInLoadout(item)
+            bot:EquipInLoadout(string.Replace(item,"the ", ""))
         elseif isstring(item) then
             local weaponClass = item
             if not string.StartWith(weaponClass, "tf_weapon_") then
@@ -532,7 +695,6 @@ function SPAWNER:SpawnTFBot(runtime, rawDef, spawnState, whereOverride, missionI
     bot:SetNWBool("TF_MVM_GateBot", bot.TF_MVM_IsGateBot and true or false)
     bot.TF_MVM_WeaponRestriction = NormalizeWeaponRestriction(def)
     bot:SetNWString("TF_BotDisplayName", displayName)
-
     bot.ControllerBot = ents.Create("ctf_bot_navigator")
     if IsValid(bot.ControllerBot) then
         bot.ControllerBot:Spawn()
@@ -555,9 +717,17 @@ function SPAWNER:SpawnTFBot(runtime, rawDef, spawnState, whereOverride, missionI
         else
             ApplyDefaultWeaponsFromName(bot, botClass, displayName)
         end
+        -- POP support: apply CharacterAttributes and ItemAttributes to spawned bot weapons.
+        ApplyCharacterAndItemAttributes(bot, def)
+        timer.Simple(0, function()
+            if IsValid(bot) then
+                ApplyCharacterAndItemAttributes(bot, def)
+            end
+        end)
         if bot.TF_MVM_WeaponRestriction == "meleeonly" then
             ForceSelectMelee(bot)
         end
+        bot:SetMaxSpeed(520)
     end)
 
     if runtime and runtime.RegisterManagedBot then
@@ -630,6 +800,8 @@ function SPAWNER:SpawnMissionBot(runtime, missionDef, missionId)
         Name = missionDef.Name or missionDef.Class or className or rawBot.Class or "MvM Bot",
         Skill = missionDef.Skill or rawBot.Skill or "expert",
         Attributes = missionDef.Attributes,
+        CharacterAttributes = missionDef.CharacterAttributes or missionDef.characterattributes,
+        ItemAttributes = missionDef.ItemAttributes or missionDef.itemattributes,
         WeaponRestrictions = missionDef.WeaponRestrictions,
         Item = missionDef.Item,
         Where = missionDef.Where,
@@ -639,7 +811,7 @@ function SPAWNER:SpawnMissionBot(runtime, missionDef, missionId)
     end
     local objective = string.lower(tostring(ScalarValue(missionDef.Objective) or ""))
     if objective == "destroysentries" or objective == "sentrybuster" then
-        botDef.SpawnClassHint = "sentrybuster"
+        return
     end
 
     return self:SpawnTFBot(runtime, botDef, nil, missionDef.Where, missionId)

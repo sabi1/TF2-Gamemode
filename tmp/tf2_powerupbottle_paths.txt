@@ -1,0 +1,4 @@
+materials/backpack/player/items/all_class/powerupbottle.vmt
+materials/backpack/player/items/all_class/powerupbottle_large.vmt
+materials/backpack/player/items/all_class/powerupbottle.vtf
+materials/backpack/player/items/all_class/powerupbottle_large.vtf

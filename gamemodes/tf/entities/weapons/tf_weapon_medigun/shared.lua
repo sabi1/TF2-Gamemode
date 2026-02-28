@@ -403,8 +403,89 @@ function SWEP:PrimaryAttack()
 	self:StopTimers()
 end
 
---if self.Owner:GetNWInt("Ubercharge")>=100 then
+local UBER_DRAIN_INTERVAL = 0.08
+local UBER_COND_REFRESH = 0.2
+
+function SWEP:GetUberChargeType()
+	return tonumber(self.UberchargeType) or 0
+end
+
+function SWEP:GetUberCondition()
+	-- set_charge_type 1 = Kritzkrieg-style uber.
+	if self:GetUberChargeType() == 1 then
+		return TF_COND_CRITBOOSTED
+	end
+	return TF_COND_INVULNERABLE
+end
+
+function SWEP:ApplyUberConditions()
+	if not SERVER or not IsValid(self.Owner) then return end
+
+	local cond = self:GetUberCondition()
+	local provider = self.Owner
+	provider:AddCond(cond, UBER_COND_REFRESH, provider)
+
+	if IsValid(self.Target) and self.Target:IsPlayer() and self.Target:Alive() and self.Target:EntityTeam() == provider:EntityTeam() then
+		self.Target:AddCond(cond, UBER_COND_REFRESH, provider)
+	end
+end
+
+function SWEP:StartUber()
+	if not SERVER or not IsValid(self.Owner) then return false end
+	if self.UberActive then return false end
+	if self.Owner:GetNWInt("Ubercharge", 0) < 100 then return false end
+
+	self.UberActive = true
+	self.NextUberDrain = CurTime() + UBER_DRAIN_INTERVAL
+	if self.ChargedLoop then
+		self.ChargedLoop:Stop()
+	end
+	self:SetMedigunMuzzleEffect(2)
+	if IsValid(self.Target) then
+		self:SetMedigunEffect(2, self.Target)
+	end
+
+	if self:GetUberChargeType() == 1 then
+		self:EmitSound("Weapon_General.CritPower")
+	else
+		self:EmitSound("player/invulnerable_on.wav")
+	end
+
+	self:ApplyUberConditions()
+	return true
+end
+
+function SWEP:StopUber()
+	if not SERVER or not self.UberActive then return end
+	self.UberActive = false
+	self.NextUberDrain = nil
+
+	local cond = self:GetUberCondition()
+	if IsValid(self.Owner) then
+		self.Owner:RemoveCond(cond, true)
+	end
+	if IsValid(self.Target) then
+		self.Target:RemoveCond(cond, true)
+	end
+
+	if self:GetUberChargeType() == 1 then
+		self:StopSound("Weapon_General.CritPower")
+	else
+		self:EmitSound("player/invulnerable_off.wav")
+	end
+
+	if IsValid(self.Target) then
+		self:SetMedigunEffect(1, self.Target)
+	else
+		self:SetMedigunEffect(0)
+	end
+	self:SetMedigunMuzzleEffect(0)
+end
+
 function SWEP:SecondaryAttack()
+	self:SetNextSecondaryFire(CurTime() + 0.5)
+	if not SERVER then return end
+	self:StartUber()
 end
 	
 
@@ -547,6 +628,23 @@ function SWEP:Think()
 			end
 		end
 	end
+
+	if SERVER and self.UberActive then
+		if not IsValid(self.Owner) or not self.Owner:Alive() then
+			self:StopUber()
+		else
+			if not self.NextUberDrain or CurTime() >= self.NextUberDrain then
+				local ch = math.max(0, self.Owner:GetNWInt("Ubercharge", 0) - 1)
+				self.Owner:SetNWInt("Ubercharge", ch)
+				if ch <= 0 then
+					self:StopUber()
+				else
+					self:ApplyUberConditions()
+					self.NextUberDrain = CurTime() + UBER_DRAIN_INTERVAL
+				end
+			end
+		end
+	end
 	
 	self:Inspect()
 end
@@ -575,6 +673,7 @@ function SWEP:Holster()
 	self.Firing = false
 	
 	if SERVER then
+		self:StopUber()
 		self:ClearHealTarget()
 		self:SetMedigunMuzzleEffect(0)
 	else
@@ -588,5 +687,8 @@ function SWEP:Holster()
 end
 
 function SWEP:OnRemove()
+	if SERVER then
+		self:StopUber()
+	end
 	self:Holster()
 end
