@@ -322,8 +322,12 @@ function ENT:OnThinkActive()
 		self:SetBodygroup(2, 0)
 		self.Model:SetBodygroup(2, 0)
 	end
-	if string.find(game.GetMap(),"mvm_") and self:GetBuilder():Team() == TEAM_BLU then
-		self.Spawnpoint = true
+	if string.find(game.GetMap(),"mvm_") then
+		local builder = self:GetBuilder()
+		local team = IsValid(builder) and builder:Team() or self:Team()
+		if team == TEAM_BLU then
+			self.Spawnpoint = true
+		end
 	end
 	if !IsValid(self:GetLinkedTeleporter()) then
 		self:OnUnlink(self:GetLinkedTeleporter())

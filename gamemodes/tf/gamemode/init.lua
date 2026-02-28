@@ -19,7 +19,7 @@ file.Delete(LOGFILE)
 file.Append(LOGFILE, "Loading serverside script\n")
 local load_time = SysTime() 
 
-include("sv_npc_relationship.lua")   
+include("sv_npc_relationship.lua")    
 include("sv_ent_substitute.lua")  
 
 CreateConVar("grapple_distance", -1, false)  
@@ -1519,6 +1519,10 @@ local function ShouldSuppressBlueBotAnnounce(ply, teamId)
 	return t == TEAM_BLU or t == TF_TEAM_PVE_INVADERS
 end
 
+local function IsMvMMap()
+	return string.find(string.lower(game.GetMap() or ""), "mvm_", 1, true) ~= nil
+end
+
 concommand.Add( "changeteam", function( pl, cmd, args )
 	TFEnsureCanonicalTeams()
 
@@ -1620,13 +1624,11 @@ concommand.Add( "changeteam", function( pl, cmd, args )
 		end 
 
 		nDiffBetweenTeams = ( iMostPlayers - iLeastPlayers );
-		if (team.NumPlayers(TEAM_RED) > team.NumPlayers(TEAM_BLU) and theteam == TEAM_RED) then
-			pl:PrintMessage(HUD_PRINTTALK,"The team is full. Press the dot key to change teams again.")
-			return false
-		elseif (team.NumPlayers(TEAM_BLU) < team.NumPlayers(TEAM_) and theteam == 2) then
-			pl:PrintMessage(HUD_PRINTTALK,"The team is full. Press the dot key to change teams again.")
-			return false
-		else
+		if (IsMvMMap()) then
+			if (theteam != TF_TEAM_RED) then
+				pl:PrintMessage(HUD_PRINTTALK,"The team is full. Press the dot key to change teams again.")
+				return false
+			end
 			if (pl:Team() == theteam) then
 				pl:PrintMessage(HUD_PRINTTALK,"You are already in this team!")
 				return false
@@ -1635,6 +1637,24 @@ concommand.Add( "changeteam", function( pl, cmd, args )
 					pl:Kill() -- Team switch should always produce a death ragdoll.
 				end
 				pl:SetTeam(theteam)
+			end
+		else
+			if (team.NumPlayers(TEAM_RED) > team.NumPlayers(TEAM_BLU) and theteam == TEAM_RED) then
+				pl:PrintMessage(HUD_PRINTTALK,"The team is full. Press the dot key to change teams again.")
+				return false
+			elseif (team.NumPlayers(TEAM_BLU) < team.NumPlayers(TEAM_) and theteam == 2) then
+				pl:PrintMessage(HUD_PRINTTALK,"The team is full. Press the dot key to change teams again.")
+				return false
+			else
+				if (pl:Team() == theteam) then
+					pl:PrintMessage(HUD_PRINTTALK,"You are already in this team!")
+					return false
+				else
+					if pl:Alive() then
+						pl:Kill() -- Team switch should always produce a death ragdoll.
+					end
+					pl:SetTeam(theteam)
+				end
 			end
 		end
 	else
@@ -1704,6 +1724,8 @@ function GM:PlayerInitialSpawn(ply)
 			ply:Spectate(OBS_MODE_IN_EYE)
 			ply:SpectateEntity(GetFirstObserverPoint())
 		end
+		ply:ConCommand("tf_changeteam")
+		ply:PrintMessage(HUD_PRINTTALK,"To start the mission, type \"tf_mvm_start\" in console.")
 	else
 		-- Keep bots on the MvM invader side; do not run generic team balancer there.
 		if string.find(string.lower(game.GetMap() or ""), "mvm_", 1, true) then

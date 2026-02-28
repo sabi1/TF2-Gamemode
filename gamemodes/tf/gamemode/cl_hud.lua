@@ -30,6 +30,7 @@ end
 local VGUIFiles = {
 	"vgui_circularprogressbar";
 	"vgui_spectatorhealth";
+	"vgui_tf2res";
 	"vgui_tfbutton";
 	"vgui_itemmodelpanel";
 	"vgui_classmodelpanel";

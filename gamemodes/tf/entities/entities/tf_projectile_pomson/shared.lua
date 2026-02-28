@@ -134,6 +134,23 @@ function ENT:Hit(ent)
 		Damage=damage,
 		Tracer=0,
 		HullSize=self.HitboxSize*2,
+		Callback=function(attacker, tr, dmginfo)
+			local victim = tr.Entity
+			if not IsValid(victim) then return end
+
+			-- Keep pomson/raygun kills visually "scorched" by forcing the fire death flag on lethal shots.
+			if isfunction(victim.AddDeathFlag) and isfunction(victim.RemoveDeathFlag) and isfunction(victim.Health) then
+				local health = victim:Health()
+				if health > 0 and dmginfo:GetDamage() >= health then
+					victim:AddDeathFlag(DF_FIRE)
+					timer.Simple(0, function()
+						if IsValid(victim) and victim:Health() > 0 then
+							victim:RemoveDeathFlag(DF_FIRE)
+						end
+					end)
+				end
+			end
+		end
 	}
 	
 	self:SetLocalVelocity(Vector(0,0,0))
