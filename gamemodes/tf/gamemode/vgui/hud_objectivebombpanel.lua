@@ -24,6 +24,129 @@ local tex_bomb_lvl2_dis = surface.GetTextureID("hud/hud_mvm_bomb_upgrade_2_disab
 local tex_bomb_lvl3 = surface.GetTextureID("hud/hud_mvm_bomb_upgrade_3")
 local tex_bomb_lvl3_dis = surface.GetTextureID("hud/hud_mvm_bomb_upgrade_3_disabled")
 
+local MvMRes = {
+	readySlot = 20,
+	readyGap = 3,
+	readyPad = 4,
+	readyPromptY = 3,
+	readyOffset = 14,
+	wavePanelW = 600,
+	wavePanelH = 67,
+	wavePanelY = 0,
+	waveBgInsetY = 2,
+	baseW = 200,
+	enemyW = 20,
+	enemyGap = 5,
+	supportLabelW = 56,
+	supportGap = 8,
+	bgPadding = 24,
+	expandedBGH = 65,
+	compactBGH = 35,
+	titleY = 6,
+	progressW = 180,
+	progressH = 12,
+	progressY = 19,
+	iconsY = 32,
+	iconCountY = 18,
+	supportLabelY = 18,
+}
+
+do
+	local function FindByFieldNames(tree, ...)
+		if not tree or not TF2Res or not TF2Res.FindByFieldName then return nil end
+		for i = 1, select("#", ...) do
+			local name = select(i, ...)
+			local n = TF2Res.FindByFieldName(tree, name)
+			if n then return n end
+		end
+		return nil
+	end
+
+	local function FindByKeys(tree, ...)
+		if not tree or not TF2Res or not TF2Res.FindByKey then return nil end
+		for i = 1, select("#", ...) do
+			local key = select(i, ...)
+			local n = TF2Res.FindByKey(tree, key)
+			if n then return n end
+		end
+		return nil
+	end
+
+	local waveTree = TF2Res and TF2Res.Load and TF2Res.Load("resource/ui/wavestatuspanel.res")
+	local statusTree = TF2Res and TF2Res.Load and TF2Res.Load("resource/ui/hudmannvsmachinestatus.res")
+
+	local wavePanel = FindByFieldNames(waveTree, "WaveStatusPanel")
+	if not wavePanel then
+		wavePanel = FindByKeys(waveTree, "WaveStatusPanel")
+	end
+	local waveCountBG = FindByFieldNames(waveTree, "WaveCountBG")
+	local waveProgressBG = FindByFieldNames(waveTree, "EnemyCountProgressBarBG", "EnemyCountBG")
+	local waveProgressFG = FindByFieldNames(waveTree, "EnemyCountProgressBar", "EnemyCountProgress")
+	local waveEnemyIcon = FindByFieldNames(waveTree, "EnemyCountImage")
+	local waveCountLabel = FindByFieldNames(waveTree, "WaveCountLabel")
+	local waveEnemyCountLabel = FindByFieldNames(waveTree, "EnemyCountLabel")
+	local waveSupportLabel = FindByFieldNames(waveTree, "SupportLabel")
+
+	local statusPanel = FindByFieldNames(statusTree, "HudMannVsMachineStatus", "MannVsMachineStatus")
+	if not statusPanel then
+		statusPanel = FindByKeys(statusTree, "HudMannVsMachineStatus", "CHudMannVsMachineStatus")
+	end
+	local statusBG = FindByFieldNames(statusTree, "PlayerStatusBG", "PlayerListBG")
+	local statusClassImage = FindByFieldNames(statusTree, "PlayerClassImage", "PlayerClass")
+	local statusReadyLabel = FindByFieldNames(statusTree, "ToggleReadyLabel", "ReadyLabel")
+
+	if TF2Res and TF2Res.GetNumber then
+		if wavePanel then
+			MvMRes.wavePanelW = TF2Res.GetNumber(wavePanel, "wide", MvMRes.wavePanelW)
+			MvMRes.wavePanelH = TF2Res.GetNumber(wavePanel, "tall", MvMRes.wavePanelH)
+			MvMRes.wavePanelY = TF2Res.GetNumber(wavePanel, "ypos", MvMRes.wavePanelY)
+		end
+		if waveCountBG then
+			MvMRes.baseW = TF2Res.GetNumber(waveCountBG, "wide", MvMRes.baseW)
+			MvMRes.waveBgInsetY = TF2Res.GetNumber(waveCountBG, "ypos", MvMRes.waveBgInsetY)
+			MvMRes.bgPadding = math.max(8, TF2Res.GetNumber(waveCountBG, "draw_corner_width", 8) * 3)
+			tex_wave_bg = TF2Res.GetTextureID(waveCountBG, "image", "hud/tournament_panel_brown")
+		end
+		if waveProgressBG then
+			MvMRes.progressW = TF2Res.GetNumber(waveProgressBG, "wide", MvMRes.progressW)
+			MvMRes.progressH = TF2Res.GetNumber(waveProgressBG, "tall", MvMRes.progressH)
+			MvMRes.progressY = TF2Res.GetNumber(waveProgressBG, "ypos", MvMRes.progressY)
+			tex_wave_prog_bg = TF2Res.GetTextureID(waveProgressBG, "image", "hud/tournament_panel_tan")
+		end
+		if waveProgressFG then
+			tex_wave_prog = TF2Res.GetTextureID(waveProgressFG, "image", "hud/tournament_panel_blu")
+		end
+		if waveEnemyIcon then
+			MvMRes.enemyW = TF2Res.GetNumber(waveEnemyIcon, "wide", MvMRes.enemyW)
+			MvMRes.enemyGap = math.max(2, TF2Res.GetNumber(waveEnemyIcon, "xdelta", MvMRes.enemyGap))
+			MvMRes.iconsY = TF2Res.GetNumber(waveEnemyIcon, "ypos", MvMRes.iconsY)
+		end
+		if waveCountLabel then
+			MvMRes.titleY = TF2Res.GetNumber(waveCountLabel, "ypos", MvMRes.titleY)
+		end
+		if waveEnemyCountLabel then
+			MvMRes.iconCountY = TF2Res.GetNumber(waveEnemyCountLabel, "ypos", MvMRes.iconCountY)
+		end
+		if waveSupportLabel then
+			MvMRes.supportLabelW = TF2Res.GetNumber(waveSupportLabel, "wide", MvMRes.supportLabelW)
+			MvMRes.supportLabelY = TF2Res.GetNumber(waveSupportLabel, "ypos", MvMRes.supportLabelY)
+		end
+		if statusPanel then
+			MvMRes.readyOffset = math.Clamp(TF2Res.GetNumber(statusPanel, "tall", MvMRes.readyOffset), 8, 32)
+		end
+		if statusBG then
+			MvMRes.readySlot = math.max(16, TF2Res.GetNumber(statusBG, "tall", MvMRes.readySlot))
+			tex_wave_bg = TF2Res.GetTextureID(statusBG, "image", "hud/tournament_panel_brown")
+		end
+		if statusClassImage then
+			MvMRes.readyPad = math.Clamp(TF2Res.GetNumber(statusClassImage, "xpos", MvMRes.readyPad), 2, 8)
+		end
+		if statusReadyLabel then
+			MvMRes.readyPromptY = TF2Res.GetNumber(statusReadyLabel, "ypos", MvMRes.readyPromptY)
+		end
+	end
+end
+
 local ICON_PATH = {
 	["scout"] = "hud/leaderboard_class_scout",
 	["scout giant fast"] = "hud/leaderboard_class_scout_giant_fast",
@@ -68,6 +191,32 @@ end
 
 local function InSetup()
 	return TF_MVMState and TF_MVMState.Get and TF_MVMState:Get("in_setup", false) or false
+end
+
+local function IsReadyEligiblePlayer(ply)
+	return IsValid(ply)
+		and ply:IsPlayer()
+		and not ply:IsBot()
+		and not ply.TFBot
+		and ply:Team() == TEAM_RED
+end
+
+local PLAYER_CLASS_ICON = {
+	scout = "hud/leaderboard_class_scout",
+	soldier = "hud/leaderboard_class_soldier",
+	pyro = "hud/leaderboard_class_pyro",
+	demoman = "hud/leaderboard_class_demo",
+	demo = "hud/leaderboard_class_demo",
+	heavy = "hud/leaderboard_class_heavy",
+	engineer = "hud/leaderboard_class_engineer",
+	medic = "hud/leaderboard_class_medic",
+	sniper = "hud/leaderboard_class_sniper",
+	spy = "hud/leaderboard_class_spy",
+}
+
+local function GetPlayerClassIcon(ply)
+	local cls = string.lower(tostring(IsValid(ply) and ply.GetPlayerClass and ply:GetPlayerClass() or "scout"))
+	return surface.GetTextureID(PLAYER_CLASS_ICON[cls] or PLAYER_CLASS_ICON.scout)
 end
 
 local function GetWaveText()
@@ -186,6 +335,64 @@ function PANEL:DrawWaveStatus(lp)
 	local entries = GetWaveStatusEntries()
 	local setup = InSetup()
 	local showVerbose = setup or lp:Team() == TEAM_SPECTATOR or GetConVar("cl_mvm_wave_status_visible_during_wave"):GetBool()
+	local topOffset = 0
+
+	if setup then
+		local players = {}
+		for _, ply in ipairs(player.GetAll()) do
+			if IsReadyEligiblePlayer(ply) then
+				players[#players + 1] = ply
+			end
+		end
+
+		local slot = math.floor(MvMRes.readySlot * Scale)
+		local gap = math.floor(MvMRes.readyGap * Scale)
+		local pad = math.floor(MvMRes.readyPad * Scale)
+		local panelH = slot + pad * 2
+		local count = #players
+		local contentW = (count > 0) and ((count * slot) + ((count - 1) * gap)) or slot
+		local panelW = contentW + (pad * 2)
+		local px = math.floor((ScrW() - panelW) * 0.5)
+		local py = math.floor(MvMRes.wavePanelY * Scale)
+
+		if tf_draw and tf_draw.BorderPanel then
+			tf_draw.BorderPanel(tex_wave_bg, px, py, panelW, panelH, 23, 23, 5 * Scale, 5 * Scale)
+		else
+			surface.SetDrawColor(255, 255, 255, 255)
+			surface.SetTexture(tex_wave_bg)
+			surface.DrawTexturedRect(px, py, panelW, panelH)
+		end
+
+		for i, ply in ipairs(players) do
+			local x = px + pad + ((i - 1) * (slot + gap))
+			local y = py + pad
+			local ready = ply:GetNWBool("TF_MVM_Ready", false)
+
+			surface.SetDrawColor(76, 65, 57, 230)
+			surface.DrawRect(x, y, slot, slot)
+
+			surface.SetDrawColor(255, 255, 255, 255)
+			surface.SetTexture(GetPlayerClassIcon(ply))
+			surface.DrawTexturedRect(x + 2, y + 2, slot - 4, slot - 4)
+
+			if ready then
+				surface.SetDrawColor(80, 185, 90, 240)
+				surface.DrawRect(x + slot - 7, y + 2, 5, 5)
+			end
+		end
+
+		local bind = "F4"
+		draw.Text({
+			text = bind .. " - TOGGLE READY",
+			font = "HudFontSmallestBold",
+			pos = {ScrW() * 0.5, py + panelH + math.floor(MvMRes.readyPromptY * Scale)},
+			color = Color(255, 242, 214, 245),
+			xalign = TEXT_ALIGN_CENTER,
+			yalign = TEXT_ALIGN_TOP,
+		})
+
+		topOffset = panelH + math.floor(MvMRes.readyOffset * Scale)
+	end
 
 	local remainingNoSupport = 0
 	for _, e in ipairs(entries) do
@@ -210,15 +417,14 @@ function PANEL:DrawWaveStatus(lp)
 		progressFrac = math.Clamp(remainingNoSupport / self.WaveEnemyMax, 0, 1)
 	end
 
-	local panelW = math.floor(600 * Scale)
-	local panelH = math.floor(67 * Scale)
+	local panelW = math.floor(MvMRes.wavePanelW * Scale)
+	local panelH = math.floor(MvMRes.wavePanelH * Scale)
 	local px = math.floor((ScrW() - panelW) * 0.5)
-	-- TF2 WaveStatusPanel sits at the very top (y = 0 in HudMannVsMachineStatus.res).
-	local py = math.floor(0 * Scale)
+	local py = math.floor(MvMRes.wavePanelY * Scale + topOffset)
 
-	local baseW = math.floor(200 * Scale)
-	local enemyW = math.floor(20 * Scale)
-	local enemyGap = math.floor(5 * Scale)
+	local baseW = math.floor(MvMRes.baseW * Scale)
+	local enemyW = math.floor(MvMRes.enemyW * Scale)
+	local enemyGap = math.floor(MvMRes.enemyGap * Scale)
 	local iconsToDraw = {}
 	local miniboss, normal, support = ClassifyWaveEntries(entries)
 	local hasSupport = #support > 0
@@ -228,16 +434,16 @@ function PANEL:DrawWaveStatus(lp)
 		for _, e in ipairs(support) do iconsToDraw[#iconsToDraw + 1] = e end
 	end
 
-	local supportLabelW = hasSupport and math.floor(56 * Scale) or 0
-	local supportGap = hasSupport and math.floor(8 * Scale) or 0
+	local supportLabelW = hasSupport and math.floor(MvMRes.supportLabelW * Scale) or 0
+	local supportGap = hasSupport and math.floor(MvMRes.supportGap * Scale) or 0
 	local contentW = 0
 	if #iconsToDraw > 0 then
 		contentW = (#iconsToDraw * enemyW) + ((#iconsToDraw - 1) * enemyGap)
 	end
-	local bgW = math.max(baseW, contentW + supportGap + supportLabelW + math.floor(24 * Scale))
-	local bgH = (#iconsToDraw > 0 and showVerbose) and math.floor(65 * Scale) or math.floor(35 * Scale)
+	local bgW = math.max(baseW, contentW + supportGap + supportLabelW + math.floor(MvMRes.bgPadding * Scale))
+	local bgH = (#iconsToDraw > 0 and showVerbose) and math.floor(MvMRes.expandedBGH * Scale) or math.floor(MvMRes.compactBGH * Scale)
 	local bgX = px + math.floor((panelW - bgW) * 0.5)
-	local bgY = py + math.floor(2 * Scale)
+	local bgY = py + math.floor(MvMRes.waveBgInsetY * Scale)
 
 	surface.SetDrawColor(255, 255, 255, 255)
 	if tf_draw and tf_draw.BorderPanel then
@@ -250,17 +456,17 @@ function PANEL:DrawWaveStatus(lp)
 	draw.Text({
 		text = GetWaveText(),
 		font = "HudFontSmallestBold",
-		pos = {px + math.floor(panelW * 0.5), py + math.floor(6 * Scale)},
+		pos = {px + math.floor(panelW * 0.5), py + math.floor(MvMRes.titleY * Scale)},
 		color = Colors.TanLight,
 		xalign = TEXT_ALIGN_CENTER,
 		yalign = TEXT_ALIGN_TOP,
 	})
 
 	DrawSimpleBar(
-		bgX + math.floor((bgW - (180 * Scale)) * 0.5),
-		py + math.floor(19 * Scale),
-		math.floor(180 * Scale),
-		math.floor(12 * Scale),
+		bgX + math.floor((bgW - (MvMRes.progressW * Scale)) * 0.5),
+		py + math.floor(MvMRes.progressY * Scale),
+		math.floor(MvMRes.progressW * Scale),
+		math.floor(MvMRes.progressH * Scale),
 		progressFrac,
 		tex_wave_prog_bg,
 		tex_wave_prog
@@ -269,7 +475,7 @@ function PANEL:DrawWaveStatus(lp)
 	if #iconsToDraw > 0 and showVerbose then
 		local totalContentW = contentW + supportGap + supportLabelW
 		local sx = px + math.floor((panelW - totalContentW) * 0.5)
-		local y = py + math.floor(32 * Scale)
+		local y = py + math.floor(MvMRes.iconsY * Scale)
 		for i, e in ipairs(iconsToDraw) do
 			local ex = sx + (i - 1) * (enemyW + enemyGap)
 			local iconTex = surface.GetTextureID(GetRobotIconPath(e.class, e.giant))
@@ -285,7 +491,7 @@ function PANEL:DrawWaveStatus(lp)
 				draw.Text({
 					text = tostring(math.max(0, tonumber(e.count) or 0)),
 					font = "HudFontSmall",
-					pos = {ex + math.floor(10 * Scale), y + math.floor(18 * Scale)},
+					pos = {ex + math.floor(10 * Scale), y + math.floor(MvMRes.iconCountY * Scale)},
 					color = Colors.TanLight,
 					xalign = TEXT_ALIGN_CENTER,
 					yalign = TEXT_ALIGN_TOP,
@@ -297,7 +503,7 @@ function PANEL:DrawWaveStatus(lp)
 			draw.Text({
 				text = "SUPPORT",
 				font = "HudFontSmallestBold",
-				pos = {sx + contentW + supportGap, y + math.floor(18 * Scale)},
+				pos = {sx + contentW + supportGap, y + math.floor(MvMRes.supportLabelY * Scale)},
 				color = Colors.TanLight,
 				xalign = TEXT_ALIGN_LEFT,
 				yalign = TEXT_ALIGN_TOP,
@@ -326,7 +532,7 @@ function PANEL:Paint()
 		or (lp:IsHL2() and not GetConVar("hud_show_mvm_as_hl2"):GetBool())
 		or GetConVar("tf_forcehl2hud"):GetBool()
 		or GetConVarNumber("cl_drawhud") == 0
-		or GAMEMODE.ShowScoreboard
+		or (GAMEMODE and GAMEMODE.ShowScoreboard == true)
 		or not IsMvMMap()
 	then
 		return

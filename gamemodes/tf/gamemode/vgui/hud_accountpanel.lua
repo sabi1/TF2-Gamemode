@@ -27,6 +27,68 @@ local AccountValue = {
 	yalign = TEXT_ALIGN_CENTER,
 }
 
+local AccountRes = {
+	delta_item_x = delta_item_x,
+	delta_item_start_y = delta_item_start_y,
+	delta_item_end_y = delta_item_end_y,
+	delta_lifetime = delta_lifetime,
+	delta_item_font = delta_item_font,
+	bgX = 5,
+	bgY = 103,
+	bgW = 84,
+	bgH = 42,
+	iconX = 19,
+	iconY = 116,
+	iconW = 10,
+	iconH = 10,
+	labelX = 47.5,
+	labelY = 125,
+}
+
+do
+	local tree = TF2Res and TF2Res.Load and TF2Res.Load("resource/ui/hudaccountpanel.res")
+	local root = tree and TF2Res.FindByKey and TF2Res.FindByKey(tree, "CHudAccountPanel")
+	local bg = tree and TF2Res.FindByFieldName and TF2Res.FindByFieldName(tree, "AccountBG")
+	local icon = tree and TF2Res.FindByFieldName and TF2Res.FindByFieldName(tree, "MetalIcon")
+	local label = tree and TF2Res.FindByFieldName and TF2Res.FindByFieldName(tree, "AccountValue")
+	if root and TF2Res.GetNumber then
+		AccountRes.delta_item_x = TF2Res.GetNumber(root, "delta_item_x", AccountRes.delta_item_x)
+		AccountRes.delta_item_start_y = TF2Res.GetNumber(root, "delta_item_start_y", AccountRes.delta_item_start_y)
+		AccountRes.delta_item_end_y = TF2Res.GetNumber(root, "delta_item_end_y", AccountRes.delta_item_end_y)
+		AccountRes.delta_lifetime = TF2Res.GetNumber(root, "delta_lifetime", AccountRes.delta_lifetime)
+		AccountRes.delta_item_font = TF2Res.GetString(root, "delta_item_font", AccountRes.delta_item_font)
+		PositiveColor = TF2Res.GetColor(root, "PositiveColor", PositiveColor)
+		NegativeColor = TF2Res.GetColor(root, "NegativeColor", NegativeColor)
+	end
+	if bg and TF2Res.GetNumber then
+		AccountRes.bgX = TF2Res.GetNumber(bg, "xpos", AccountRes.bgX)
+		AccountRes.bgY = TF2Res.GetNumber(bg, "ypos", AccountRes.bgY)
+		AccountRes.bgW = TF2Res.GetNumber(bg, "wide", AccountRes.bgW)
+		AccountRes.bgH = TF2Res.GetNumber(bg, "tall", AccountRes.bgH)
+		misc_ammo_area[1] = TF2Res.GetTextureID(bg, "image", "hud/misc_ammo_area_blue")
+		misc_ammo_area[2] = TF2Res.GetTextureID(bg, "teambg_2", "hud/misc_ammo_area_red")
+		misc_ammo_area[3] = TF2Res.GetTextureID(bg, "teambg_3", "hud/misc_ammo_area_blue")
+	end
+	if icon and TF2Res.GetNumber then
+		AccountRes.iconX = TF2Res.GetNumber(icon, "xpos", AccountRes.iconX)
+		AccountRes.iconY = TF2Res.GetNumber(icon, "ypos", AccountRes.iconY)
+		AccountRes.iconW = TF2Res.GetNumber(icon, "wide", AccountRes.iconW)
+		AccountRes.iconH = TF2Res.GetNumber(icon, "tall", AccountRes.iconH)
+	end
+	if label and TF2Res.GetNumber then
+		AccountRes.labelX = TF2Res.GetNumber(label, "xpos", 20) + TF2Res.GetNumber(label, "wide", 55) * 0.5
+		AccountRes.labelY = TF2Res.GetNumber(label, "ypos", 112) + TF2Res.GetNumber(label, "tall", 26) * 0.5
+		AccountValue.font = TF2Res.GetString(label, "font", AccountValue.font)
+	end
+
+	delta_item_x = AccountRes.delta_item_x
+	delta_item_start_y = AccountRes.delta_item_start_y
+	delta_item_end_y = AccountRes.delta_item_end_y
+	delta_lifetime = AccountRes.delta_lifetime
+	delta_item_font = AccountRes.delta_item_font
+	AccountValue.pos = {AccountRes.labelX*Scale, AccountRes.labelY*Scale}
+end
+
 function PANEL:Init()
 	self:SetPaintBackgroundEnabled(false)
 	self:ParentToHUD()
@@ -63,11 +125,11 @@ function PANEL:Paint()
 	surface.SetDrawColor(color_white)
 	
 	surface.SetTexture(tex)
-	surface.DrawTexturedRect(5*Scale, 103*Scale, 84*Scale, 42*Scale)
+	surface.DrawTexturedRect(AccountRes.bgX*Scale, AccountRes.bgY*Scale, AccountRes.bgW*Scale, AccountRes.bgH*Scale)
 	
 	surface.SetTexture(ico_metal)
 	surface.SetDrawColor(Colors.ProgressOffWhite)
-	surface.DrawTexturedRect(19*Scale, 116*Scale, 10*Scale, 10*Scale)
+	surface.DrawTexturedRect(AccountRes.iconX*Scale, AccountRes.iconY*Scale, AccountRes.iconW*Scale, AccountRes.iconH*Scale)
 	surface.SetDrawColor(color_white)
 	
 	AccountValue.text = n

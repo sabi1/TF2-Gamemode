@@ -137,7 +137,27 @@ usermessage.Hook("TF_SetAndResumeTimer", function(msg)
 	if t>0 then GAMEMODE.MaxRoundTime = t end
 	
 	GAMEMODE.RoundTimeIsSetupPhase = msg:ReadBool()
+	GAMEMODE.RoundTimeIsWaitingForPlayers = nil
 	GAMEMODE.RoundTimeLastUpdated = CurTime()
+	GAMEMODE.RoundTimePaused = nil
+end)
+
+usermessage.Hook("TF_SetAndResumeTimerWaiting", function(msg)
+	GAMEMODE.RoundTimeReference = msg:ReadFloat()
+
+	local t = msg:ReadFloat()
+	if t>0 then GAMEMODE.MaxRoundTime = t end
+
+	GAMEMODE.RoundTimeIsWaitingForPlayers = msg:ReadBool()
+	GAMEMODE.RoundTimeIsSetupPhase = nil
+	GAMEMODE.RoundTimeLastUpdated = CurTime()
+	GAMEMODE.RoundTimePaused = nil
+end)
+
+usermessage.Hook("TF_RemoveTimer", function(msg)
+	GAMEMODE.RoundTimeIsWaitingForPlayers = nil
+	GAMEMODE.RoundTimeReference = nil
+	GAMEMODE.RoundTimeLastUpdated = nil
 	GAMEMODE.RoundTimePaused = nil
 end)
 
@@ -148,6 +168,7 @@ usermessage.Hook("TF_SetAndPauseTimer", function(msg)
 	if t>0 then GAMEMODE.MaxRoundTime = t end
 	
 	GAMEMODE.RoundTimeIsSetupPhase = msg:ReadBool()
+	GAMEMODE.RoundTimeIsWaitingForPlayers = nil
 end)
 
 usermessage.Hook("TF_PlayGlobalSound", function(msg)

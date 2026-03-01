@@ -307,7 +307,6 @@ function ITEM:InitVisuals(owner, visuals)
 			PrecacheParticleSystem(v)
 		elseif k=="tracer_effect" then
 			self.TracerEffect = v
-			PrecacheParticleSystem(v)
 			PrecacheParticleSystem(v.."_red")
 			PrecacheParticleSystem(v.."_blue")
 			PrecacheParticleSystem(v.."_red_crit")

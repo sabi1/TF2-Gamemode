@@ -14,6 +14,20 @@ local PositiveColor = Color(0, 255, 0, 255)
 local NegativeColor = Color(255, 0, 0, 255)
 local delta_lifetime = 1.5
 local delta_item_font = "HudFontMedium"
+
+do
+	local tree = TF2Res and TF2Res.Load and TF2Res.Load("resource/ui/hudhealthaccount.res")
+	local root = tree and TF2Res.FindByFieldName and TF2Res.FindByFieldName(tree, "CHealthAccountPanel")
+	if root and TF2Res.GetNumber then
+		delta_item_x = TF2Res.GetNumber(root, "delta_item_x", delta_item_x)
+		delta_item_start_y = TF2Res.GetNumber(root, "delta_item_start_y", delta_item_start_y)
+		delta_item_end_y = TF2Res.GetNumber(root, "delta_item_end_y", delta_item_end_y)
+		delta_lifetime = TF2Res.GetNumber(root, "delta_lifetime", delta_lifetime)
+		delta_item_font = TF2Res.GetString(root, "delta_item_font", delta_item_font)
+		PositiveColor = TF2Res.GetColor(root, "PositiveColor", PositiveColor)
+		NegativeColor = TF2Res.GetColor(root, "NegativeColor", NegativeColor)
+	end
+end
 		
 local PANEL = {}
 

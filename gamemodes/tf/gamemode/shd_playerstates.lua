@@ -26,6 +26,29 @@ local function DefaultParticleNameFunc(v, p)
 end
 
 local STATE_TO_PRIMARY_COND = {}
+local function split_state_bits(state_bits)
+	local bits = state_bits or 0
+	local mapped_bits = 0
+	local unmapped_bits = bits
+
+	for bitmask, _ in pairs(STATE_TO_PRIMARY_COND) do
+		if bit.band(bits, bitmask) ~= 0 then
+			mapped_bits = bit.bor(mapped_bits, bitmask)
+			unmapped_bits = bit.band(unmapped_bits, bit.bnot(bitmask))
+		end
+	end
+
+	return mapped_bits, unmapped_bits
+end
+
+local function each_mapped_cond_for_state(state_bits, fn)
+	for bitmask, cond in pairs(STATE_TO_PRIMARY_COND) do
+		if bit.band(state_bits, bitmask) ~= 0 then
+			fn(bitmask, cond)
+		end
+	end
+end
+
 local function bridge_state_to_condition(ent, state_bit, adding)
 	if ent._tf_cond_to_state_bridge then return end
 	if not ent.AddCond or not ent.RemoveCond then return end
@@ -59,13 +82,31 @@ function meta:SetPlayerState(st, upd)
 end
 
 function meta:AddPlayerState(st, upd)
+	local mapped_bits, unmapped_bits = split_state_bits(st)
+	if not self._tf_cond_to_state_bridge and mapped_bits ~= 0 and self.AddCond then
+		each_mapped_cond_for_state(mapped_bits, function(_, cond)
+			if not self:InCond(cond) then
+				self:AddCond(cond, PERMANENT_CONDITION or -1, self)
+			end
+		end)
+
+		-- Pure condition-backed state requests are handled by AddCond/OnConditionAdded.
+		if unmapped_bits == 0 then
+			if upd then
+				self:UpdateState()
+			end
+			return
+		end
+	end
+
 	local old = self:GetNWInt("PlayerState")
-	local state = bit.bor(old, st)
+	local legacy_bits = self._tf_cond_to_state_bridge and st or unmapped_bits
+	local state = bit.bor(old, legacy_bits)
 	
 	
 	if old~=state then
 		self:SetNWInt("PlayerState", state)
-		bridge_state_to_condition(self, st, true)
+		bridge_state_to_condition(self, legacy_bits, true)
 		if upd then
 			self:UpdateState()
 		end
@@ -73,16 +114,34 @@ function meta:AddPlayerState(st, upd)
 end
 
 function meta:RemovePlayerState(st, upd)
+	local mapped_bits, unmapped_bits = split_state_bits(st)
+	if not self._tf_cond_to_state_bridge and mapped_bits ~= 0 and self.RemoveCond then
+		each_mapped_cond_for_state(mapped_bits, function(_, cond)
+			if self:InCond(cond) then
+				self:RemoveCond(cond, true)
+			end
+		end)
+
+		-- Pure condition-backed state requests are handled by RemoveCond/OnConditionRemoved.
+		if unmapped_bits == 0 then
+			if upd then
+				self:UpdateState()
+			end
+			return
+		end
+	end
+
 	local old = self:GetNWInt("PlayerState")
+	local legacy_bits = self._tf_cond_to_state_bridge and st or unmapped_bits
 	-- won't be using more than 16 bits anyway, so...
-	local state = bit.band(old, (65535-st))
+	local state = bit.band(old, (65535-legacy_bits))
 	
 	if self:HasPlayerState(PLAYERSTATE_ONFIRE) then
 		self:SetNWInt("BurnLevel", 0)
 	end
 	if old~=state then
 		self:SetNWInt("PlayerState", state)
-		bridge_state_to_condition(self, st, false)
+		bridge_state_to_condition(self, legacy_bits, false)
 		if upd then
 			self:UpdateState()
 		end
@@ -90,8 +149,31 @@ function meta:RemovePlayerState(st, upd)
 end
 
 function meta:HasPlayerState(st, state_override)
+	-- For runtime checks, mapped playerstates should reflect the authoritative TF condition core.
+	if state_override == nil and self.InCond then
+		local remaining_unmapped = st
+
+		each_mapped_cond_for_state(st, function(bitmask, cond)
+			if not self:InCond(cond) then
+				remaining_unmapped = nil
+			else
+				remaining_unmapped = bit.band(remaining_unmapped, bit.bnot(bitmask))
+			end
+		end)
+
+		if remaining_unmapped == nil then
+			return false
+		end
+		if remaining_unmapped == 0 then
+			return true
+		end
+
+		local state = self:GetNWInt("PlayerState")
+		return bit.band(state, remaining_unmapped) > 0
+	end
+
 	local state = state_override or self:GetNWInt("PlayerState")
-	return bit.band(state, st)>0
+	return bit.band(state, st) > 0
 end
 
 function meta:UpdateState(delay)
@@ -519,139 +601,506 @@ local function resolve_cond(eCond)
 	return nil
 end
 
-local function cond_timer_name(ent, cond)
-	return "TFAddCond_" .. ent:EntIndex() .. "_" .. tostring(cond)
+local LIST_MANAGED_CONDS = {
+	[TF_COND_CRITBOOSTED] = true,
+}
+
+local FAST_EXPIRE_CONDS = {
+	[TF_COND_URINE] = true,
+	[TF_COND_BLEEDING] = true,
+	[TF_COND_MAD_MILK] = true,
+	[TF_COND_GAS] = true,
+	[TF_COND_PLAGUE] = true,
+}
+
+local function cond_word(cond)
+	return math.floor(cond / 32)
 end
 
-local function get_cond_data(self, cond, create)
-	self.TFConditionData = self.TFConditionData or {}
-	local data = self.TFConditionData[cond]
-	if not data and create then
-		data = {}
-		self.TFConditionData[cond] = data
+local function cond_bit(cond)
+	return bit.lshift(1, cond % 32)
+end
+
+local function get_cond_word_value(self, idx)
+	if idx == 0 then return self.TFCondBits0 or 0 end
+	if idx == 1 then return self.TFCondBits1 or 0 end
+	if idx == 2 then return self.TFCondBits2 or 0 end
+	if idx == 3 then return self.TFCondBits3 or 0 end
+	if idx == 4 then return self.TFCondBits4 or 0 end
+	return 0
+end
+
+local function set_cond_word_value(self, idx, value)
+	if idx == 0 then self.TFCondBits0 = value return end
+	if idx == 1 then self.TFCondBits1 = value return end
+	if idx == 2 then self.TFCondBits2 = value return end
+	if idx == 3 then self.TFCondBits3 = value return end
+	if idx == 4 then self.TFCondBits4 = value return end
+end
+
+local function set_cond_bit(self, cond)
+	local idx = cond_word(cond)
+	local mask = cond_bit(cond)
+	set_cond_word_value(self, idx, bit.bor(get_cond_word_value(self, idx), mask))
+end
+
+local function clear_cond_bit(self, cond)
+	local idx = cond_word(cond)
+	local mask = cond_bit(cond)
+	set_cond_word_value(self, idx, bit.band(get_cond_word_value(self, idx), bit.bnot(mask)))
+end
+
+local function cond_bit_is_set(self, cond)
+	local idx = cond_word(cond)
+	local mask = cond_bit(cond)
+	return bit.band(get_cond_word_value(self, idx), mask) ~= 0
+end
+
+local function sync_cond_bits_network(self)
+	if not SERVER or not self.SetNW2Int then return end
+	self:SetNW2Int("tf_cond_bits0", self.TFCondBits0 or 0)
+	self:SetNW2Int("tf_cond_bits1", self.TFCondBits1 or 0)
+	self:SetNW2Int("tf_cond_bits2", self.TFCondBits2 or 0)
+	self:SetNW2Int("tf_cond_bits3", self.TFCondBits3 or 0)
+	self:SetNW2Int("tf_cond_bits4", self.TFCondBits4 or 0)
+	if self.TFConditionList then
+		self:SetNW2Int("tf_cond_list_bits", self.TFConditionList._condition_bits or 0)
 	end
-	return data
+end
+
+local function sync_cond_bits_from_network(self)
+	if not CLIENT or not self.GetNW2Int then return end
+	local old0 = self.TFCondBits0 or 0
+	local old1 = self.TFCondBits1 or 0
+	local old2 = self.TFCondBits2 or 0
+	local old3 = self.TFCondBits3 or 0
+	local old4 = self.TFCondBits4 or 0
+	self.TFCondBits0 = self:GetNW2Int("tf_cond_bits0", self.TFCondBits0 or 0)
+	self.TFCondBits1 = self:GetNW2Int("tf_cond_bits1", self.TFCondBits1 or 0)
+	self.TFCondBits2 = self:GetNW2Int("tf_cond_bits2", self.TFCondBits2 or 0)
+	self.TFCondBits3 = self:GetNW2Int("tf_cond_bits3", self.TFCondBits3 or 0)
+	self.TFCondBits4 = self:GetNW2Int("tf_cond_bits4", self.TFCondBits4 or 0)
+	local old_list_bits = 0
+	if self.TFConditionList then
+		old_list_bits = self.TFConditionList._condition_bits or 0
+		self.TFConditionList._condition_bits = self:GetNW2Int("tf_cond_list_bits", self.TFConditionList._condition_bits or 0)
+	end
+
+	-- Mirror CTFConditionList::UpdateClientConditions for list-managed conds.
+	if self.TFConditionList then
+		local new_list_bits = self.TFConditionList._condition_bits or 0
+		if old_list_bits ~= new_list_bits then
+			for i = 0, 31 do
+				if LIST_MANAGED_CONDS[i] then
+					local mask = bit.lshift(1, i)
+					local was_on = bit.band(old_list_bits, mask) ~= 0
+					local is_on = bit.band(new_list_bits, mask) ~= 0
+					if was_on ~= is_on then
+						if is_on then
+							self.TFConditionList._conditions[i] = self.TFConditionList._conditions[i] or {
+								max_duration = PERMANENT_CONDITION,
+								min_duration = 0,
+								provider = NULL,
+							}
+						else
+							self.TFConditionList._conditions[i] = nil
+						end
+
+						local data = self.TFConditionData and self.TFConditionData[i]
+						if data then
+							data.active = is_on
+							data.prev_active = was_on
+							data.m_bPrevActive = was_on
+						end
+
+						self._tf_cond_to_state_bridge = true
+						if is_on then
+							self:OnConditionAdded(i)
+						else
+							self:OnConditionRemoved(i)
+						end
+						self._tf_cond_to_state_bridge = false
+					end
+				end
+			end
+		end
+	end
+
+	-- Mirror CTFConditionList::OnDataChanged behavior clientside:
+	-- run add/remove callbacks when condition bits changed via network.
+	local changed = (old0 ~= self.TFCondBits0) or (old1 ~= self.TFCondBits1) or (old2 ~= self.TFCondBits2) or (old3 ~= self.TFCondBits3) or (old4 ~= self.TFCondBits4)
+	if not changed then return end
+
+	for i = 0, (TF_COND_LAST or 0) - 1 do
+		if not (i < 32 and LIST_MANAGED_CONDS[i]) then
+			local old_on = false
+			local idx = cond_word(i)
+			local mask = cond_bit(i)
+			if idx == 0 then old_on = bit.band(old0, mask) ~= 0
+			elseif idx == 1 then old_on = bit.band(old1, mask) ~= 0
+			elseif idx == 2 then old_on = bit.band(old2, mask) ~= 0
+			elseif idx == 3 then old_on = bit.band(old3, mask) ~= 0
+			elseif idx == 4 then old_on = bit.band(old4, mask) ~= 0 end
+
+			local new_on = cond_bit_is_set(self, i)
+			if old_on ~= new_on then
+				local data = self.TFConditionData and self.TFConditionData[i]
+				if data then
+					data.active = new_on
+					data.prev_active = old_on
+					data.m_bPrevActive = old_on
+				end
+				self._tf_cond_to_state_bridge = true
+				if new_on then
+					self:OnConditionAdded(i)
+				else
+					self:OnConditionRemoved(i)
+				end
+				self._tf_cond_to_state_bridge = false
+			end
+		end
+	end
+end
+
+local function ensure_condition_core(self)
+	if self._tf_cond_core_init then
+		self.TFConditionList = self.TFConditionList or { _conditions = {}, _condition_bits = 0, _old_condition_bits = 0 }
+		self.TFConditionData = self.TFConditionData or {}
+		return
+	end
+
+	if self.TFCondBits0 == nil then self.TFCondBits0 = 0 end
+	if self.TFCondBits1 == nil then self.TFCondBits1 = 0 end
+	if self.TFCondBits2 == nil then self.TFCondBits2 = 0 end
+	if self.TFCondBits3 == nil then self.TFCondBits3 = 0 end
+	if self.TFCondBits4 == nil then self.TFCondBits4 = 0 end
+
+	self.TFConditionData = self.TFConditionData or {}
+	for i = 0, (TF_COND_LAST or 0) - 1 do
+		local data = self.TFConditionData[i]
+		if not data then
+			self.TFConditionData[i] = {
+				m_bPrevActive = false,
+				m_flExpireTime = 0,
+				m_pProvider = NULL,
+				m_nPreventedDamageFromCondition = 0,
+				active = false,
+				prev_active = false,
+				expire = 0,
+				provider = NULL,
+			}
+		end
+	end
+
+	self.TFConditionList = self.TFConditionList or {
+		_conditions = {},
+		_condition_bits = 0,
+		_old_condition_bits = 0,
+	}
+	self._tf_cond_core_init = true
+end
+
+local function cond_list_in_cond(self, cond)
+	ensure_condition_core(self)
+	return bit.band(self.TFConditionList._condition_bits or 0, bit.lshift(1, cond)) ~= 0
+end
+
+local function cond_list_add(self, cond, duration, provider)
+	if not LIST_MANAGED_CONDS[cond] or cond >= 32 then return false, false end
+	ensure_condition_core(self)
+	local list = self.TFConditionList
+	local entry = list._conditions[cond]
+	if entry then
+		if duration ~= PERMANENT_CONDITION then
+			if entry.max_duration == PERMANENT_CONDITION or duration < entry.max_duration then
+				if duration > entry.min_duration then
+					entry.min_duration = duration
+				end
+			else
+				entry.max_duration = duration
+			end
+		elseif entry.max_duration ~= PERMANENT_CONDITION then
+			entry.min_duration = entry.max_duration
+			entry.max_duration = duration
+		end
+		entry.provider = IsValid(provider) and provider or NULL
+		return true, false
+	end
+
+	list._conditions[cond] = {
+		max_duration = duration,
+		min_duration = 0,
+		provider = IsValid(provider) and provider or NULL,
+	}
+	list._condition_bits = bit.bor(list._condition_bits or 0, bit.lshift(1, cond))
+	return true, true
+end
+
+local function cond_list_remove(self, cond, ignore_duration)
+	if not LIST_MANAGED_CONDS[cond] or cond >= 32 then return false, false end
+	ensure_condition_core(self)
+	local list = self.TFConditionList
+	local entry = list._conditions[cond]
+	if not entry then return true, false end
+
+	if not ignore_duration and entry.min_duration and entry.min_duration > 0 then
+		entry.max_duration = entry.min_duration
+		return true, false
+	end
+
+	list._conditions[cond] = nil
+	list._condition_bits = bit.band(list._condition_bits or 0, bit.bnot(bit.lshift(1, cond)))
+	return true, true
+end
+
+local function get_cond_data(self, cond)
+	ensure_condition_core(self)
+	return self.TFConditionData[cond]
 end
 
 function meta:InCond(eCond)
 	local cond = resolve_cond(eCond)
-	if cond == nil or cond < 0 then return false end
-	local data = get_cond_data(self, cond, false)
-	return data ~= nil and data.active == true
+	if cond == nil or cond < 0 or cond >= (TF_COND_LAST or 0) then return false end
+	ensure_condition_core(self)
+	if cond < 32 and cond_list_in_cond(self, cond) then return true end
+	return cond_bit_is_set(self, cond)
 end
 
 function meta:GetConditionDuration(eCond)
 	local cond = resolve_cond(eCond)
 	if cond == nil then return 0 end
-	local data = get_cond_data(self, cond, false)
-	if not data or not data.active then return 0 end
-	if data.expire == PERMANENT_CONDITION then return PERMANENT_CONDITION end
-	return math.max(0, (data.expire or 0) - CurTime())
+	ensure_condition_core(self)
+
+	if cond < 32 and cond_list_in_cond(self, cond) then
+		local entry = self.TFConditionList._conditions[cond]
+		if not entry then return 0 end
+		if entry.max_duration == PERMANENT_CONDITION then return PERMANENT_CONDITION end
+		return math.max(0, entry.max_duration or 0)
+	end
+
+	local data = get_cond_data(self, cond)
+	if not self:InCond(cond) then return 0 end
+	if data.m_flExpireTime == PERMANENT_CONDITION then return PERMANENT_CONDITION end
+	return math.max(0, data.m_flExpireTime or 0)
 end
 
 function meta:SetConditionDuration(eCond, flDuration)
 	local cond = resolve_cond(eCond)
 	if cond == nil or not self:InCond(cond) then return end
-	local data = get_cond_data(self, cond, true)
-	if flDuration == PERMANENT_CONDITION then
-		data.expire = PERMANENT_CONDITION
-		timer.Remove(cond_timer_name(self, cond))
-	else
-		data.expire = CurTime() + math.max(0, flDuration or 0)
-		timer.Create(cond_timer_name(self, cond), math.max(0, flDuration or 0), 1, function()
-			if IsValid(self) then
-				self:RemoveCond(cond, true)
-			end
-		end)
+	ensure_condition_core(self)
+	local duration = flDuration or 0
+
+	if cond < 32 and cond_list_in_cond(self, cond) then
+		local entry = self.TFConditionList._conditions[cond]
+		if entry then
+			entry.max_duration = duration
+		end
+		sync_cond_bits_network(self)
+		return
 	end
+
+	local data = get_cond_data(self, cond)
+	data.m_flExpireTime = duration
+	data.expire = duration
+	sync_cond_bits_network(self)
 end
 
 function meta:GetConditionProvider(eCond)
 	local cond = resolve_cond(eCond)
 	if cond == nil then return NULL end
-	local data = get_cond_data(self, cond, false)
-	if not data or not data.active then return NULL end
-	return IsValid(data.provider) and data.provider or NULL
+	ensure_condition_core(self)
+
+	if cond < 32 and cond_list_in_cond(self, cond) then
+		local entry = self.TFConditionList._conditions[cond]
+		return (entry and IsValid(entry.provider)) and entry.provider or NULL
+	end
+
+	local data = get_cond_data(self, cond)
+	return (self:InCond(cond) and IsValid(data.m_pProvider)) and data.m_pProvider or NULL
 end
 
 function meta:AddCond(eCond, flDuration, pProvider)
 	local cond = resolve_cond(eCond)
-	if cond == nil then return false end
+	if cond == nil or cond < 0 or cond >= (TF_COND_LAST or 0) then return false end
 
+	-- Match TF2: dead players do not take new conditions.
 	if self:IsPlayer() and not self:Alive() then
 		return false
 	end
 
+	ensure_condition_core(self)
+
 	local duration = flDuration
-	if duration == nil then
-		duration = PERMANENT_CONDITION
+	if duration == nil then duration = PERMANENT_CONDITION end
+	local was_active = self:InCond(cond)
+
+	-- list-managed conditions (mirrors CTFConditionList behavior for selected conds)
+	local list_handled, list_added_new = cond_list_add(self, cond, duration, pProvider)
+	if list_handled then
+		if list_added_new then
+			self._tf_cond_to_state_bridge = true
+			self:OnConditionAdded(cond)
+			self._tf_cond_to_state_bridge = false
+		end
+		sync_cond_bits_network(self)
+		return true
 	end
 
-	local data = get_cond_data(self, cond, true)
-	local was_active = data.active == true
+	local data = get_cond_data(self, cond)
+	data.m_bPrevActive = was_active
 	data.prev_active = was_active
 	data.active = true
-	data.provider = IsValid(pProvider) and pProvider or NULL
 
-	if duration == PERMANENT_CONDITION then
-		data.expire = PERMANENT_CONDITION
-		timer.Remove(cond_timer_name(self, cond))
-	else
-		local new_expire = CurTime() + math.max(0, duration)
-		if was_active then
-			if data.expire == PERMANENT_CONDITION then
-				new_expire = PERMANENT_CONDITION
-			elseif isnumber(data.expire) and data.expire > new_expire then
-				new_expire = data.expire
-			end
-		end
-		data.expire = new_expire
-		if data.expire ~= PERMANENT_CONDITION then
-			timer.Create(cond_timer_name(self, cond), math.max(0, data.expire - CurTime()), 1, function()
-				if IsValid(self) and self:InCond(cond) then
-					local d = get_cond_data(self, cond, false)
-					if d and d.expire ~= PERMANENT_CONDITION and CurTime() >= (d.expire or 0) then
-						self:RemoveCond(cond, true)
-					end
-				end
-			end)
+	if duration ~= PERMANENT_CONDITION then
+		if data.m_flExpireTime == PERMANENT_CONDITION or duration < data.m_flExpireTime then
+			duration = data.m_flExpireTime
 		end
 	end
 
-	self._tf_cond_to_state_bridge = true
-	self:OnConditionAdded(cond)
-	self._tf_cond_to_state_bridge = false
+	data.m_flExpireTime = duration
+	data.expire = duration
+	data.m_pProvider = IsValid(pProvider) and pProvider or NULL
+	data.provider = data.m_pProvider
+	data.m_nPreventedDamageFromCondition = 0
+
+	set_cond_bit(self, cond)
+
+	if not was_active then
+		self._tf_cond_to_state_bridge = true
+		self:OnConditionAdded(cond)
+		self._tf_cond_to_state_bridge = false
+	end
+
+	sync_cond_bits_network(self)
 	return true
 end
 
 function meta:RemoveCond(eCond, ignore_duration)
 	local cond = resolve_cond(eCond)
-	if cond == nil then return false end
-	local data = get_cond_data(self, cond, false)
-	if not data or not data.active then return false end
+	if cond == nil or cond < 0 or cond >= (TF_COND_LAST or 0) then return false end
+	if not self:InCond(cond) then return false end
 
-	if not ignore_duration and data.expire and data.expire ~= PERMANENT_CONDITION and CurTime() < data.expire then
+	ensure_condition_core(self)
+	local list_handled, list_removed = cond_list_remove(self, cond, ignore_duration)
+	if list_handled then
+		if list_removed then
+			self._tf_cond_to_state_bridge = true
+			self:OnConditionRemoved(cond)
+			self._tf_cond_to_state_bridge = false
+		end
+		sync_cond_bits_network(self)
+		return true
+	end
+
+	local data = get_cond_data(self, cond)
+	if not ignore_duration and data.m_flExpireTime and data.m_flExpireTime ~= PERMANENT_CONDITION and data.m_flExpireTime > 0 then
 		return false
 	end
+
+	clear_cond_bit(self, cond)
+
+	self._tf_cond_to_state_bridge = true
+	self:OnConditionRemoved(cond)
+	self._tf_cond_to_state_bridge = false
 
 	data.active = false
 	data.prev_active = false
 	data.provider = NULL
 	data.expire = 0
-	timer.Remove(cond_timer_name(self, cond))
+	data.m_nPreventedDamageFromCondition = 0
+	data.m_flExpireTime = 0
+	data.m_pProvider = NULL
+	data.m_bPrevActive = false
 
-	self._tf_cond_to_state_bridge = true
-	self:OnConditionRemoved(cond)
-	self._tf_cond_to_state_bridge = false
+	sync_cond_bits_network(self)
 	return true
 end
 
 function meta:RemoveAllConds()
-	if not self.TFConditionData then return end
-	for cond, data in pairs(self.TFConditionData) do
-		if data and data.active then
-			self:RemoveCond(cond, true)
+	ensure_condition_core(self)
+	for i = 0, (TF_COND_LAST or 0) - 1 do
+		if self:InCond(i) then
+			self:RemoveCond(i, true)
 		end
+	end
+end
+
+function meta:ConditionGameRulesThink()
+	if not SERVER then return end
+	ensure_condition_core(self)
+
+	local healer_count = 0
+	if self.GetNumHealers then
+		healer_count = self:GetNumHealers() or 0
+	elseif istable(self.Healers) then
+		healer_count = #self.Healers
+	elseif istable(self.m_aHealers) then
+		healer_count = #self.m_aHealers
+	end
+
+	-- Keep TF2 crit update cadence if host has the implementation.
+	if self.UpdateCritMult then
+		self._tf_next_crit_update = self._tf_next_crit_update or 0
+		if self._tf_next_crit_update < CurTime() then
+			self:UpdateCritMult()
+			self._tf_next_crit_update = CurTime() + 0.5
+		end
+	end
+
+	-- condition-list managed durations
+	for cond, entry in pairs(self.TFConditionList._conditions) do
+		if entry.max_duration > PERMANENT_CONDITION or entry.min_duration > PERMANENT_CONDITION then
+			local reduction = FrameTime()
+			if FAST_EXPIRE_CONDS[cond] and healer_count > 0 then
+				if cond == TF_COND_URINE then
+					reduction = reduction + (healer_count * reduction)
+				else
+					reduction = reduction + (healer_count * reduction * 4)
+				end
+			end
+
+			if entry.min_duration > PERMANENT_CONDITION then
+				entry.min_duration = math.max(entry.min_duration - reduction, 0)
+			end
+			if entry.max_duration > PERMANENT_CONDITION then
+				entry.max_duration = math.max(entry.max_duration - reduction, 0)
+				if entry.max_duration < entry.min_duration then
+					entry.max_duration = entry.min_duration
+				end
+			end
+			if entry.max_duration == 0 then
+				self:RemoveCond(cond)
+			end
+		end
+	end
+
+	-- regular condition durations
+	for i = 0, (TF_COND_LAST or 0) - 1 do
+		if self:InCond(i) and (i >= 32 or not cond_list_in_cond(self, i)) then
+			local data = get_cond_data(self, i)
+			if data.m_flExpireTime ~= PERMANENT_CONDITION then
+				local reduction = FrameTime()
+				if FAST_EXPIRE_CONDS[i] and healer_count > 0 then
+					if i == TF_COND_URINE then
+						reduction = reduction + (healer_count * reduction)
+					else
+						reduction = reduction + (healer_count * reduction * 4)
+					end
+				end
+				data.m_flExpireTime = math.max((data.m_flExpireTime or 0) - reduction, 0)
+				data.expire = data.m_flExpireTime
+				if data.m_flExpireTime == 0 then
+					self:RemoveCond(i)
+				end
+			end
+		end
+	end
+end
+
+function meta:ConditionThink()
+	ensure_condition_core(self)
+	if CLIENT then
+		sync_cond_bits_from_network(self)
 	end
 end
 
@@ -817,19 +1266,22 @@ function meta:OnRemoveHalloweenSpeedBoost()
 	self:OnRemoveSpeedBoost()
 end
 
+local function get_invuln_fallback_material(ent)
+	local t = ent:EntityTeam()
+	if t == TEAM_BLU or t == TF_TEAM_PVE_INVADERS then
+		return "models/effects/invulnfx_blue"
+	end
+	return "models/effects/invulnfx_red2"
+end
+
 function meta:OnAddInvulnerable()
 	if self.SetNWBool then
 		self:SetNWBool("Invulnerable", true)
 	end
-	if SERVER and self:IsPlayer() then
-		self:GodEnable()
-	end
-	if self.SetMaterial and self:IsPlayer() then
-		if self:EntityTeam() == TEAM_BLU or self:EntityTeam() == TF_TEAM_PVE_INVADERS then
-			self:SetMaterial("models/effects/invulnfx_blue")
-		else
-			self:SetMaterial("models/effects/invulnfx_red2")
-		end
+
+	-- Fallback when gmcl_matproxy is not available: emulate basic uber look.
+	if CLIENT and self:IsPlayer() and not matproxy and self.SetMaterial then
+		self:SetMaterial(get_invuln_fallback_material(self))
 	end
 
 	self:RemoveCond(TF_COND_BURNING, true)
@@ -853,10 +1305,7 @@ function meta:OnRemoveInvulnerable()
 	if self.SetNWBool then
 		self:SetNWBool("Invulnerable", false)
 	end
-	if SERVER and self:IsPlayer() then
-		self:GodDisable()
-	end
-	if self.SetMaterial and self:IsPlayer() then
+	if CLIENT and self:IsPlayer() and not matproxy and self.SetMaterial then
 		self:SetMaterial("")
 	end
 end
@@ -1768,6 +2217,25 @@ function meta:OnConditionRemoved(eCond)
 	end
 end
 
+if SERVER then
+	hook.Add("Think", "TFCondCoreServerThink", function()
+		for _, pl in ipairs(player.GetAll()) do
+			if IsValid(pl) and pl.ConditionGameRulesThink and pl.ConditionThink then
+				pl:ConditionGameRulesThink()
+				pl:ConditionThink()
+			end
+		end
+	end)
+else
+	hook.Add("Think", "TFCondCoreClientThink", function()
+		for _, pl in ipairs(player.GetAll()) do
+			if IsValid(pl) and pl.ConditionThink then
+				pl:ConditionThink()
+			end
+		end
+	end)
+end
+
 hook.Add("Move", "TFCondMoveAdjust", function(pl, move)
 	if not IsValid(pl) or not pl.InCond then return end
 
@@ -1825,4 +2293,3 @@ if SERVER then
 		pl:SetNWFloat("TFCondSpeedMult", 1)
 	end)
 end
-

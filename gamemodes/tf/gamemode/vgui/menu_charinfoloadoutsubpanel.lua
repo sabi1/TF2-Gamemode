@@ -1045,6 +1045,21 @@ local class_distance_max = 100
 
 local class_size_speed = 10
 
+do
+	local tree = TF2Res and TF2Res.Load and TF2Res.Load("resource/ui/charinfoloadoutsubpanel.res")
+	local root = tree and TF2Res.FindByFieldName and TF2Res.FindByFieldName(tree, "CharInfoLoadoutSubPanel")
+	if root and TF2Res.GetNumber then
+		class_ypos = TF2Res.GetNumber(root, "class_ypos", class_ypos)
+		class_xdelta = TF2Res.GetNumber(root, "class_xdelta", class_xdelta)
+		class_wide_min = TF2Res.GetNumber(root, "class_wide_min", class_wide_min)
+		class_wide_max = TF2Res.GetNumber(root, "class_wide_max", class_wide_max)
+		class_tall_min = TF2Res.GetNumber(root, "class_tall_min", class_tall_min)
+		class_tall_max = TF2Res.GetNumber(root, "class_tall_max", class_tall_max)
+		class_distance_min = TF2Res.GetNumber(root, "class_distance_min", class_distance_min)
+		class_distance_max = TF2Res.GetNumber(root, "class_distance_max", class_distance_max)
+	end
+end
+
 for k,v in ipairs(classes) do
 	class_sel_sm[k] = {
 		surface.GetTextureID("vgui/class_sel_sm_"..v.."_red"),
@@ -1644,6 +1659,95 @@ function TF_OpenStandaloneBackpack(initialClassName, initialClassIndex, forcedLo
 	local showStockItems = false
 	local showQualityBorders = true
 	local sortMode = "default"
+	local backpackResTree = TF2Res and TF2Res.Load and TF2Res.Load("resource/ui/econ/backpackpanel.res")
+	local backpackResRoot = backpackResTree and TF2Res.FindByFieldName and TF2Res.FindByFieldName(backpackResTree, "backpack_panel")
+	local backpackPageButtonsNode = backpackResRoot and TF2Res.FindByKey and TF2Res.FindByKey(backpackResRoot, "pagebuttons_kv")
+	local backpackPageButtonNode = backpackPageButtonsNode and TF2Res.FindByFieldName and TF2Res.FindByFieldName(backpackPageButtonsNode, "Button")
+	local backpackModelPanelsNode = backpackResRoot and TF2Res.FindByKey and TF2Res.FindByKey(backpackResRoot, "modelpanels_kv")
+	local backpackQualityNode = backpackResTree and TF2Res.FindByFieldName and TF2Res.FindByFieldName(backpackResTree, "ShowRarityComboBox")
+	local backpackStockNode = backpackResTree and TF2Res.FindByFieldName and TF2Res.FindByFieldName(backpackResTree, "ShowBaseItemsCheckbox")
+	local backpackNameLabelNode = backpackResTree and TF2Res.FindByFieldName and TF2Res.FindByFieldName(backpackResTree, "NameFilterLabel")
+	local backpackNameEntryNode = backpackResTree and TF2Res.FindByFieldName and TF2Res.FindByFieldName(backpackResTree, "NameFilterTextEntry")
+	local backpackSortNode = backpackResTree and TF2Res.FindByFieldName and TF2Res.FindByFieldName(backpackResTree, "SortByComboBox")
+
+	local function getResString(node, key, defaultValue)
+		if TF2Res and TF2Res.GetString then
+			return TF2Res.GetString(node, key, defaultValue)
+		end
+		return defaultValue
+	end
+
+	local function getResLabel(rawValue, fallbackValue)
+		if not isstring(rawValue) or rawValue == "" then
+			return fallbackValue
+		end
+		if string.StartWith(rawValue, "#") then
+			local key = string.sub(rawValue, 2)
+			local localized = language and language.GetPhrase and language.GetPhrase(key)
+			if isstring(localized) and localized ~= "" and localized ~= key then
+				return string.upper(localized)
+			end
+			local tfLocalized = tf_lang and tf_lang.GetRaw and tf_lang.GetRaw(rawValue)
+			if isstring(tfLocalized) and tfLocalized ~= "" then
+				return string.upper(tfLocalized)
+			end
+			return fallbackValue
+		end
+		return string.upper(rawValue)
+	end
+
+	local function parseResCoord(rawValue, baseLength)
+		if isnumber(rawValue) then
+			return rawValue
+		end
+		if not isstring(rawValue) then
+			return nil
+		end
+		local raw = string.Trim(rawValue)
+		local numeric = tonumber(raw)
+		if numeric then
+			return numeric
+		end
+		if raw == "c" then
+			return baseLength * 0.5
+		end
+		local centerOffset = string.match(raw, "^c([%+%-]?%d+%.?%d*)$")
+		if centerOffset then
+			return (baseLength * 0.5) + tonumber(centerOffset)
+		end
+		local rightOffset = string.match(raw, "^r([%+%-]?%d+%.?%d*)$")
+		if rightOffset then
+			return baseLength + tonumber(rightOffset)
+		end
+		return nil
+	end
+
+	local function resToFrame(rawValue, baseLength, frameLength, fallbackValue)
+		local basePos = parseResCoord(rawValue, baseLength)
+		if not basePos then
+			return fallbackValue
+		end
+		return math.floor((basePos / baseLength) * frameLength)
+	end
+
+	local backpackLayout = {
+		pageButtonsPerRow = TF2Res and TF2Res.GetNumber and TF2Res.GetNumber(backpackResRoot, "page_button_per_row", 20) or 20,
+		pageButtonGapX = TF2Res and TF2Res.GetNumber and TF2Res.GetNumber(backpackResRoot, "page_button_x_delta", 5) or 5,
+		pageButtonGapY = TF2Res and TF2Res.GetNumber and TF2Res.GetNumber(backpackResRoot, "page_button_y_delta", 5) or 5,
+		pageButtonY = TF2Res and TF2Res.GetNumber and TF2Res.GetNumber(backpackResRoot, "page_button_y", 288) or 288,
+		pageButtonHeight = TF2Res and TF2Res.GetNumber and TF2Res.GetNumber(backpackResRoot, "page_button_height", 13) or 13,
+		pageButtonWidth = TF2Res and TF2Res.GetNumber and TF2Res.GetNumber(backpackPageButtonNode, "wide", 25) or 25,
+		itemDeltaX = TF2Res and TF2Res.GetNumber and TF2Res.GetNumber(backpackResRoot, "item_backpack_xdelta", 4) or 4,
+		itemDeltaY = TF2Res and TF2Res.GetNumber and TF2Res.GetNumber(backpackResRoot, "item_backpack_ydelta", 3) or 3,
+		tileWide = TF2Res and TF2Res.GetNumber and TF2Res.GetNumber(backpackModelPanelsNode, "wide", 54) or 54,
+		tileTall = TF2Res and TF2Res.GetNumber and TF2Res.GetNumber(backpackModelPanelsNode, "tall", 42) or 42,
+		modelX = TF2Res and TF2Res.GetNumber and TF2Res.GetNumber(backpackModelPanelsNode, "model_xpos", 0) or 0,
+		modelY = TF2Res and TF2Res.GetNumber and TF2Res.GetNumber(backpackModelPanelsNode, "model_ypos", 1) or 1,
+		modelTall = TF2Res and TF2Res.GetNumber and TF2Res.GetNumber(backpackModelPanelsNode, "model_tall", 20) or 20,
+		textX = TF2Res and TF2Res.GetNumber and TF2Res.GetNumber(backpackModelPanelsNode, "text_xpos", -5) or -5,
+		textY = TF2Res and TF2Res.GetNumber and TF2Res.GetNumber(backpackModelPanelsNode, "text_ypos", 30) or 30,
+		textWide = TF2Res and TF2Res.GetNumber and TF2Res.GetNumber(backpackModelPanelsNode, "text_wide", 62) or 62,
+	}
 
 	local sw, sh = ScrW(), ScrH()
 	local frameX = math.max(18, math.floor(sw * 0.015))
@@ -1707,7 +1811,7 @@ function TF_OpenStandaloneBackpack(initialClassName, initialClassIndex, forcedLo
 	end
 
 	local searchLabel = vgui.Create("DLabel", panel)
-	searchLabel:SetText("SEARCH:")
+	searchLabel:SetText(getResLabel(getResString(backpackNameLabelNode, "labelText", "#Store_NameFilterLabel"), "SEARCH:"))
 	searchLabel:SetTextColor(Color(205, 193, 167, 255))
 	searchLabel:SetFont("HudFontSmallBold")
 
@@ -1737,7 +1841,7 @@ function TF_OpenStandaloneBackpack(initialClassName, initialClassIndex, forcedLo
 	end
 
 	local stockCheckbox = vgui.Create("DCheckBoxLabel", panel)
-	stockCheckbox:SetText("SHOW STOCK ITEMS")
+	stockCheckbox:SetText(getResLabel(getResString(backpackStockNode, "labelText", "#ShowBaseItemsCheckBox"), "SHOW STOCK ITEMS"))
 	stockCheckbox:SetFont("HudFontSmallBold")
 	stockCheckbox:SetTextColor(Color(224, 214, 186, 255))
 	stockCheckbox:SetValue(0)
@@ -1853,27 +1957,41 @@ function TF_OpenStandaloneBackpack(initialClassName, initialClassIndex, forcedLo
 	end
 
 	local function layoutBackpackUI()
-		local rightControlW = math.Clamp(math.floor(frameW * 0.18), 220, 360)
-		local rightX = frameX + frameW - rightControlW - 18
-		local centerX = frameX + math.floor(frameW * 0.44)
+		local searchLabelX = frameX + resToFrame(getResString(backpackNameLabelNode, "xpos", "c+137"), 640, frameW, math.floor(frameW * 0.74))
+		local searchLabelY = frameY + resToFrame(getResString(backpackNameLabelNode, "ypos", "0"), 480, frameH, 0)
+		local searchLabelW = math.max(72, resToFrame(getResString(backpackNameLabelNode, "wide", "90"), 640, frameW, 90))
+		local searchLabelH = math.max(18, resToFrame(getResString(backpackNameLabelNode, "tall", "20"), 480, frameH, 20))
+		searchLabel:SetPos(searchLabelX, searchLabelY)
+		searchLabel:SetSize(searchLabelW, searchLabelH)
 
-		searchLabel:SetPos(rightX, frameY + 18)
-		searchLabel:SetSize(120, 24)
+		local searchEntryX = frameX + resToFrame(getResString(backpackNameEntryNode, "xpos", "c+137"), 640, frameW, searchLabelX - frameX)
+		local searchEntryY = frameY + resToFrame(getResString(backpackNameEntryNode, "ypos", "15"), 480, frameH, 15)
+		local searchEntryW = math.max(84, resToFrame(getResString(backpackNameEntryNode, "wide", "90"), 640, frameW, 120))
+		local searchEntryH = math.max(18, resToFrame(getResString(backpackNameEntryNode, "tall", "19"), 480, frameH, 24))
+		searchEntry:SetPos(searchEntryX, searchEntryY)
+		searchEntry:SetSize(searchEntryW, searchEntryH)
 
-		searchEntry:SetPos(rightX + 70, frameY + 14)
-		searchEntry:SetSize(rightControlW - 116, 34)
+		helpButton:SetPos(searchEntryX + searchEntryW + math.max(4, math.floor(3 * Scale)), searchEntryY)
+		helpButton:SetSize(math.max(20, math.floor(15 * Scale)), searchEntryH)
 
-		helpButton:SetPos(rightX + rightControlW - 36, frameY + 15)
-		helpButton:SetSize(30, 30)
-
-		stockCheckbox:SetPos(centerX, frameY + 16)
+		local stockX = frameX + resToFrame(getResString(backpackStockNode, "xpos", "c-70"), 640, frameW, math.floor(frameW * 0.42))
+		local stockY = frameY + resToFrame(getResString(backpackStockNode, "ypos", "15"), 480, frameH, 15)
+		stockCheckbox:SetPos(stockX, stockY)
 		stockCheckbox:SizeToContents()
 
-		qualityDropdown:SetPos(centerX - 2, frameY + 56)
-		qualityDropdown:SetSize(math.Clamp(math.floor(frameW * 0.31), 280, 380), 32)
+		local qualityX = frameX + resToFrame(getResString(backpackQualityNode, "xpos", "c-85"), 640, frameW, math.floor(frameW * 0.35))
+		local qualityY = frameY + resToFrame(getResString(backpackQualityNode, "ypos", "37"), 480, frameH, 56)
+		local qualityW = math.max(180, resToFrame(getResString(backpackQualityNode, "wide", "205"), 640, frameW, 260))
+		local qualityH = math.max(20, resToFrame(getResString(backpackQualityNode, "tall", "15"), 480, frameH, 24))
+		qualityDropdown:SetPos(qualityX, qualityY)
+		qualityDropdown:SetSize(qualityW, qualityH)
 
-		sortDropdown:SetPos(rightX, frameY + 56)
-		sortDropdown:SetSize(rightControlW, 32)
+		local sortX = frameX + resToFrame(getResString(backpackSortNode, "xpos", "c+137"), 640, frameW, searchEntryX - frameX)
+		local sortY = frameY + resToFrame(getResString(backpackSortNode, "ypos", "37"), 480, frameH, 56)
+		local sortW = math.max(140, resToFrame(getResString(backpackSortNode, "wide", "150"), 640, frameW, 180))
+		local sortH = math.max(20, resToFrame(getResString(backpackSortNode, "tall", "15"), 480, frameH, 24))
+		sortDropdown:SetPos(sortX, sortY)
+		sortDropdown:SetSize(sortW, sortH)
 
 		infoLabel:SetPos(frameX + 20, frameY + 92)
 		infoLabel:SetSize(frameW - 40, 24)
@@ -1889,8 +2007,13 @@ function TF_OpenStandaloneBackpack(initialClassName, initialClassIndex, forcedLo
 
 		local pageX = backBtn:GetX() + backBtn:GetWide() + 12
 		local pageW = math.max(120, closeBtn:GetX() - pageX - 12)
-		pageBar:SetPos(pageX, frameY + frameH - footerH + 9)
+		local resPageY = frameY + resToFrame(tostring(backpackLayout.pageButtonY), 480, frameH, frameH - footerH + 9)
+		pageBar:SetPos(pageX, resPageY)
 		pageBar:SetSize(pageW, footerH - 18)
+		pageBar:SetSpaceX(math.max(1, math.floor(backpackLayout.pageButtonGapX * Scale)))
+		pageBar:SetSpaceY(math.max(1, math.floor(backpackLayout.pageButtonGapY * Scale)))
+		itemicons:SetSpaceX(math.max(1, math.floor(backpackLayout.itemDeltaX * Scale)))
+		itemicons:SetSpaceY(math.max(1, math.floor(backpackLayout.itemDeltaY * Scale)))
 	end
 
 	layoutBackpackUI()
@@ -2267,11 +2390,16 @@ function TF_OpenStandaloneBackpack(initialClassName, initialClassIndex, forcedLo
 			end
 		end
 
-		local pageButtonsPerRow = 20
-		local pageGap = 5
-		local pageBtnW = math.max(26, math.floor((pageBar:GetWide() - ((pageButtonsPerRow - 1) * pageGap)) / pageButtonsPerRow))
-		local pageRows = totalPages > pageButtonsPerRow and 2 or 1
-		local pageBtnH = math.max(18, math.floor((pageBar:GetTall() - ((pageRows - 1) * pageGap)) / pageRows))
+		local pageButtonsPerRow = math.max(1, math.floor(backpackLayout.pageButtonsPerRow or 20))
+		local pageGapX = math.max(1, pageBar:GetSpaceX())
+		local pageGapY = math.max(1, pageBar:GetSpaceY())
+		local preferredPageBtnW = math.max(20, resToFrame(tostring(backpackLayout.pageButtonWidth or 25), 640, frameW, 25))
+		local preferredPageBtnH = math.max(14, resToFrame(tostring(backpackLayout.pageButtonHeight or 13), 480, frameH, 13))
+		local pageRows = math.max(1, math.ceil(totalPages / pageButtonsPerRow))
+		local fitPageBtnW = math.max(20, math.floor((pageBar:GetWide() - ((pageButtonsPerRow - 1) * pageGapX)) / pageButtonsPerRow))
+		local fitPageBtnH = math.max(14, math.floor((pageBar:GetTall() - ((pageRows - 1) * pageGapY)) / pageRows))
+		local pageBtnW = math.min(preferredPageBtnW, fitPageBtnW)
+		local pageBtnH = math.min(preferredPageBtnH, fitPageBtnH)
 
 		for p = 1, totalPages do
 			local btn = vgui.Create("DButton", pageBar)
@@ -2304,8 +2432,10 @@ function TF_OpenStandaloneBackpack(initialClassName, initialClassIndex, forcedLo
 
 		local spaceX, spaceY = itemicons:GetSpaceX(), itemicons:GetSpaceY()
 		local gridW, gridH = gridPanel:GetWide() - (gridPadding * 2), gridPanel:GetTall() - (gridPadding * 2)
-		local tileW = math.max(72, math.floor((gridW - ((columns - 1) * spaceX)) / columns))
-		local tileH = math.max(62, math.floor((gridH - ((rows - 1) * spaceY)) / rows))
+		local resTileW = math.max(42, resToFrame(tostring(backpackLayout.tileWide or 54), 640, frameW, 72))
+		local resTileH = math.max(34, resToFrame(tostring(backpackLayout.tileTall or 42), 480, frameH, 62))
+		local tileW = math.max(resTileW, math.floor((gridW - ((columns - 1) * spaceX)) / columns))
+		local tileH = math.max(resTileH, math.floor((gridH - ((rows - 1) * spaceY)) / rows))
 
 		for idx = startIndex, endIndex do
 			local item = sourceItems[idx]
@@ -2315,12 +2445,12 @@ function TF_OpenStandaloneBackpack(initialClassName, initialClassIndex, forcedLo
 
 			model.activeImage = loadout_rect_mouseover
 			model.inactiveImage = loadout_rect
-			model.model_xpos = 0
-			model.model_ypos = 1
-			model.model_tall = math.Clamp(math.floor((tileH / Scale) * 0.30), 14, 34)
-			model.text_xpos = -5
-			model.text_wide = tileW + 10
-			model.text_ypos = tileH - 13
+			model.model_xpos = backpackLayout.modelX or 0
+			model.model_ypos = backpackLayout.modelY or 1
+			model.model_tall = math.Clamp(backpackLayout.modelTall or math.floor((tileH / Scale) * 0.30), 14, 50)
+			model.text_xpos = backpackLayout.textX or -5
+			model.text_wide = backpackLayout.textWide or (tileW + 10)
+			model.text_ypos = backpackLayout.textY or (tileH - 13)
 			model.itemImage_low = nil
 			model.text = nil
 			model.centerytext = false

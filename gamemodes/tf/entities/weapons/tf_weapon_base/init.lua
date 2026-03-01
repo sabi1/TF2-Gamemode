@@ -43,22 +43,15 @@ end
 
 -- obsolete
 function SWEP:GetTextureDecal(trace)
-	local texture
-	if trace.MatType == 77 then
-		texture = "decals/metal/shot" .. math.random(1,5)
-		sound.Play( "physics/metal/metal_solid_impact_bullet" .. math.random(1,4) .. ".wav", trace.HitPos )
-	elseif trace.MatType == 89 then
-		texture = "decals/glass/shot" .. math.random(1,5)
-		sound.Play( "physics/glass/glass_impact_bullet" .. math.random(1,4) .. ".wav", trace.HitPos )
-	elseif trace.MatType == 87 then
-		texture = "decals/wood/shot" .. math.random(1,5)
-		sound.Play( "physics/wood/wood_solid_impact_bullet" .. math.random(1,5) .. ".wav", trace.HitPos )
-	elseif trace.MatType == 67 then
-		texture = "decals/concrete/tf_shot" .. math.random(1,5)
-	elseif trace.MatType == 68 then
-		texture = "decals/dirtshot" .. math.random(1,4)
-	else
-		texture = "decals/concrete/shot" .. math.random(1,4)
+	local texture = "decals/concrete/tf_shot" .. math.random(1, 5)
+	if trace.MatType == MAT_DIRT or trace.MatType == MAT_SAND then
+		texture = "decals/dirtshot" .. math.random(1, 4)
+	elseif trace.MatType == MAT_METAL then
+		sound.Play("physics/metal/metal_solid_impact_bullet" .. math.random(1, 4) .. ".wav", trace.HitPos)
+	elseif trace.MatType == MAT_GLASS then
+		sound.Play("physics/glass/glass_impact_bullet" .. math.random(1, 4) .. ".wav", trace.HitPos)
+	elseif trace.MatType == MAT_WOOD then
+		sound.Play("physics/wood/wood_solid_impact_bullet" .. math.random(1, 5) .. ".wav", trace.HitPos)
 	end
 	local decal = ents.Create( "infodecal" )
 	decal:SetPos(trace.HitPos)

@@ -366,6 +366,11 @@ function ENT:Think()
 	GAMEMODE.IsSetupPhase = self.IsSetupPhase
 	local t = self:GetTime()
 
+	-- MvM runtime drives setup/wave transitions and audio; avoid legacy timer restart/siren behavior.
+	if self.TF_MVM_Managed then
+		return
+	end
+
 	if self.PayloadOvertime and GAMEMODE.RoundHasWinner then
 		self:StopPayloadOvertime()
 	end
@@ -414,7 +419,7 @@ function ENT:Think()
 				break
 			end
 			
-			if t <= v[1] then
+			if t > 0 and t <= v[1] then
 				self:TriggerOutput(v[2])
 				self.LastPlayedTimeSignal = k
 				if (!self.WaitingForPlayers) then
@@ -438,7 +443,7 @@ function ENT:Think()
 				break
 			end
 			
-			if t <= v[1] then
+			if t > 0 and t <= v[1] then
 				self:TriggerOutput(v[2])
 				self.LastPlayedTimeSignal = k
 				if (!self.WaitingForPlayers) then

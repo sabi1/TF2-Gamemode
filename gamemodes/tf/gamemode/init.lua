@@ -1893,6 +1893,13 @@ end
 
 
 hook.Add( "PlayerButtonDown", "PlayerButtonDownTF", function( pl, key )
+	if key == KEY_F4 then
+		local map = string.lower(game.GetMap() or "")
+		if string.find(map, "mvm_", 1, true) and TF_MVM and TF_MVM.Runtime and TF_MVM.Runtime.Active and TF_MVM.Runtime.Setup then
+			pl:ConCommand("player_ready_toggle")
+			return
+		end
+	end
 	if key == KEY_G then 
 		if (pl:GetPlayerClass() == "sentrybuster") then
 			pl:ConCommand("tf_sentrybuster_explode")         
@@ -1994,6 +2001,16 @@ hook.Add( "PlayerButtonDown", "PlayerButtonDownTF", function( pl, key )
 		pl:ConCommand("tf_changeteam")
 	end
 		
+end)
+
+hook.Add("PlayerInitialSpawn", "TF_MVM_ReadyBindF4", function(pl)
+	local map = string.lower(game.GetMap() or "")
+	if not string.find(map, "mvm_", 1, true) then return end
+
+	timer.Simple(1, function()
+		if not IsValid(pl) then return end
+		pl:ConCommand("bind F4 player_ready_toggle")
+	end)
 end)
 
 hook.Add( "PlayerButtonUp", "PlayerButtonUpTF", function( pl, key )
@@ -2164,7 +2181,7 @@ function GM:PlayerSpawn(ply)
 	for k,v in ipairs(player.GetAll()) do
 		if (player.GetCount() == 1) then
 
-			if (!GAMEMODE.round_active and ply:Team() != TEAM_SPECTATOR) then
+			if (!GAMEMODE.round_active and ply:Team() != TEAM_SPECTATOR and not string.find(string.lower(game.GetMap() or ""), "mvm_", 1, true)) then
 				RunConsoleCommand("gmod_admin_cleanup")
 				GAMEMODE.round_active = true
 				timer.Simple(0.1, function()

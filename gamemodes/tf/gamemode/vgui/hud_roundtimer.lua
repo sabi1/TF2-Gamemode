@@ -12,6 +12,56 @@ local objectives_timepanel_bg = {
 }
 local objectives_timepanel_progressbar = surface.GetTextureID("hud/objectives_timepanel_progressbar")
 local objectives_timepanel_suddendeath = surface.GetTextureID("hud/objectives_timepanel_suddendeath")
+
+local TimerRes = {
+	bgX = 16,
+	bgY = 9,
+	bgW = 78,
+	bgH = 33,
+	progressX = 67,
+	progressY = 16,
+	progressW = 20,
+	progressH = 20,
+	stateX = 16,
+	stateY = 31,
+	stateW = 78,
+	stateH = 20,
+	timeX = 45.2,
+	timeY = 26.5,
+}
+
+do
+	local tree = TF2Res and TF2Res.Load and TF2Res.Load("resource/ui/hudobjectivetimepanel.res")
+	local bg = tree and TF2Res.FindByFieldName and TF2Res.FindByFieldName(tree, "TimePanelBG")
+	local progress = tree and TF2Res.FindByFieldName and TF2Res.FindByFieldName(tree, "TimePanelProgressBar")
+	local setupBg = tree and TF2Res.FindByFieldName and TF2Res.FindByFieldName(tree, "SetupBG")
+	local setupLabel = tree and TF2Res.FindByFieldName and TF2Res.FindByFieldName(tree, "SetupLabel")
+	if bg and TF2Res.GetNumber then
+		TimerRes.bgX = TF2Res.GetNumber(bg, "xpos", TimerRes.bgX)
+		TimerRes.bgY = TF2Res.GetNumber(bg, "ypos", TimerRes.bgY)
+		TimerRes.bgW = TF2Res.GetNumber(bg, "wide", TimerRes.bgW)
+		TimerRes.bgH = TF2Res.GetNumber(bg, "tall", TimerRes.bgH)
+		objectives_timepanel_bg[1] = TF2Res.GetTextureID(bg, "image", "hud/objectives_timepanel_blue_bg")
+	end
+	if progress and TF2Res.GetNumber then
+		TimerRes.progressX = TF2Res.GetNumber(progress, "xpos", TimerRes.progressX)
+		TimerRes.progressY = TF2Res.GetNumber(progress, "ypos", TimerRes.progressY)
+		TimerRes.progressW = TF2Res.GetNumber(progress, "wide", TimerRes.progressW)
+		TimerRes.progressH = TF2Res.GetNumber(progress, "tall", TimerRes.progressH)
+		objectives_timepanel_progressbar = TF2Res.GetTextureID(progress, "image", "hud/objectives_timepanel_progressbar")
+	end
+	if setupBg and TF2Res.GetNumber then
+		TimerRes.stateX = TF2Res.GetNumber(setupBg, "xpos", TimerRes.stateX)
+		TimerRes.stateY = TF2Res.GetNumber(setupBg, "ypos", TimerRes.stateY)
+		TimerRes.stateW = TF2Res.GetNumber(setupBg, "wide", TimerRes.stateW)
+		TimerRes.stateH = TF2Res.GetNumber(setupBg, "tall", TimerRes.stateH)
+		objectives_timepanel_suddendeath = TF2Res.GetTextureID(setupBg, "image", "hud/objectives_timepanel_suddendeath")
+	end
+	if setupLabel and TF2Res.GetNumber then
+		TimerRes.timeX = TF2Res.GetNumber(bg or setupLabel, "xpos", 23) + 22.2
+		TimerRes.timeY = TF2Res.GetNumber(bg or setupLabel, "ypos", 11) + 15.5
+	end
+end
 local function IsMvMMap()
 	return string.find(string.lower(game.GetMap() or ""), "mvm_", 1, true) ~= nil
 end
@@ -30,7 +80,7 @@ function PANEL:PerformLayout()
 	else
 		self:SetPos(W/2-55*Scale,0*Scale)
 	end
-	self:SetSize(110*Scale,150*Scale)
+	self:SetSize((TimerRes.bgX + TimerRes.bgW + 16)*Scale,150*Scale)
 end
 
 function PANEL:GetTime()
@@ -66,23 +116,23 @@ function PANEL:Paint()
 	surface.SetDrawColor(255,255,255,255)
 	if GAMEMODE.RoundTimeIsSetupPhase then
 		surface.SetTexture(objectives_timepanel_suddendeath)
-		surface.DrawTexturedRect(16*Scale, 31*Scale, 78*Scale, 20*Scale)
+		surface.DrawTexturedRect(TimerRes.stateX*Scale, TimerRes.stateY*Scale, TimerRes.stateW*Scale, TimerRes.stateH*Scale)
 		
 		draw.Text{
 			text="Setup",
 			font="ClockSubText",
-			pos={(16+39)*Scale, (33+9.5)*Scale},
+			pos={(TimerRes.stateX + TimerRes.stateW * 0.5)*Scale, (TimerRes.stateY + TimerRes.stateH * 0.5 + 1)*Scale},
 			xalign=TEXT_ALIGN_CENTER,
 			yalign=TEXT_ALIGN_CENTER,
 		}
 	elseif GAMEMODE.RoundTimeIsWaitingForPlayers then
 		surface.SetTexture(objectives_timepanel_suddendeath)
-		surface.DrawTexturedRect(16*Scale, 31*Scale, 78*Scale, 20*Scale)
+		surface.DrawTexturedRect(TimerRes.stateX*Scale, TimerRes.stateY*Scale, TimerRes.stateW*Scale, TimerRes.stateH*Scale)
 		
 		draw.Text{
 			text="Waiting For Players",
 			font="ClockSubTextTiny",
-			pos={(16+39)*Scale, (33+9.5)*Scale},
+			pos={(TimerRes.stateX + TimerRes.stateW * 0.5)*Scale, (TimerRes.stateY + TimerRes.stateH * 0.5 + 1)*Scale},
 			xalign=TEXT_ALIGN_CENTER,
 			yalign=TEXT_ALIGN_CENTER,
 		}
@@ -92,12 +142,12 @@ function PANEL:Paint()
 	local tex = objectives_timepanel_bg[t] or objectives_timepanel_bg[1]
 	
 	surface.SetTexture(tex)
-	surface.DrawTexturedRect(16*Scale, 9*Scale, 78*Scale, 33*Scale)
+	surface.DrawTexturedRect(TimerRes.bgX*Scale, TimerRes.bgY*Scale, TimerRes.bgW*Scale, TimerRes.bgH*Scale)
 	
 	draw.Text{
 		text=self:GetFormattedTime(),
 		font="HudFontMediumSmall",
-		pos={(23+22.2)*Scale, (11+15.5)*Scale},
+		pos={TimerRes.timeX*Scale, TimerRes.timeY*Scale},
 		color=Colors.TanLight,
 		xalign=TEXT_ALIGN_CENTER,
 		yalign=TEXT_ALIGN_CENTER,
@@ -115,7 +165,7 @@ function PANEL:Paint()
 		fgcolor = Colors.HudTimerProgressWarning
 	end
 	
-	tf_draw.CircularProgressBar(67*Scale, 16*Scale, 20*Scale, 20*Scale,
+	tf_draw.CircularProgressBar(TimerRes.progressX*Scale, TimerRes.progressY*Scale, TimerRes.progressW*Scale, TimerRes.progressH*Scale,
 		objectives_timepanel_progressbar, objectives_timepanel_progressbar,
 		fgcolor, bgcolor,
 		progress

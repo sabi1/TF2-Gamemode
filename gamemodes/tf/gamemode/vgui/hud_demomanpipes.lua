@@ -43,6 +43,66 @@ local NumPipes = {
 	yalign=TEXT_ALIGN_CENTER,
 }
 
+local DemoRes = {
+	panelX = 12,
+	panelY = 6,
+	panelW = 76,
+	panelH = 38,
+	chargeLabelX = 45.5,
+	chargeLabelY = 34.5,
+	chargeBarX = 25,
+	chargeBarY = 23,
+	chargeBarW = 40,
+	chargeBarH = 6,
+	iconX = 26,
+	iconY = 16,
+	iconW = 20,
+	iconH = 20,
+	numX = 50,
+	numY = 28,
+}
+
+do
+	local tree = TF2Res and TF2Res.Load and TF2Res.Load("resource/ui/huddemomanpipes.res")
+	local bg = tree and TF2Res.FindByFieldName and TF2Res.FindByFieldName(tree, "background")
+	local chargeLabel = tree and TF2Res.FindByFieldName and TF2Res.FindByFieldName(tree, "ChargeLabel")
+	local chargeMeter = tree and TF2Res.FindByFieldName and TF2Res.FindByFieldName(tree, "ChargeMeter")
+	local pipeIcon = tree and TF2Res.FindByFieldName and TF2Res.FindByFieldName(tree, "PipeIcon")
+	local numPipes = tree and TF2Res.FindByFieldName and TF2Res.FindByFieldName(tree, "NumPipesLabel")
+	if bg and TF2Res.GetNumber then
+		DemoRes.panelX = TF2Res.GetNumber(bg, "xpos", DemoRes.panelX)
+		DemoRes.panelY = TF2Res.GetNumber(bg, "ypos", DemoRes.panelY)
+		DemoRes.panelW = TF2Res.GetNumber(bg, "wide", DemoRes.panelW)
+		DemoRes.panelH = TF2Res.GetNumber(bg, "tall", DemoRes.panelH)
+		misc_ammo_area[1] = TF2Res.GetTextureID(bg, "image", "hud/misc_ammo_area_blue")
+		misc_ammo_area[2] = TF2Res.GetTextureID(bg, "teambg_2", "hud/misc_ammo_area_red")
+		misc_ammo_area[3] = TF2Res.GetTextureID(bg, "teambg_3", "hud/misc_ammo_area_blue")
+	end
+	if chargeLabel and TF2Res.GetNumber then
+		DemoRes.chargeLabelX = TF2Res.GetNumber(chargeLabel, "xpos", 25) + TF2Res.GetNumber(chargeLabel, "wide", 41) * 0.5
+		DemoRes.chargeLabelY = TF2Res.GetNumber(chargeLabel, "ypos", 27) + TF2Res.GetNumber(chargeLabel, "tall", 15) * 0.5
+	end
+	if chargeMeter and TF2Res.GetNumber then
+		DemoRes.chargeBarX = TF2Res.GetNumber(chargeMeter, "xpos", DemoRes.chargeBarX)
+		DemoRes.chargeBarY = TF2Res.GetNumber(chargeMeter, "ypos", DemoRes.chargeBarY)
+		DemoRes.chargeBarW = TF2Res.GetNumber(chargeMeter, "wide", DemoRes.chargeBarW)
+		DemoRes.chargeBarH = TF2Res.GetNumber(chargeMeter, "tall", DemoRes.chargeBarH)
+	end
+	if pipeIcon and TF2Res.GetNumber then
+		DemoRes.iconX = TF2Res.GetNumber(pipeIcon, "xpos", DemoRes.iconX)
+		DemoRes.iconY = TF2Res.GetNumber(pipeIcon, "ypos", DemoRes.iconY)
+		DemoRes.iconW = TF2Res.GetNumber(pipeIcon, "wide", DemoRes.iconW)
+		DemoRes.iconH = TF2Res.GetNumber(pipeIcon, "tall", DemoRes.iconH)
+	end
+	if numPipes and TF2Res.GetNumber then
+		DemoRes.numX = TF2Res.GetNumber(numPipes, "xpos", DemoRes.numX)
+		DemoRes.numY = TF2Res.GetNumber(numPipes, "ypos", DemoRes.numY) + TF2Res.GetNumber(numPipes, "tall", 20) * 0.5
+	end
+
+	ChargeLabel.pos = {DemoRes.chargeLabelX*Scale, DemoRes.chargeLabelY*Scale}
+	NumPipes.pos = {DemoRes.numX*Scale, DemoRes.numY*Scale}
+end
+
 function PANEL:Init()
 	self:SetPaintBackgroundEnabled(false)
 	self:ParentToHUD()
@@ -53,7 +113,7 @@ end
 
 function PANEL:PerformLayout()
 	self:SetPos(W-162*Scale,H-52*Scale)
-	self:SetSize(100*Scale,50*Scale)
+	self:SetSize((DemoRes.panelX + DemoRes.panelW + 12)*Scale,(DemoRes.panelY + DemoRes.panelH + 6)*Scale)
 end
 
 function PANEL:SetChargeStatus(s)
@@ -87,7 +147,7 @@ function PANEL:Paint()
 	surface.SetDrawColor(255,255,255,255)
 	
 	surface.SetTexture(tex)
-	surface.DrawTexturedRect(12*Scale, 6*Scale, 76*Scale, 38*Scale)
+	surface.DrawTexturedRect(DemoRes.panelX*Scale, DemoRes.panelY*Scale, DemoRes.panelW*Scale, DemoRes.panelH*Scale)
 	
 	if vis_pipes then
 		local n = LocalPlayer():GetNWInt("NumBombs") or 0
@@ -99,7 +159,7 @@ function PANEL:Paint()
 			tex = ico_stickybomb[t] or ico_stickybomb[1]
 			surface.SetTexture(tex)
 		end
-		surface.DrawTexturedRect(26*Scale, 16*Scale, 20*Scale, 20*Scale)
+		surface.DrawTexturedRect(DemoRes.iconX*Scale, DemoRes.iconY*Scale, DemoRes.iconW*Scale, DemoRes.iconH*Scale)
 		
 		NumPipes.text = n
 		tf_draw.ShadedText(NumPipes)
@@ -108,22 +168,22 @@ function PANEL:Paint()
 		draw.Text(ChargeLabel)
 		
 		surface.SetDrawColor(Colors.TransparentYellow)
-		surface.DrawRect(25*Scale, 23*Scale, 40*Scale, 6*Scale)
+		surface.DrawRect(DemoRes.chargeBarX*Scale, DemoRes.chargeBarY*Scale, DemoRes.chargeBarW*Scale, DemoRes.chargeBarH*Scale)
 		
 		if self.Progress > 0 then
 			surface.SetDrawColor(self.MeterColor)
-			surface.DrawRect(25*Scale, 23*Scale, 40*Scale*self.Progress, 6*Scale)
+			surface.DrawRect(DemoRes.chargeBarX*Scale, DemoRes.chargeBarY*Scale, DemoRes.chargeBarW*Scale*self.Progress, DemoRes.chargeBarH*Scale)
 		end
 	elseif vis_cloak then
 		ChargeLabel.text = "CLOAK"
 		draw.Text(ChargeLabel)
 		
 		surface.SetDrawColor(Colors.TransparentYellow)
-		surface.DrawRect(25*Scale, 23*Scale, 40*Scale, 6*Scale)
+		surface.DrawRect(DemoRes.chargeBarX*Scale, DemoRes.chargeBarY*Scale, DemoRes.chargeBarW*Scale, DemoRes.chargeBarH*Scale)
 		
 		if self.Progress > 0 then
 			surface.SetDrawColor(self.MeterColor)
-			surface.DrawRect(25*Scale, 23*Scale, 40*Scale*self.Progress, 6*Scale)
+			surface.DrawRect(DemoRes.chargeBarX*Scale, DemoRes.chargeBarY*Scale, DemoRes.chargeBarW*Scale*self.Progress, DemoRes.chargeBarH*Scale)
 		end
 	end
 end
