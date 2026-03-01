@@ -1,17 +1,9 @@
 local function MedigunEffectName(i, t)
-	if i==2 then
-		if t==3 then
-			return "medicgun_beam_blue"
-		else
-			return "medicgun_beam_red"
-		end
-	elseif i>1 then
-		if t==2 then
-			return "medicgun_beam_blue_invun"
-		else
-			return "medicgun_beam_red_invun"
-		end
+	local isBlue = (t == TEAM_BLU) or (t == 3)
+	if i > 1 then
+		return isBlue and "medicgun_beam_blue_invun" or "medicgun_beam_red_invun"
 	end
+	return isBlue and "medicgun_beam_blue" or "medicgun_beam_red"
 end
 
 function SWEP:SetupDataTables()
@@ -39,6 +31,9 @@ function SWEP:SetMedigunEffect(i, target)
 	if i>0 and IsValid(target) then
 		local t = GAMEMODE:EntityTeam(self.Owner)
 		local effect = MedigunEffectName(i, t)
+		if not effect then
+			effect = "medicgun_beam_red"
+		end
 		
 		local tar = ents.Create("info_dummy")
 		tar:SetPos(target:GetPos() + Vector(0,0,30))

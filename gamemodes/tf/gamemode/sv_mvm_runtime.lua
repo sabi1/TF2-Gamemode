@@ -70,6 +70,49 @@ local function DebugPrint(...)
     print("[TF_MVM][Runtime]", ...)
 end
 
+local function SpawnCurrencyPack(className, pos, amount)
+    if amount <= 0 then return nil end
+    local ent = ents.Create(className)
+    if not IsValid(ent) then return nil end
+
+    ent:SetPos(pos)
+    ent:SetAngles(Angle(0, math.random(0, 360), 0))
+    ent.CurrencyAmount = math.max(1, math.floor(amount))
+    ent:SetRespawnTime(-1)
+    ent:Spawn()
+    ent:Activate()
+    ent:DropWithGravity(VectorRand() * 120 + Vector(0, 0, 140))
+
+    return ent
+end
+
+local function DropCurrencyPacks(origin, totalAmount)
+    local total = math.max(0, math.floor(tonumber(totalAmount) or 0))
+    if total <= 0 then return end
+
+    local pos = origin + Vector(0, 0, 16)
+    local remaining = total
+
+    while remaining > 0 do
+        local className = "item_currencypack_small"
+        local packAmount = remaining
+
+        if remaining >= 100 then
+            className = "item_currencypack_large"
+            packAmount = 100
+        elseif remaining >= 50 then
+            className = "item_currencypack_medium"
+            packAmount = 50
+        elseif remaining > 25 then
+            className = "item_currencypack_small"
+            packAmount = 25
+        end
+
+        SpawnCurrencyPack(className, pos + VectorRand() * 12, packAmount)
+        remaining = remaining - packAmount
+    end
+end
+
 local function TimerName(tag)
     return "TF_MVM_" .. tag
 end
@@ -120,6 +163,13 @@ local function ClassAlias(name)
     if lower == "heavyweapons" then return "heavy" end
     return lower
 end
+
+local OBJECTIVE_STATUS_CLASS = {
+    spy = "spy",
+    sniper = "sniper",
+    destroysentries = "sentrybuster",
+    sentrybuster = "sentrybuster",
+}
 
 local function PickRepresentativeBotDef(spawnDef)
     if not istable(spawnDef) then return nil end
@@ -256,6 +306,43 @@ local function BuildSpawnVisualInfos(spawnDef)
     end
 
     return ordered
+end
+
+local function ResolveSupportDisplayCountFromSpawnDef(spawnDef)
+    if not istable(spawnDef) then return 0 end
+
+    local supportMode = TrimLower(spawnDef.Support)
+    local limitedSupport = supportMode == "limited"
+    if limitedSupport then
+        return math.max(0, math.floor(NumValue(spawnDef.TotalCount, NumValue(spawnDef.MaxActive, NumValue(spawnDef.SpawnCount, 1))) or 0))
+    end
+
+    return math.max(0, math.floor(NumValue(spawnDef.DesiredCount, NumValue(spawnDef.MaxActive, NumValue(spawnDef.SpawnCount, 1))) or 0))
+end
+
+local function ResolveSupportDisplayCountFromSpawnState(spawnState)
+    if not istable(spawnState) then return 0 end
+    if spawnState.SupportLimited then
+        local remaining = math.max(0, (tonumber(spawnState.TotalCount) or 0) - (tonumber(spawnState.Spawned) or 0) + (tonumber(spawnState.Alive) or 0))
+        return math.floor(remaining)
+    end
+    return math.max(0, math.floor(tonumber(spawnState.MaxActive) or tonumber(spawnState.SpawnCount) or 0))
+end
+
+local function BuildMissionVisualInfo(missionDef)
+    local explicitClass = ClassAlias(missionDef and missionDef.Class or "")
+    if explicitClass ~= "" then
+        return { class = explicitClass, giant = false, tank = false }
+    end
+
+    local objective = TrimLower(missionDef and missionDef.Objective or "")
+    local cls = OBJECTIVE_STATUS_CLASS[objective] or "scout"
+    return { class = cls, giant = false, tank = false }
+end
+
+local function ResolveMissionDisplayCount(missionDef)
+    local desired = NumValue(missionDef and (missionDef.DesiredCount or missionDef.Count), 1)
+    return math.max(0, math.floor(desired or 0))
 end
 
 local function MissionAppliesToWave(missionDef, waveIndex, totalWaves, isGlobal)
@@ -508,12 +595,15 @@ local function BuildStatusHash(entries)
     local parts = {}
     for _, e in ipairs(entries or {}) do
         parts[#parts + 1] = string.format(
-            "%s|%d|%d|%d|%d",
+            "%s|%d|%d|%d|%d|%d|%d|%d",
             tostring(e.class or "scout"),
             tonumber(e.count or 0) or 0,
             e.support and 1 or 0,
             e.giant and 1 or 0,
-            e.tank and 1 or 0
+            e.tank and 1 or 0,
+            e.mission and 1 or 0,
+            e.active and 1 or 0,
+            e.support_limited and 1 or 0
         )
     end
     table.sort(parts)
@@ -524,13 +614,15 @@ local function BuildStatusFromItems(items)
     local grouped = {}
     local ordered = {}
 
-    local function addItem(info, count, support)
+    local function addItem(info, count, support, mission, active, supportLimited)
         local key = string.format(
-            "%s|%d|%d|%d",
+            "%s|%d|%d|%d|%d|%d",
             tostring(info.class or "scout"),
             info.giant and 1 or 0,
             info.tank and 1 or 0,
-            support and 1 or 0
+            support and 1 or 0,
+            mission and 1 or 0,
+            supportLimited and 1 or 0
         )
         local node = grouped[key]
         if not node then
@@ -539,23 +631,30 @@ local function BuildStatusFromItems(items)
                 giant = info.giant and true or false,
                 tank = info.tank and true or false,
                 support = support and true or false,
+                mission = mission and true or false,
+                active = active and true or false,
+                support_limited = supportLimited and true or false,
                 count = 0,
             }
             grouped[key] = node
             ordered[#ordered + 1] = node
         end
-        if not support then
-            node.count = node.count + math.max(0, math.floor(tonumber(count) or 0))
+        if active then
+            node.active = true
         end
+        node.count = node.count + math.max(0, math.floor(tonumber(count) or 0))
     end
 
     for _, item in ipairs(items or {}) do
-        addItem(item.info or {}, item.count or 0, item.support)
+        addItem(item.info or {}, item.count or 0, item.support, item.mission, item.active, item.support_limited)
     end
 
     table.sort(ordered, function(a, b)
         if a.support ~= b.support then
             return not a.support
+        end
+        if a.mission ~= b.mission then
+            return not a.mission
         end
         if a.tank ~= b.tank then
             return a.tank
@@ -569,6 +668,71 @@ local function BuildStatusFromItems(items)
     return ordered, BuildStatusHash(ordered)
 end
 
+function RUNTIME:BuildWaveMissionStatusItemsFromDefs(wave, waveIndex)
+    if not self.Mission then return {} end
+
+    local missionBlocks = {}
+    for _, missionDef in ipairs(ToArray(self.Mission.GlobalMissions)) do
+        missionBlocks[#missionBlocks + 1] = { def = missionDef, global = true }
+    end
+    for _, missionDef in ipairs(ToArray(wave and wave.Mission)) do
+        missionBlocks[#missionBlocks + 1] = { def = missionDef, global = false }
+    end
+
+    local totalWaves = #(self.Mission.Waves or {})
+    local items = {}
+    for _, entry in ipairs(missionBlocks) do
+        if not istable(entry.def) then
+            continue
+        end
+        if not MissionAppliesToWave(entry.def, waveIndex, totalWaves, entry.global) then
+            continue
+        end
+        items[#items + 1] = {
+            info = BuildMissionVisualInfo(entry.def),
+            count = ResolveMissionDisplayCount(entry.def),
+            support = true,
+            mission = true,
+            active = false,
+            support_limited = false,
+        }
+    end
+    return items
+end
+
+function RUNTIME:BuildWaveMissionStatusItemsFromStates()
+    local items = {}
+    local keys = {}
+    for missionId, _ in pairs(self.CurrentMissionStates or {}) do
+        keys[#keys + 1] = missionId
+    end
+    table.sort(keys)
+
+    for _, missionId in ipairs(keys) do
+        local state = self.CurrentMissionStates[missionId]
+        if not state or not istable(state.Def) then
+            continue
+        end
+
+        local count = math.max(0, math.floor(tonumber(state.DesiredCount) or ResolveMissionDisplayCount(state.Def)))
+        if state.MaxTotal ~= nil then
+            local remainingTotal = math.max(0, math.floor((tonumber(state.MaxTotal) or 0) - (tonumber(state.SpawnedTotal) or 0)))
+            count = math.min(count, remainingTotal)
+        end
+
+        items[#items + 1] = {
+            info = BuildMissionVisualInfo(state.Def),
+            count = count,
+            support = true,
+            mission = true,
+            active = count > 0,
+            support_limited = false,
+        }
+    end
+
+    return items
+end
+
 function RUNTIME:BuildWavePreviewStatus(waveIndex)
     local wave = self.Mission and self.Mission.Waves and self.Mission.Waves[waveIndex] or nil
     if not wave then return {}, "" end
@@ -576,21 +740,28 @@ function RUNTIME:BuildWavePreviewStatus(waveIndex)
     local items = {}
     for _, spawnDef in ipairs(ToArray(wave.WaveSpawn)) do
         local support = BoolValue(spawnDef.Support, false)
-        local count = support and 0 or NumValue(spawnDef.TotalCount, NumValue(spawnDef.MaxActive, NumValue(spawnDef.SpawnCount, 1)))
+        local count = support and ResolveSupportDisplayCountFromSpawnDef(spawnDef)
+            or NumValue(spawnDef.TotalCount, NumValue(spawnDef.MaxActive, NumValue(spawnDef.SpawnCount, 1)))
         local totalCount = math.max(0, math.floor(tonumber(count) or 0))
         local infos = BuildSpawnVisualInfos(spawnDef)
         local n = math.max(1, #infos)
-        local shared = (not support and n > 0) and math.floor(totalCount / n) or 0
-        local rem = (not support and n > 0) and math.max(0, totalCount - (shared * n)) or 0
+        local shared = (n > 0) and math.floor(totalCount / n) or 0
+        local rem = (n > 0) and math.max(0, totalCount - (shared * n)) or 0
 
         for i, info in ipairs(infos) do
-            local alloc = support and 0 or (shared + ((i <= rem) and 1 or 0))
+            local alloc = shared + ((i <= rem) and 1 or 0)
             items[#items + 1] = {
                 info = info,
                 count = alloc,
                 support = support,
+                mission = false,
+                active = false,
+                support_limited = support and (TrimLower(spawnDef.Support) == "limited") or false,
             }
         end
+    end
+    for _, item in ipairs(self:BuildWaveMissionStatusItemsFromDefs(wave, waveIndex)) do
+        items[#items + 1] = item
     end
 
     return BuildStatusFromItems(items)
@@ -601,20 +772,27 @@ function RUNTIME:BuildWaveRuntimeStatus()
     local items = {}
     for _, st in ipairs(self.CurrentWaveState.Spawns or {}) do
         local support = st.Support and true or false
-        local remaining = support and 0 or math.max(0, (tonumber(st.TotalCount) or 0) - (tonumber(st.Spawned) or 0) + (tonumber(st.Alive) or 0))
+        local remaining = support and ResolveSupportDisplayCountFromSpawnState(st)
+            or math.max(0, (tonumber(st.TotalCount) or 0) - (tonumber(st.Spawned) or 0) + (tonumber(st.Alive) or 0))
         local infos = BuildSpawnVisualInfos(st.Def)
         local n = math.max(1, #infos)
-        local shared = (not support and n > 0) and math.floor(remaining / n) or 0
-        local rem = (not support and n > 0) and math.max(0, remaining - (shared * n)) or 0
+        local shared = (n > 0) and math.floor(remaining / n) or 0
+        local rem = (n > 0) and math.max(0, remaining - (shared * n)) or 0
 
         for i, info in ipairs(infos) do
-            local alloc = support and 0 or (shared + ((i <= rem) and 1 or 0))
+            local alloc = shared + ((i <= rem) and 1 or 0)
             items[#items + 1] = {
                 info = info,
                 count = alloc,
                 support = support,
+                mission = false,
+                active = support and ((tonumber(st.Alive) or 0) > 0) or false,
+                support_limited = st.SupportLimited and true or false,
             }
         end
+    end
+    for _, item in ipairs(self:BuildWaveMissionStatusItemsFromStates()) do
+        items[#items + 1] = item
     end
     return BuildStatusFromItems(items)
 end
@@ -1562,8 +1740,8 @@ function RUNTIME:OnManagedTankDestroyed(spawnState, tank, attacker)
     end
 
     local currency = tonumber(IsValid(tank) and tank.TF_MVM_CurrencyValue or 0) or 0
-    if currency > 0 and TF_MVM.Economy then
-        TF_MVM.Economy:Distribute(currency, attacker)
+    if currency > 0 and IsValid(tank) then
+        DropCurrencyPacks(tank:GetPos(), currency)
     end
 
     self.ManagedTanks[tank] = nil
@@ -1590,8 +1768,8 @@ function RUNTIME:HandleManagedBotDeath(bot, attacker)
     end
 
     local currency = tonumber(bot.TF_MVM_CurrencyValue or 0) or 0
-    if currency > 0 and TF_MVM.Economy then
-        TF_MVM.Economy:Distribute(currency, attacker)
+    if currency > 0 then
+        DropCurrencyPacks(bot:GetPos(), currency)
     end
 
     timer.Simple(0.2, function()

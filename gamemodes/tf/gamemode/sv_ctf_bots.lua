@@ -4,6 +4,7 @@ if CLIENT then return end
 --[["For epic developers who don't have friends to play with. 😎"]]--
 --[[ONLY MEAN TO BE USED WITHIN Team Fortress 2 Gamemode Dev!!!]]--
 
+-- secret note: kern is loved.
 local profiles = {}
 local bots = {} 
 
@@ -17,7 +18,7 @@ local names = {
 		"Still Alive",
 		"Hat-Wearing MAN",
 		"Me",
-		"Numnutz",
+		"Numnutz", 
 		"H@XX0RZ",
 		"The G-Man",
 		"Chell",
@@ -208,6 +209,8 @@ local tf_bot_perf_debug = CreateConVar("tf_bot_perf_debug", "0", {FCVAR_ARCHIVE,
 local tf_bot_sense_interval = CreateConVar("tf_bot_sense_interval", "0.35", {FCVAR_ARCHIVE, FCVAR_NOTIFY})
 local tf_bot_objective_interval = CreateConVar("tf_bot_objective_interval", "1.00", {FCVAR_ARCHIVE, FCVAR_NOTIFY})
 local tf_bot_avoidance_interval = CreateConVar("tf_bot_avoidance_interval", "0.15", {FCVAR_ARCHIVE, FCVAR_NOTIFY})
+local tf_avoidteammates = CreateConVar("tf_avoidteammates", "1", {FCVAR_ARCHIVE, FCVAR_NOTIFY}, "Enable teammate avoidance for bots.")
+local tf_avoidteammates_pushaway = CreateConVar("tf_avoidteammates_pushaway", "1", {FCVAR_ARCHIVE, FCVAR_NOTIFY}, "Enable push-away steering for bot teammate avoidance.")
 local tf_bot_repath_interval = CreateConVar("tf_bot_repath_interval", "2.20", {FCVAR_ARCHIVE, FCVAR_NOTIFY})
 local tf_bot_nav_budget_ms = CreateConVar("tf_bot_nav_budget_ms", "1.50", {FCVAR_ARCHIVE, FCVAR_NOTIFY})
 local tf_bot_perf_scale_start = CreateConVar("tf_bot_perf_scale_start", "8", {FCVAR_ARCHIVE, FCVAR_NOTIFY})
@@ -216,6 +219,32 @@ local tf_bot_breakable_check_interval = CreateConVar("tf_bot_breakable_check_int
 local tf_bot_perf_hard_threshold = CreateConVar("tf_bot_perf_hard_threshold", "16", {FCVAR_ARCHIVE, FCVAR_NOTIFY}, "Bot count threshold where extra throttling kicks in.")
 local tf_bot_perf_hard_multiplier = CreateConVar("tf_bot_perf_hard_multiplier", "1.6", {FCVAR_ARCHIVE, FCVAR_NOTIFY}, "Extra interval multiplier used above hard threshold.")
 local tf_bot_disable_social_look_highload = CreateConVar("tf_bot_disable_social_look_highload", "1", {FCVAR_ARCHIVE, FCVAR_NOTIFY}, "Disable friendly look-at-me scan when high-load threshold is reached.")
+-- Source-inspired vision CVars from tf_bot_vision.cpp.
+local tf_bot_choose_target_interval = CreateConVar("tf_bot_choose_target_interval", "0.30", {FCVAR_ARCHIVE, FCVAR_NOTIFY}, "How often, in seconds, a bot can reselect its target.")
+local tf_bot_sniper_choose_target_interval = CreateConVar("tf_bot_sniper_choose_target_interval", "3.0", {FCVAR_ARCHIVE, FCVAR_NOTIFY}, "How often a zoomed sniper bot can reselect its target.")
+local tf_bot_vision_range = CreateConVar("tf_bot_vision_range", "6000", {FCVAR_ARCHIVE, FCVAR_NOTIFY}, "Maximum vision range for bot target acquisition.")
+local tf_bot_target_lost_time = CreateConVar("tf_bot_target_lost_time", "1.25", {FCVAR_ARCHIVE, FCVAR_NOTIFY}, "How long bots remember a target after losing line of sight.")
+local tf_bot_health_critical_ratio = CreateConVar("tf_bot_health_critical_ratio", "0.30", {FCVAR_ARCHIVE, FCVAR_NOTIFY}, "Critical health ratio where bots start emergency healing behavior.")
+local tf_bot_health_ok_ratio = CreateConVar("tf_bot_health_ok_ratio", "0.80", {FCVAR_ARCHIVE, FCVAR_NOTIFY}, "General health ratio where bots may seek healing.")
+local tf_bot_health_search_near_range = CreateConVar("tf_bot_health_search_near_range", "1000", {FCVAR_ARCHIVE, FCVAR_NOTIFY}, "Near health search range for healthy bots.")
+local tf_bot_health_search_far_range = CreateConVar("tf_bot_health_search_far_range", "2000", {FCVAR_ARCHIVE, FCVAR_NOTIFY}, "Far health search range for hurt bots.")
+local tf_bot_ammo_search_range = CreateConVar("tf_bot_ammo_search_range", "5000", {FCVAR_ARCHIVE, FCVAR_NOTIFY}, "Maximum search range for ammo scavenging.")
+local tf_bot_retreat_to_cover_range = CreateConVar("tf_bot_retreat_to_cover_range", "1000", {FCVAR_ARCHIVE, FCVAR_NOTIFY}, "Distance budget for retreat-to-cover behavior.")
+local tf_bot_wait_in_cover_min_time = CreateConVar("tf_bot_wait_in_cover_min_time", "1.0", {FCVAR_ARCHIVE, FCVAR_NOTIFY}, "Minimum cover wait time during retreat.")
+local tf_bot_wait_in_cover_max_time = CreateConVar("tf_bot_wait_in_cover_max_time", "2.0", {FCVAR_ARCHIVE, FCVAR_NOTIFY}, "Maximum cover wait time during retreat.")
+local tf_bot_medic_stop_follow_range = CreateConVar("tf_bot_medic_stop_follow_range", "75", {FCVAR_ARCHIVE, FCVAR_NOTIFY}, "How close medics stay to their primary patient before stopping movement.")
+local tf_bot_medic_start_follow_range = CreateConVar("tf_bot_medic_start_follow_range", "250", {FCVAR_ARCHIVE, FCVAR_NOTIFY}, "Distance where medics begin actively following their patient.")
+local tf_bot_medic_max_heal_range = CreateConVar("tf_bot_medic_max_heal_range", "600", {FCVAR_ARCHIVE, FCVAR_NOTIFY}, "Maximum practical heal beam range for medic behavior.")
+local tf_bot_medic_max_call_response_range = CreateConVar("tf_bot_medic_max_call_response_range", "1000", {FCVAR_ARCHIVE, FCVAR_NOTIFY}, "Maximum range for responding to urgent nearby heal needs.")
+local tf_bot_sniper_flee_range = CreateConVar("tf_bot_sniper_flee_range", "400", {FCVAR_ARCHIVE, FCVAR_NOTIFY}, "If threat is closer than this, sniper retreats.")
+local tf_bot_sniper_melee_range = CreateConVar("tf_bot_sniper_melee_range", "200", {FCVAR_ARCHIVE, FCVAR_NOTIFY}, "If threat is closer than this, sniper swaps to melee.")
+local tf_bot_sniper_linger_time = CreateConVar("tf_bot_sniper_linger_time", "5", {FCVAR_ARCHIVE, FCVAR_NOTIFY}, "How long sniper lingers after losing target before relocating.")
+local tf_bot_sniper_patience_duration = CreateConVar("tf_bot_sniper_patience_duration", "10", {FCVAR_ARCHIVE, FCVAR_NOTIFY}, "How long sniper waits at a home spot without seeing threats before picking a new one.")
+local tf_bot_sniper_allow_opportunistic = CreateConVar("tf_bot_sniper_allow_opportunistic", "1", {FCVAR_ARCHIVE, FCVAR_NOTIFY}, "Allow snipers to opportunistically engage while moving to home spot.")
+local tf_bot_spy_sap_range = CreateConVar("tf_bot_spy_sap_range", "80", {FCVAR_ARCHIVE, FCVAR_NOTIFY}, "Range where spies commit to sapping enemy buildings.")
+local tf_bot_spy_backstab_range = CreateConVar("tf_bot_spy_backstab_range", "150", {FCVAR_ARCHIVE, FCVAR_NOTIFY}, "Range where spies commit to backstab attempts.")
+local tf_bot_spy_lurk_time_min = CreateConVar("tf_bot_spy_lurk_time_min", "3.0", {FCVAR_ARCHIVE, FCVAR_NOTIFY}, "Minimum spy lurk duration before selecting a new hide spot.")
+local tf_bot_spy_lurk_time_max = CreateConVar("tf_bot_spy_lurk_time_max", "5.0", {FCVAR_ARCHIVE, FCVAR_NOTIFY}, "Maximum spy lurk duration before selecting a new hide spot.")
 
 local function IsBotForcedMeleeOnly(bot)
 	if not IsValid(bot) then return false end
@@ -248,6 +277,14 @@ local function CVBool(cv, fallback)
 		return cv:GetBool()
 	end
 	return fallback
+end
+
+local function IsCrouchNavArea(area)
+	if not area then return false end
+	local ok, hasCrouch = pcall(function()
+		return area:HasAttributes(NAV_MESH_CROUCH)
+	end)
+	return ok and hasCrouch == true
 end
 
 concommand.Add("tf_bot_perf_profile", function(ply, _, args)
@@ -534,6 +571,160 @@ local function IsValidTarget(bot,target)
 	return false
 
 end
+
+local function GetVisionRecognizeTime(bot)
+	local diff = tonumber(bot and bot.Difficulty) or tonumber(bot_diff:GetInt()) or 1
+	if diff <= 0 then return 1.0 end
+	if diff == 1 then return 0.5 end
+	if diff == 2 then return 0.3 end
+	return 0.2
+end
+
+local function GetVisionRange(bot)
+	if IsValid(bot) and tonumber(bot.VisionLimits) and tonumber(bot.VisionLimits) > 0 then
+		return tonumber(bot.VisionLimits)
+	end
+	return math.max(CVFloat(tf_bot_vision_range, 6000), 256)
+end
+
+local function GetTargetChooseInterval(bot)
+	if not IsValid(bot) then
+		return math.max(CVFloat(tf_bot_choose_target_interval, 0.30), 0.05)
+	end
+
+	local base = math.max(CVFloat(tf_bot_choose_target_interval, 0.30), 0.05)
+	if bot.playerclass == "Sniper" then
+		local wep = bot:GetActiveWeapon()
+		if IsValid(wep) and wep.ZoomStatus then
+			return math.max(CVFloat(tf_bot_sniper_choose_target_interval, 3.0), base)
+		end
+	end
+	return base
+end
+
+local function EnsureVisionMemory(bot)
+	bot._visionMemory = bot._visionMemory or {}
+	return bot._visionMemory
+end
+
+local function UpdateVisionMemory(bot, target, isVisible)
+	if not IsValid(bot) or not IsValid(target) then return nil end
+	local mem = EnsureVisionMemory(bot)
+	local id = target:EntIndex()
+	local now = CurTime()
+	local info = mem[id]
+	if not info then
+		info = { firstSeen = now, lastSeen = 0, recognized = false }
+		mem[id] = info
+	end
+
+	if isVisible then
+		if not info.firstSeen or info.firstSeen <= 0 then
+			info.firstSeen = now
+		end
+		info.lastSeen = now
+		if (now - info.firstSeen) >= GetVisionRecognizeTime(bot) then
+			info.recognized = true
+		end
+	end
+
+	return info
+end
+
+local function CanTrackTarget(bot, target)
+	if not IsValid(bot) or not IsValid(target) or not IsValidTarget(bot, target) then
+		return false
+	end
+
+	local distance = bot:GetPos():Distance(target:GetPos())
+	local maxRange = GetVisionRange(bot)
+	if distance > maxRange then
+		return false
+	end
+
+	local visible = bot:Visible(target)
+	local info = UpdateVisionMemory(bot, target, visible)
+	if not info then return false end
+
+	if visible then
+		return info.recognized == true
+	end
+
+	if info.recognized and info.lastSeen and (CurTime() - info.lastSeen) <= math.max(CVFloat(tf_bot_target_lost_time, 1.25), 0.1) then
+		return true
+	end
+
+	return false
+end
+
+local function IsThreatImmediate(bot, target)
+	if not IsValid(bot) or not IsValid(target) then return false end
+	local dist = bot:GetPos():Distance(target:GetPos())
+	local className = string.lower(tostring(target:GetClass() or ""))
+	local visible = bot:Visible(target)
+
+	if dist <= 500 then
+		return true
+	end
+
+	-- Source-style sentry urgency at medium range.
+	if className == "obj_sentrygun" and visible and dist <= 1650 then
+		return true
+	end
+
+	if not visible then
+		return false
+	end
+
+	-- Snipers with line of sight are dangerous at long range.
+	if target.IsPlayer and target:IsPlayer() then
+		local pclass = string.lower(tostring((target.GetPlayerClass and target:GetPlayerClass()) or target.playerclass or ""))
+		if pclass == "sniper" and dist <= 3000 then
+			return true
+		end
+	end
+
+	return dist <= 1200
+end
+
+local function ScoreThreat(bot, target)
+	if not IsValid(bot) or not IsValid(target) then
+		return -math.huge
+	end
+
+	local dist = bot:GetPos():Distance(target:GetPos())
+	local score = 0
+	local visible = bot:Visible(target)
+	local class = target:GetClass()
+	local pclass = target.IsPlayer and target:IsPlayer() and string.lower(tostring((target.GetPlayerClass and target:GetPlayerClass()) or target.playerclass or "")) or ""
+
+	-- Source-inspired "fear sentry in range" behavior.
+	if class == "obj_sentrygun" and dist <= 1100 then
+		score = score + 5000
+	end
+	local isMvM = string.find(string.lower(game.GetMap() or ""), "mvm_", 1, true) ~= nil
+	local isMvMInvader = bot:Team() == TEAM_BLU or bot:Team() == TF_TEAM_PVE_INVADERS or bot.IsMVMRobot == true
+	if isMvM and isMvMInvader and pclass == "spy" and dist <= 1000 then
+		-- Source behavior strongly biases MvM invaders to kill nearby spies.
+		score = score + 3200
+	end
+	local diff = tonumber(bot.Difficulty) or tonumber(bot_diff:GetInt()) or 1
+	if diff >= 2 and pclass == "medic" and dist <= 1800 then
+		score = score + 450
+	end
+	if IsThreatImmediate(bot, target) then
+		score = score + 1500
+	end
+	if visible then
+		score = score + 1000
+	end
+	if target.IsPlayer and target:IsPlayer() and target:Team() ~= TEAM_SPECTATOR then
+		score = score + 250
+	end
+
+	score = score - dist
+	return score
+end
 function lookForNearestHealthPack(bot)
 	
 	local npcs = {}
@@ -557,30 +748,68 @@ function lookForNearestAmmoPack(bot)
 	
 end
 function lookForNearestPlayer(bot)
-	local npcs = {}
-		for k,v in ipairs(GetNearbyEntities(bot, 2048, GetAdaptiveInterval(CVFloat(tf_bot_sense_interval, 0.25), 0.05))) do
-			if (v:IsPlayer() and v:Health() > 1 and IsValidTarget(bot,v) and (bot:Visible(v))) then
-				table.insert(npcs, v)	
+	if not IsValid(bot) then return nil end
+	local bestTarget, bestScore = nil, -math.huge
+	local range = math.min(GetVisionRange(bot), 8192)
+	for _, v in ipairs(GetNearbyEntities(bot, range, GetAdaptiveInterval(CVFloat(tf_bot_sense_interval, 0.25), 0.05))) do
+		if v:IsPlayer() and v:Health() > 1 and IsValidTarget(bot, v) and CanTrackTarget(bot, v) then
+			local score = ScoreThreat(bot, v)
+			if score > bestScore then
+				bestScore = score
+				bestTarget = v
 			end
 		end
-		return table.Random(npcs)
+	end
+	return bestTarget
 end
 function lookForNearestEnemyPlayer(bot)
-	local npcs = {}
-		for k,v in ipairs(GetNearbyEntities(bot, 2048, GetAdaptiveInterval(CVFloat(tf_bot_sense_interval, 0.25), 0.05))) do
-			if (v:IsPlayer() and v:Health() > 1 and IsValidTarget(bot,v)) then
-				table.insert(npcs, v)	
+	if not IsValid(bot) then return nil end
+	local bestTarget, bestScore = nil, -math.huge
+	local range = math.min(GetVisionRange(bot), 8192)
+	for _, v in ipairs(GetNearbyEntities(bot, range, GetAdaptiveInterval(CVFloat(tf_bot_sense_interval, 0.25), 0.05))) do
+		if IsValid(v) and v:IsPlayer() and v:Health() > 1 and IsValidTarget(bot, v) and CanTrackTarget(bot, v) then
+			local score = ScoreThreat(bot, v)
+			if score > bestScore then
+				bestScore = score
+				bestTarget = v
 			end
 		end
-		return table.Random(npcs)
+	end
+	return bestTarget
 end
 
 local function AcquireEnemyTarget(bot)
 	if not IsValid(bot) then return nil end
+	local now = CurTime()
+
+	if IsValid(bot.TargetEnt) and CanTrackTarget(bot, bot.TargetEnt) and bot._nextTargetReselectTime and now < bot._nextTargetReselectTime then
+		return bot.TargetEnt
+	end
+
 	local target = lookForNearestPlayer(bot)
 	if not IsValid(target) then
 		target = lookForNearestEnemyPlayer(bot)
 	end
+
+	if not IsValid(target) then
+		local range = math.min(GetVisionRange(bot), 8192)
+		local bestTarget, bestScore = nil, -math.huge
+		for _, v in ipairs(GetNearbyEntities(bot, range, GetAdaptiveInterval(CVFloat(tf_bot_sense_interval, 0.25), 0.05))) do
+			if IsValidTarget(bot, v) and CanTrackTarget(bot, v) then
+				local className = v:GetClass()
+				if v:IsPlayer() or className == "obj_sentrygun" or className == "obj_dispenser" or className == "obj_teleporter" then
+					local score = ScoreThreat(bot, v)
+					if score > bestScore then
+						bestScore = score
+						bestTarget = v
+					end
+				end
+			end
+		end
+		target = bestTarget
+	end
+
+	bot._nextTargetReselectTime = now + GetTargetChooseInterval(bot)
 	if IsValid(target) and IsValidTarget(bot, target) then
 		return target
 	end
@@ -862,6 +1091,25 @@ local function IsMvMBombCarrier(bot)
 	return intel.Carrier:EntIndex() == bot:EntIndex()
 end
 
+local function IsAnyFlagCarrier(bot)
+	if not IsValid(bot) then return false end
+	local entIdx = bot:EntIndex()
+
+	for _, intel in ipairs(GetCachedEntities("item_teamflag")) do
+		if IsValid(intel) and IsValid(intel.Carrier) and intel.Carrier:EntIndex() == entIdx then
+			return true
+		end
+	end
+
+	for _, intel in ipairs(GetCachedEntities("item_teamflag_mvm")) do
+		if IsValid(intel) and IsValid(intel.Carrier) and intel.Carrier:EntIndex() == entIdx then
+			return true
+		end
+	end
+
+	return false
+end
+
 local function ShouldCarrierIgnoreEnemy(bot, enemy)
 	if not IsMvMBombCarrier(bot) then return false end
 	if not IsValid(enemy) or not enemy:IsPlayer() then return true end
@@ -1011,20 +1259,14 @@ local function GetMvMNavObjectiveAnchor(bot)
 	local bombCarrier = IsValid(bombIntel) and bombIntel.Carrier or nil
 
 	if IsMvMInvaderBot(bot) then
-		if bot:GetNWBool("InRespawnRoom", false) then
-			anchor = GetSpawnExitTargetPos(bot)
-		elseif IsValid(bombCarrier) and not bombCarrier:IsFriendly(bot) then
+		if IsValid(bombCarrier) then
 			if bombCarrier:EntIndex() == bot:EntIndex() then
 				anchor = deployPos
 			else
 				anchor = bombCarrier:GetPos()
 			end
 		elseif IsValid(bombIntel) then
-			if IsMvMBombAtHome(bombIntel) then
-				anchor = deployPos or bombIntel:GetPos()
-			else
-				anchor = bombIntel:GetPos()
-			end
+			anchor = bombIntel:GetPos()
 		else
 			anchor = deployPos
 		end
@@ -1072,29 +1314,6 @@ local function SelectMvMAction(bot, controller, shouldFollowCarrierFn)
 	local bombIntel = GetMvMBombIntel()
 	local bombCarrier = IsValid(bombIntel) and bombIntel.Carrier or nil
 
-	if IsMvMInvaderBot(bot) and bot:GetNWBool("InRespawnRoom", false) then
-		local exitPos = GetSpawnExitTargetPos(bot)
-		if exitPos then
-			decision.action = MvMAction.LeaveSpawn
-			decision.targetPos = exitPos
-			return decision
-		end
-	end
-
-	-- Sentry busters commit to buildings and ignore bomb handling.
-	if IsMvMInvaderBot(bot) and IsMvMSentryBuster(bot) then
-		local buildingTarget = SelectSentryBusterTarget(bot)
-		if IsValid(buildingTarget) then
-			decision.action = MvMAction.DestroySentries
-			decision.targetPos = buildingTarget:GetPos()
-			decision.targetEnt = buildingTarget
-			return decision
-		end
-		decision.action = MvMAction.Roam
-		decision.targetPos = deployPos
-		return decision
-	end
-
 	-- RED side in MvM: defend bomb/hatch.
 	if bot:Team() == TEAM_RED then
 		if IsValid(bombCarrier) and not bombCarrier:IsFriendly(bot) then
@@ -1132,69 +1351,38 @@ local function SelectMvMAction(bot, controller, shouldFollowCarrierFn)
 		decision.targetPos = IsValid(bot.TargetEnt) and bot.TargetEnt:GetPos() or deployPos
 		return decision
 	end
-	if bot:GetPlayerClass() == "engineer" or bot.playerclass == "medic" then
-		decision.action = MvMAction.Roam
-		decision.targetPos = IsValid(bot.TargetEnt) and bot.TargetEnt:GetPos() or deployPos
-		return decision
-	end
 
-	local gateTargetPos = nil
-	if IsMvMGateBot(bot) then
-		gateTargetPos = GetMvMOpenGateTargetPos(bot)
-	end
-
-	if IsValid(bombCarrier) and not bombCarrier:IsFriendly(bot) then
+	-- BLU-side MvM invaders:
+	-- 1) If there is a bomb carrier, everyone follows that carrier.
+	-- 2) If there is no bomb carrier, everyone follows the bomb.
+	if IsValid(bombCarrier) then
+		decision.intelCarrier = bombCarrier
 		if bombCarrier:EntIndex() == bot:EntIndex() then
-			decision.action = gateTargetPos and MvMAction.PushGate or MvMAction.DeliverBomb
-			decision.targetPos = gateTargetPos or deployPos
+			decision.action = MvMAction.DeliverBomb
+			decision.targetPos = deployPos or bombCarrier:GetPos()
 			decision.isCarryingBomb = true
 			decision.routeType = "mvm_bomb_carrier"
 			decision.ignoreCombat = true
 			return decision
 		end
 
-		local escortCap = 4
-		local escortCount = CountMvMEscortsForCarrier(bot:Team(), bombCarrier, 1200)
-		local canEscort = not bot:IsMiniBoss() and escortCount < escortCap
-		if canEscort and shouldFollowCarrierFn and shouldFollowCarrierFn(bot, bombCarrier, true) then
-			decision.action = MvMAction.EscortCarrier
-			decision.targetPos = bombCarrier:GetPos()
-			decision.intelCarrier = bombCarrier
-			decision.followCarrier = true
-			return decision
-		end
-
-		if IsMvMAggressiveBot(bot) then
-			decision.action = gateTargetPos and MvMAction.PushGate or MvMAction.DeliverBomb
-			decision.targetPos = gateTargetPos or deployPos or bombCarrier:GetPos()
-		elseif IsValid(bot.TargetEnt) then
-			decision.action = MvMAction.Roam
-			decision.targetPos = bot.TargetEnt:GetPos()
-		else
-			decision.action = MvMAction.EscortCarrier
-			decision.targetPos = bombCarrier:GetPos()
-		end
+		decision.action = MvMAction.EscortCarrier
+		decision.targetPos = bombCarrier:GetPos()
+		decision.followCarrier = true
+		decision.routeType = "mvm_push"
 		return decision
 	end
 
 	if IsValid(bombIntel) then
-		if IsMvMBombAtHome(bombIntel) then
-			if IsValid(bot.TargetEnt) then
-				decision.action = MvMAction.Roam
-				decision.targetPos = bot.TargetEnt:GetPos()
-			else
-				decision.action = gateTargetPos and MvMAction.PushGate or MvMAction.DeliverBomb
-				decision.targetPos = gateTargetPos or deployPos or bombIntel:GetPos()
-			end
-		else
-			decision.action = MvMAction.FetchBomb
-			decision.targetPos = bombIntel:GetPos()
-		end
+		decision.action = MvMAction.FetchBomb
+		decision.targetPos = bombIntel:GetPos()
+		decision.routeType = "mvm_push"
 		return decision
 	end
 
-	decision.action = gateTargetPos and MvMAction.PushGate or MvMAction.DeliverBomb
-	decision.targetPos = gateTargetPos or deployPos
+	decision.action = MvMAction.DeliverBomb
+	decision.targetPos = deployPos
+	decision.routeType = "mvm_push"
 	return decision
 end
 
@@ -1229,9 +1417,22 @@ end
 local function IsNavAreaSafe(nav, ply)
     local center = nav:GetCenter()
 	local enemy = ply.TargetEnt
-	if (enemy != nil) then
-		if enemy:GetPos():Distance(center) < 80 then
+	if IsValid(enemy) then
+		local dist = enemy:GetPos():Distance(center)
+		if dist < 500 then
 			return false
+		end
+
+		if dist < 1400 then
+			local tr = util.TraceLine({
+				start = enemy:EyePos(),
+				endpos = center + Vector(0, 0, 64),
+				filter = { enemy },
+				mask = MASK_SOLID
+			})
+			if tr.Fraction > 0.92 then
+				return false
+			end
 		end
 	end
     return true
@@ -1894,6 +2095,7 @@ function TFBot_ApplyRandomLoadout(bot, opts)
 	end
 
 	local changed = false
+	--[[
 	for _, slot in ipairs(BOT_LOADOUT_SLOTS) do
 		local chosen = bot._savedRandomLoadout[slot]
 		if isstring(chosen) and chosen ~= "" then
@@ -1910,7 +2112,7 @@ function TFBot_ApplyRandomLoadout(bot, opts)
 				end
 			end
 		end
-	end
+	end]]
 	if not changed then
 		SetLoadoutReason(bot, "no_changed_slots")
 		BotLoadoutDebug(bot, "abort: no slot changed")
@@ -1985,6 +2187,347 @@ local function SafeWeaponAmmo1(weapon, owner)
 		end
 	end
 	return -1
+end
+
+local function GetEntityTargetPos(ent)
+	if not IsValid(ent) then return nil end
+	if ent.Pos then
+		return ent.Pos
+	end
+	if ent.WorldSpaceCenter then
+		return ent:WorldSpaceCenter()
+	end
+	return ent:GetPos()
+end
+
+local function IsBlueSideTeamNum(teamNum)
+	return teamNum == TEAM_BLU or teamNum == TF_TEAM_PVE_INVADERS
+end
+
+local function IsFriendlyToBot(bot, ent)
+	if not IsValid(bot) or not IsValid(ent) then return false end
+	local botTeam, entTeam
+	if GAMEMODE and GAMEMODE.EntityTeam then
+		botTeam = GAMEMODE:EntityTeam(bot)
+		entTeam = GAMEMODE:EntityTeam(ent)
+	else
+		botTeam = (isfunction(bot.Team) and bot:Team()) or TEAM_NEUTRAL
+		entTeam = (isfunction(ent.Team) and ent:Team()) or TEAM_NEUTRAL
+	end
+	if IsBlueSideTeamNum(botTeam) then
+		return IsBlueSideTeamNum(entTeam)
+	end
+	return botTeam == entTeam
+end
+
+local function IsUsableFriendlyDispenser(bot, ent)
+	if not IsValid(bot) or not IsValid(ent) then return false end
+	if ent:GetClass() ~= "obj_dispenser" then return false end
+	if not IsFriendlyToBot(bot, ent) then return false end
+
+	if isfunction(ent.IsBuilding) and ent:IsBuilding() then return false end
+	if isfunction(ent.IsPlacing) and ent:IsPlacing() then return false end
+	if isfunction(ent.IsDisabled) and ent:IsDisabled() then return false end
+	return true
+end
+
+local function IsClosestPlayerEnemy(bot, ent, radius)
+	if not IsValid(bot) or not IsValid(ent) then return false end
+	local pos = GetEntityTargetPos(ent) or ent:GetPos()
+	local closestDist = math.huge
+	local closestPlayer = nil
+
+	for _, pl in ipairs(ents.FindInSphere(pos, radius or 1200)) do
+		if not IsValid(pl) or not pl:IsPlayer() or not pl:Alive() then continue end
+		local t = pl:Team()
+		if t == TEAM_SPECTATOR or t == TEAM_NEUTRAL then continue end
+		local d = pl:GetPos():DistToSqr(pos)
+		if d < closestDist then
+			closestDist = d
+			closestPlayer = pl
+		end
+	end
+
+	return IsValid(closestPlayer) and not IsFriendlyToBot(bot, closestPlayer)
+end
+
+local function ComputeHealthSearchRange(bot)
+	local maxHealth = math.max(bot:GetMaxHealth(), 1)
+	local healthRatio = math.Clamp(bot:Health() / maxHealth, 0, 1)
+	local critical = math.Clamp(CVFloat(tf_bot_health_critical_ratio, 0.30), 0.05, 0.95)
+	local okRatio = math.Clamp(CVFloat(tf_bot_health_ok_ratio, 0.80), critical + 0.05, 1.0)
+	local nearRange = math.max(CVFloat(tf_bot_health_search_near_range, 1000), 250)
+	local farRange = math.max(CVFloat(tf_bot_health_search_far_range, 2000), nearRange)
+	local t = math.Clamp((healthRatio - critical) / math.max(okRatio - critical, 0.01), 0, 1)
+	return farRange + t * (nearRange - farRange)
+end
+
+local function IsHealthSourceForBot(bot, ent)
+	if not IsValid(bot) or not IsValid(ent) then return false end
+	local className = string.lower(tostring(ent:GetClass() or ""))
+
+	if className == "func_regenerate" then
+		local teamNum = tonumber(ent.TeamNum or ent:GetNWInt("TeamNum", TEAM_NEUTRAL)) or TEAM_NEUTRAL
+		if teamNum == TEAM_NEUTRAL then return false end
+		return IsBlueSideTeamNum(teamNum) and IsBlueSideTeamNum(bot:Team()) or teamNum == bot:Team()
+	end
+
+	if string.find(className, "item_healthkit", 1, true) or string.find(className, "item_healthvial", 1, true) then
+		return not ent:IsEffectActive(EF_NODRAW)
+	end
+
+	return IsUsableFriendlyDispenser(bot, ent)
+end
+
+local function IsAmmoSourceForBot(bot, ent)
+	if not IsValid(bot) or not IsValid(ent) then return false end
+	local className = string.lower(tostring(ent:GetClass() or ""))
+
+	if className == "func_regenerate" then
+		local teamNum = tonumber(ent.TeamNum or ent:GetNWInt("TeamNum", TEAM_NEUTRAL)) or TEAM_NEUTRAL
+		if teamNum == TEAM_NEUTRAL then return false end
+		return IsBlueSideTeamNum(teamNum) and IsBlueSideTeamNum(bot:Team()) or teamNum == bot:Team()
+	end
+
+	if className == "tf_ammo_pack" or string.find(className, "item_ammopack", 1, true) then
+		return not ent:IsEffectActive(EF_NODRAW)
+	end
+
+	return IsUsableFriendlyDispenser(bot, ent)
+end
+
+local function FindBestHealthSource(bot)
+	if not IsValid(bot) then return nil end
+
+	local range = ComputeHealthSearchRange(bot)
+	local best, bestScore = nil, math.huge
+	local threat = IsValid(bot.TargetEnt) and bot.TargetEnt or nil
+
+	for _, ent in ipairs(GetNearbyEntities(bot, range, GetAdaptiveInterval(CVFloat(tf_bot_sense_interval, 0.25), 0.05))) do
+		if not IsHealthSourceForBot(bot, ent) then continue end
+		if IsClosestPlayerEnemy(bot, ent, 1200) then continue end
+
+		local pos = GetEntityTargetPos(ent)
+		if not pos then continue end
+
+		local score = bot:GetPos():DistToSqr(pos)
+		local className = ent:GetClass()
+		if className == "obj_dispenser" then
+			score = score * 1.12
+		elseif className == "func_regenerate" then
+			score = score * 0.92
+		end
+
+		if IsValid(threat) then
+			local threatDist = threat:GetPos():DistToSqr(pos)
+			if threatDist < (500 * 500) then
+				score = score + (500 * 500 - threatDist)
+			end
+		end
+
+		if score < bestScore then
+			best = ent
+			bestScore = score
+		end
+	end
+
+	return best
+end
+
+local function IsWeaponDry(owner, weapon)
+	if not IsValid(owner) or not IsValid(weapon) then return false end
+	if weapon.IsMeleeWeapon then return false end
+
+	local clip = weapon:Clip1()
+	local ammo = SafeWeaponAmmo1(weapon, owner)
+	if clip == -1 and ammo == -1 then
+		-- Weapons without clip/ammo counters should not force scavenging.
+		return false
+	end
+	local hasClip = isnumber(clip) and clip > 0
+	local hasAmmo = isnumber(ammo) and ammo > 0
+	return not hasClip and not hasAmmo
+end
+
+local function IsBotAmmoLow(bot)
+	if not IsValid(bot) then return false end
+
+	local activeWeapon = bot:GetActiveWeapon()
+	if IsValid(activeWeapon) and IsWeaponDry(bot, activeWeapon) then
+		return true
+	end
+
+	local rangedCount, dryCount = 0, 0
+	for _, wep in ipairs(bot:GetWeapons()) do
+		if IsValid(wep) and not wep.IsMeleeWeapon then
+			rangedCount = rangedCount + 1
+			if IsWeaponDry(bot, wep) then
+				dryCount = dryCount + 1
+			end
+		end
+	end
+
+	return rangedCount > 0 and dryCount >= rangedCount
+end
+
+local function FindBestAmmoSource(bot)
+	if not IsValid(bot) then return nil end
+
+	local range = math.max(CVFloat(tf_bot_ammo_search_range, 5000), 500)
+	local best, bestScore = nil, math.huge
+
+	for _, ent in ipairs(GetNearbyEntities(bot, range, GetAdaptiveInterval(CVFloat(tf_bot_sense_interval, 0.25), 0.05))) do
+		if not IsAmmoSourceForBot(bot, ent) then continue end
+		if IsClosestPlayerEnemy(bot, ent, 1000) then continue end
+
+		local pos = GetEntityTargetPos(ent)
+		if not pos then continue end
+
+		local score = bot:GetPos():DistToSqr(pos)
+		if ent:GetClass() == "obj_dispenser" then
+			score = score * 1.15
+		end
+
+		if score < bestScore then
+			best = ent
+			bestScore = score
+		end
+	end
+
+	return best
+end
+
+local function ShouldSeekHealth(bot)
+	if not IsValid(bot) then return false end
+	local maxHealth = math.max(bot:GetMaxHealth(), 1)
+	local healthRatio = bot:Health() / maxHealth
+	local criticalRatio = math.Clamp(CVFloat(tf_bot_health_critical_ratio, 0.30), 0.05, 0.95)
+	local okRatio = math.Clamp(CVFloat(tf_bot_health_ok_ratio, 0.80), criticalRatio + 0.05, 1.0)
+	local onFire = bot:IsOnFire()
+	local inCombat = IsValid(bot.TargetEnt) and bot:Visible(bot.TargetEnt)
+
+	if inCombat or bot.playerclass == "Sniper" then
+		return onFire or healthRatio < criticalRatio
+	end
+
+	return onFire or healthRatio < okRatio
+end
+
+local function NeedsBarrageReloadRetreat(bot)
+	if not IsValid(bot) then return false end
+	local diff = tonumber(bot.Difficulty) or tonumber(bot_diff:GetInt()) or 1
+	if diff < 2 then return false end
+
+	local primary = bot:GetWeapons()[1]
+	if not IsValid(primary) then return false end
+
+	local className = string.lower(tostring(primary:GetClass() or ""))
+	local isBarrage = string.find(className, "rocketlauncher", 1, true)
+		or string.find(className, "grenadelauncher", 1, true)
+		or string.find(className, "pipebomblauncher", 1, true)
+	if not isBarrage then return false end
+
+	local clip = primary:Clip1()
+	local ammo = SafeWeaponAmmo1(primary, bot)
+	return isnumber(clip) and clip <= 1 and isnumber(ammo) and ammo > 0
+end
+
+local function FindRetreatCoverPos(bot, controller)
+	if not IsValid(bot) or not IsValid(controller) then return nil end
+
+	local area = GetSafeRetreatArea(bot)
+	if area and area.GetCenter then
+		return area:GetCenter()
+	end
+
+	local retreatRange = math.max(CVFloat(tf_bot_retreat_to_cover_range, 1000), 300)
+	local threat = IsValid(bot.TargetEnt) and bot.TargetEnt or nil
+
+	if IsValid(threat) then
+		local away = bot:GetPos() - threat:GetPos()
+		away.z = 0
+		if away:LengthSqr() < 1 then
+			away = Vector(math.Rand(-1, 1), math.Rand(-1, 1), 0)
+		end
+		away:Normalize()
+		local pivot = bot:GetPos() + away * (retreatRange * 0.75)
+		local cover = controller:FindSpot("random", { radius = retreatRange, pos = pivot, type = "exposed" })
+		if cover then return cover end
+	end
+
+	return controller:FindSpot("random", { radius = retreatRange, pos = bot:GetPos(), type = "exposed" })
+end
+
+local function ShouldRetreatToCover(bot)
+	if not IsValid(bot) then return false end
+	if not IsValid(bot.TargetEnt) then return false end
+	if IsMvMInvaderBot(bot) then return false end
+	if not IsThreatImmediate(bot, bot.TargetEnt) then return false end
+
+	local maxHealth = math.max(bot:GetMaxHealth(), 1)
+	local healthRatio = bot:Health() / maxHealth
+	local criticalRatio = math.Clamp(CVFloat(tf_bot_health_critical_ratio, 0.30), 0.05, 0.95)
+	if healthRatio < criticalRatio or bot:IsOnFire() then
+		return true
+	end
+
+	return NeedsBarrageReloadRetreat(bot)
+end
+
+local function UpdateBotMaintenanceAction(bot, controller)
+	if not IsValid(bot) or not IsValid(controller) then return end
+	if not bot.TFBot or not bot:Alive() then return end
+	if IsMvMInvaderBot(bot) then return end
+	if IsMvMBombCarrier(bot) then return end
+	if bot:GetNWBool("Taunting", false) then return end
+
+	bot._nextMaintainCheck = bot._nextMaintainCheck or 0
+	if bot._nextMaintainCheck > CurTime() then
+		return
+	end
+	bot._nextMaintainCheck = CurTime() + math.Rand(0.3, 0.5)
+
+	if ShouldRetreatToCover(bot) then
+		local retreatPos = FindRetreatCoverPos(bot, controller)
+		if retreatPos then
+			bot.botPos = retreatPos
+			bot.routeType = "safest"
+			bot._retreatUntil = CurTime() + math.Rand(
+				math.max(CVFloat(tf_bot_wait_in_cover_min_time, 1.0), 0.2),
+				math.max(CVFloat(tf_bot_wait_in_cover_max_time, 2.0), 0.3)
+			)
+		end
+		return
+	end
+
+	if bot._retreatUntil and bot._retreatUntil > CurTime() and IsValid(bot.TargetEnt) and IsThreatImmediate(bot, bot.TargetEnt) then
+		local retreatPos = FindRetreatCoverPos(bot, controller)
+		if retreatPos then
+			bot.botPos = retreatPos
+			bot.routeType = "safest"
+		end
+		return
+	end
+
+	if ShouldSeekHealth(bot) then
+		local health = FindBestHealthSource(bot)
+		if IsValid(health) then
+			bot.healthkit = health
+			bot.botPos = GetEntityTargetPos(health)
+			bot.routeType = "safest"
+			return
+		end
+	end
+
+	if IsBotAmmoLow(bot) then
+		local ammo = FindBestAmmoSource(bot)
+		if IsValid(ammo) then
+			bot.ammokit = ammo
+			bot.botPos = GetEntityTargetPos(ammo)
+			bot.routeType = "safest"
+			return
+		end
+	end
 end
 
 hook.Add("PlayerSpawn", "LeadBot_S_PlayerSpawn", function(bot)
@@ -2198,10 +2741,9 @@ hook.Add("Move", "LeadBot_Control22", function(bot, mv)
 			bot:SetViewOffsetDucked(Vector(0, 0, 48) * bot.OverrideModelScale)
 		end
 	
-		local moveawayrange = 80 -- Hammer units (default teammate avoidance radius)
-		local isMvMBot = IsMvMMap() and (bot:Team() == TEAM_BLU or bot:Team() == TF_TEAM_PVE_INVADERS or bot.IsMVMRobot)
-		if isMvMBot then
-			moveawayrange = 150 -- Hammer units (MvM bots use wider spacing)
+		local moveawayrange = 50 -- SDK parity: default teammate push-away radius
+		if IsMvMMap() then
+			moveawayrange = 150 -- SDK parity: bots stay farther apart in MvM
 		end
 		--[[
 		if controller.NextCenter > CurTime() and bot:GetNWBool("Taunting",false) != true and bot.botPos then
@@ -2215,7 +2757,7 @@ hook.Add("Move", "LeadBot_Control22", function(bot, mv)
 				end
 			end
 		end]]
-			local canRunAvoidance = true
+			local canRunAvoidance = CVBool(tf_avoidteammates, true) and CVBool(tf_avoidteammates_pushaway, true)
 			if PerfEnabled() then
 				bot._nextAvoid = bot._nextAvoid or 0
 				if bot._nextAvoid > CurTime() then
@@ -2225,69 +2767,56 @@ hook.Add("Move", "LeadBot_Control22", function(bot, mv)
 				end
 			end
 			if canRunAvoidance then
-			for k,v in ipairs(GetNearbyEntities(bot, moveawayrange, GetAdaptiveInterval(CVFloat(tf_bot_avoidance_interval, 0.10), 0.05))) do
-				if (IsValid(v) and GAMEMODE:EntityTeam(v) == bot:Team() and v:IsPlayer() and v:EntIndex() != bot:EntIndex() and bot:GetNWBool("Taunting",false) != true) then
-					local forward = bot:EyeAngles():Forward()
-					local right = bot:EyeAngles():Right()
-					local avoidVector = bot:GetPos()
-					local between = bot:GetPos() - v:GetPos()
-					local between2 = between:GetNormalized()
-					avoidVector = avoidVector + ( Vector(1,1,1) - ( between2 / moveawayrange ) ) * between
-					local vecDelta = v:WorldSpaceCenter() - bot:GetPos() + Vector(0.5,0.5,0.5) + Vector(0,0,72)
-					local vRad = v:WorldSpaceAABB()
-					vRad.z = 0
-					local flAvoidRadius = vRad:Length()
-					local flPushStrength = math.Remap(vecDelta:Length(), flAvoidRadius, 0, 0, 256)
-					
-					local vecPush
-					if (bot:GetVelocity():Length2DSqr() > 0.1) then
-						local vecVelocity = bot:GetVelocity()
-						vecVelocity.z = 0.0
-						local vecUp = Vector( 0, 0, 1 )
-						vecPush = vecUp:Cross(vecVelocity)
-					else
-						local angView = bot:EyeAngles()
-						angView.x = 0.0
-						vecPush = angView:Right()
-					end
-					local vecSeparationVelocity = avoidVector * 50
-					if (vecDelta:Dot(vecPush) < 0) then
-						local vel = vecPush * flPushStrength
-						vecSeparationVelocity = vel
-					else
-						local vel = vecPush * -flPushStrength
-						vecSeparationVelocity = vel
-					end
-					local flMaxPlayerSpeed = bot:GetMaxSpeed()
-					local flCropFraction = 1.33333333
-					if (bot:Crouching() and bot:IsOnGround()) then
-						flMaxPlayerSpeed = flMaxPlayerSpeed * flCropFraction
-					end
-					local flMaxPlayerSpeedSqr = flMaxPlayerSpeed * flMaxPlayerSpeed
+				local avoidVector = Vector(0, 0, 0)
+				local nearby = GetNearbyEntities(bot, moveawayrange, GetAdaptiveInterval(CVFloat(tf_bot_avoidance_interval, 0.10), 0.05))
+				local isCarrier = IsAnyFlagCarrier(bot)
+				local myClass = string.lower(tostring((bot.GetPlayerClass and bot:GetPlayerClass()) or bot.playerclass or ""))
+				local iAmMedic = (myClass == "medic")
+				local iAmInSquad = false
+				if not iAmMedic and isfunction(bot.IsInASquad) then
+					local ok, inSquad = pcall(bot.IsInASquad, bot)
+					iAmInSquad = ok and inSquad == true
+				end
+				if not isCarrier then
+					for _, v in ipairs(nearby) do
+						if (IsValid(v) and GAMEMODE:EntityTeam(v) == bot:Team() and v:IsPlayer() and v:EntIndex() != bot:EntIndex() and v:Health() > 0 and bot:GetNWBool("Taunting", false) != true) then
+							if iAmMedic then
+								local teammateClass = string.lower(tostring((v.GetPlayerClass and v:GetPlayerClass()) or v.playerclass or ""))
+								if teammateClass ~= "medic" then
+									continue
+								end
+							elseif iAmInSquad then
+								continue
+							end
 
-					if ( vecSeparationVelocity:LengthSqr() > flMaxPlayerSpeedSqr ) then
-						vecSeparationVelocity:Normalize()
-						vecSeparationVelocity = vecSeparationVelocity * flMaxPlayerSpeed
+							local between = bot:GetPos() - v:GetPos()
+							between.z = 0
+							local range = between:Length()
+							if range > 0 and range < moveawayrange then
+								between = between / range
+								avoidVector = avoidVector + (1 - (range / moveawayrange)) * between
+							end
+						end
 					end
+				end
+
+				avoidVector.z = 0
+				if avoidVector:LengthSqr() > 0.0001 then
+					avoidVector:Normalize()
 					local vAngles = bot:EyeAngles()
-					vAngles.x = 0 
+					vAngles.x = 0
 					local currentdir = vAngles:Forward()
 					local rightdir = vAngles:Right()
-					local vDirection = vecSeparationVelocity:GetNormalized()
-					
-					local fwd = vDirection:Dot( currentdir )
-					local rt = vDirection:Dot( rightdir )
 
-					local forward2 = fwd * flPushStrength
-					local side = rt * flPushStrength
-					
-					avoidVector:Normalize()
-					bot.movingAway = true
-					bot.pushAwayMove = mv:GetForwardSpeed() + (forward2)
-					mv:SetForwardSpeed(mv:GetForwardSpeed() + (forward2))
-					mv:SetSideSpeed(mv:GetSideSpeed() + (side))
+					local pushStrength = 50 -- SDK parity: fixed separation max speed
+					local forwardPush = avoidVector:Dot(currentdir) * pushStrength
+					local sidePush = avoidVector:Dot(rightdir) * pushStrength
+
+					bot.movingAway = true 
+					bot.pushAwayMove = mv:GetForwardSpeed() + forwardPush
+					mv:SetForwardSpeed(mv:GetForwardSpeed() + forwardPush)
+					mv:SetSideSpeed(mv:GetSideSpeed() + sidePush)
 				end
-			end
 			end
 		if (bot.playerclass == "Medic") then
 			for k,v in ipairs(GetNearbyEntities(bot, 1200, GetAdaptiveInterval(CVFloat(tf_bot_sense_interval, 0.25), 0.05))) do
@@ -2408,11 +2937,6 @@ local function ComputePathCost(bot, area, fromArea, ladder, length)
         return 0.0
     end
 
-    -- Is the area traversable?
-    if not self.loco:IsAreaTraversable(area) then
-        return -1.0
-    end
-
 
     -- Avoid enemy spawn rooms (MvM invaders share BLU-side spawn ownership).
     local isBlueSide = (self:Team() == TEAM_BLU or self:Team() == TF_TEAM_PVE_INVADERS)
@@ -2454,7 +2978,7 @@ local function ComputePathCost(bot, area, fromArea, ladder, length)
     end
 
     if self.routeType == "safest" then
-        if area:IsInCombat() then
+        if bot.TargetEnt:IsValid() then
             dist = dist * 4.0 * area:GetCombatIntensity()
         end
 
@@ -2464,11 +2988,8 @@ local function ComputePathCost(bot, area, fromArea, ladder, length)
             dist = dist * 5.0
         end
     end
-    if self.routeType == "mvm_push" then
-        preference = 1.0
-    end
+
     if self.routeType == "mvm_bomb_carrier" then
-        preference = 1.0
         if area:IsInCombat() then
             dist = dist * 2.2
         end
@@ -2495,10 +3016,6 @@ local function ComputePathCost(bot, area, fromArea, ladder, length)
 
 	if IsMvMMap() then
 		local friendlySpawnAttr = GetFriendlySpawnAttributeForBot(self)
-		if friendlySpawnAttr and HasAreaTFAttribute(area, friendlySpawnAttr) and not self:GetNWBool("InRespawnRoom", false) then
-			-- Discourage routes that linger in friendly spawn once bot is active.
-			dist = dist * 3.5
-		end
 
 		local anchor = GetMvMNavObjectiveAnchor(self)
 		if anchor and IsValid(fromArea) then
@@ -2523,7 +3040,7 @@ local function ComputePathCost(bot, area, fromArea, ladder, length)
 
     local cost = dist * preference
 
-    if area:HasAttribute(NAV_MESH_FUNC_COST) then
+    if area:HasAttributes(NAV_MESH_FUNC_COST) then
         cost = cost * area:ComputeFuncNavCost(self)
     end
 
@@ -2545,22 +3062,13 @@ hook.Add("SetupMove", "LeadBot_Control", function(bot, mv, cmd)
 		end
 		if canSense then
 			local isCarrier = IsMvMBombCarrier(bot) and bot.TF_MVM_IgnoreCombat == true
-			local closeRange = isCarrier and 260 or (bot:GetModelRadius() * 1.02)
-			local closeTargets = GetNearbyEntities(bot, closeRange, GetAdaptiveInterval(CVFloat(tf_bot_sense_interval, 0.25), 0.05))
-			for _, v in ipairs(closeTargets) do
-				if v:IsPlayer() and not v:IsFriendly(bot) then
-					bot.TargetEnt = v
-					break
+			if not isCarrier then
+				local acquired = AcquireEnemyTarget(bot)
+				if IsValid(acquired) then
+					bot.TargetEnt = acquired
 				end
-			end
-			if not isCarrier and not IsValid(bot.TargetEnt) then
-				local mediumTargets = GetNearbyEntities(bot, 1200, GetAdaptiveInterval(CVFloat(tf_bot_sense_interval, 0.25), 0.05))
-				for _, v in ipairs(mediumTargets) do
-					if v:IsPlayer() and v:Team() ~= bot:Team() and v:GetEyeTrace().Entity == bot then
-						bot.TargetEnt = v
-						break
-					end
-				end
+			elseif IsValid(bot.TargetEnt) and ShouldCarrierIgnoreEnemy(bot, bot.TargetEnt) then
+				bot.TargetEnt = nil
 			end
 		end
 		local controller = bot.ControllerBot
@@ -2741,16 +3249,13 @@ hook.Add("SetupMove", "LeadBot_Control", function(bot, mv, cmd)
 			end
 		end
 		
-			if (2*bot:Health()<bot:GetMaxHealth() and !string.find(bot:GetModel(),"/bot_")) then
-				if (!IsValid(bot.healthkit)) then
-					bot.healthkit = lookForNearestHealthPack(bot)
-				else
-					bot.botPos = bot.healthkit:GetPos()
-				end
-			else
-				if (IsValid(bot.healthkit)) then
-					bot.healthkit = nil
-					bot.botPos = nil
+			UpdateBotMaintenanceAction(bot, controller)
+
+			if IsMvMBombCarrier(bot) then
+				local deployZone = GetMvMBombDeployZone()
+				local deployPos = GetObjectivePos(deployZone)
+				if deployPos then
+					bot.botPos = deployPos
 				end
 			end
 			
@@ -2762,6 +3267,7 @@ hook.Add("SetupMove", "LeadBot_Control", function(bot, mv, cmd)
 		end
 		for _, v in ipairs(GetNearbyEntities(bot, 600, GetAdaptiveInterval(CVFloat(tf_bot_objective_interval, 0.75), 0.1))) do
 			if not IsValid(v) then continue end
+			if IsMvMInvaderBot(bot) then continue end
 			if (v:GetClass() == "obj_teleporter" and (not IsValid(bot.intelcarrier) or v:EntIndex() != bot.intelcarrier:EntIndex())) then
 				if (v:IsEntrance() and IsValid(v:GetLinkedTeleporter()) and v:IsFriendly(bot) and v:IsReady()) then 
 					bot.botPos = v:GetPos()
@@ -2813,7 +3319,7 @@ hook.Add("SetupMove", "LeadBot_Control", function(bot, mv, cmd)
 		------------------------------
 		 -----[[ENTITY DETECTION]]-----
 		------------------------------
-		if (IsMvMInvaderBot(bot) and IsMvMSentryBuster(bot)) then
+		if (not IsMvMInvaderBot(bot) and IsMvMSentryBuster(bot)) then
 				local className = IsValid(bot.TargetEnt) and bot.TargetEnt:GetClass() or ""
 				if IsValid(bot.TargetEnt) and (bot.TargetEnt:IsPlayer() or (className != "obj_sentrygun" and className != "obj_dispenser" and className != "obj_teleporter")) then
 					bot.TargetEnt = nil
@@ -2853,7 +3359,7 @@ hook.Add("SetupMove", "LeadBot_Control", function(bot, mv, cmd)
 		end
 
 		if (!bot.lookingAt and bot:GetNWBool("Taunting",false) != true) then
-			if (bot:GetPlayerClass() == "engineer") then
+			if (bot:GetPlayerClass() == "engineer" and not IsMvMInvaderBot(bot)) then
 				for k, v in pairs(GetCachedEntities("obj_sentrygun")) do
 						
 					if (IsValid(bot.SentryGun) and bot.SentryGun:GetLevel() == 3 and bot.SentryGun:Health() == bot.SentryGun:GetMaxHealth() and !IsValid(bot.Dispenser)) then
@@ -3017,12 +3523,8 @@ hook.Add("Think", "TFBot_MovementWatchdog", function()
 		-- Always maintain some objective anchor to prevent idle standstill.
 		if not hasObjective and not hasTarget then
 			if IsMvMMap() then
-				if IsMvMInvaderBot(bot) and bot:GetNWBool("InRespawnRoom", false) then
-					bot.botPos = GetSpawnExitTargetPos(bot) or bot.botPos
-				else
-					local deploy = GetMvMBombDeployZone()
-					bot.botPos = GetObjectivePos(deploy) or bot.botPos
-				end
+				local deploy = GetMvMBombDeployZone()
+				bot.botPos = GetObjectivePos(deploy) or bot.botPos
 			elseif IsValid(bot.ControllerBot) then
 				bot.botPos = bot.ControllerBot:FindSpot("random", {radius = 2500}) or bot.botPos
 			end
@@ -3339,19 +3841,10 @@ hook.Add("StartCommand", "leadbot_control", function(bot, cmd)
 						end
 					elseif bot:GetPlayerClass() == "hunter" then
 						if (bot:GetActiveWeapon().ReadyToPounce) then
-							if (bot.TargetEnt:GetPos():Distance(bot:GetPos()) < 800) then
-									if (!bot:IsFlagSet(FL_DUCKING)) then
-										bot:AddFlags(FL_DUCKING)
-									end
-							end
 							if (bot.TargetEnt:GetPos():Distance(bot:GetPos()) < 240) then
 								if (bot:Visible(bot.TargetEnt)) then
 									buttons = buttons + IN_ATTACK2
 								end
-							end
-						else
-							if (bot:IsFlagSet(FL_DUCKING)) then
-								bot:RemoveFlags(FL_DUCKING)
 							end
 						end
 
@@ -3368,7 +3861,7 @@ hook.Add("StartCommand", "leadbot_control", function(bot, cmd)
 
 										if (bot:GetActiveWeapon().IsMeleeWeapon and bot.TargetEnt:GetPos():Distance(bot:GetPos()) > 400 * bot:GetModelScale()) then return end
 										if (bot:Team() == TEAM_BLU and string.find(bot:GetModel(),"/bot_") and bot:HasGodMode()) then return end
-										if (IsValid(bot.TargeEntity) and bot.TargeEntity.dt.Charging and ply:GetPlayerClass() != "samuraidemo") then return end
+										if (IsValid(bot.TargeEntity) and bot.TargeEntity.dt.Charging and bot:GetPlayerClass() != "samuraidemo") then return end
 										if (bot:GetActiveWeapon().ReloadSingle and (!bot:GetActiveWeapon().Reloading || !bot:IsMiniBoss())) then
 											buttons = buttons + IN_ATTACK
 										elseif (!bot:GetActiveWeapon().ReloadSingle) then
@@ -3400,9 +3893,27 @@ hook.Add("StartCommand", "leadbot_control", function(bot, cmd)
 			end
 		end
 
-		if (bot.ControllerBot.nextStuckJump > CurTime()) then
+		-- Hard rule: only allow duck input while standing in NAV_MESH_CROUCH areas.
+		local allowDuck = false
+		if navmesh and navmesh.GetNearestNavArea then
+			local ok, navArea = pcall(navmesh.GetNearestNavArea, bot:GetPos())
+			if ok then
+				allowDuck = IsCrouchNavArea(navArea)
+			end
+		end
+		if not allowDuck then
+			if bot:IsFlagSet(FL_DUCKING) then
+				bot:RemoveFlags(FL_DUCKING)
+			end
+			if bit.band(buttons, IN_DUCK) ~= 0 then
+				buttons = bit.band(buttons, bit.bnot(IN_DUCK))
+			end
+		end
+
+		if IsValid(bot.ControllerBot) and (bot.ControllerBot.nextStuckJump > CurTime()) then
 			buttons = buttons + IN_JUMP
 		end
+		cmd:ClearButtons()
 		cmd:SetButtons(buttons)
 		end
 end)
@@ -3537,9 +4048,9 @@ function Astar( bot, start, goal )
 
 	local cameFrom = {}
 
-	start:SetCostSoFar( 0 )
+	start:SetCostSoFar( start:GetCenter():Distance( goal:GetCenter() ) )
 
-	start:SetTotalCost( heuristic_cost_so_far_estimate( bot, start, goal ) )
+	start:SetTotalCost( ComputePathCost( bot, start, goal, nil, 100000 ) )
 	start:UpdateOnOpenList()
 
 	while ( !start:IsOpenListEmpty() ) do
@@ -3556,8 +4067,9 @@ function Astar( bot, start, goal )
 			if ( ( neighbor:IsOpen() || neighbor:IsClosed() ) && neighbor:GetCostSoFar() <= newCostSoFar ) then
 				continue
 			else
+				local newArea = navmesh.GetNearestNavArea( bot:GetPos(), true, 10000, true, true, bot:Team() )
 				neighbor:SetCostSoFar( newCostSoFar );
-				neighbor:SetTotalCost( newCostSoFar + heuristic_cost_so_far_estimate( bot, start, goal ) )
+				neighbor:SetTotalCost( newCostSoFar + ( newArea:GetCenter() - goal:GetCenter() ):LengthSqr() )
 
 				if ( neighbor:IsClosed() ) then
 				
@@ -3579,66 +4091,6 @@ function Astar( bot, start, goal )
 	return false
 end
 
-function heuristic_cost_estimate( m_me, start, goal )
-	return start:GetCenter():Distance( goal:GetCenter() )
-end
-
-function heuristic_cost_so_far_estimate( m_me, start, goal )
-	-- this term causes the same bot to choose different routes over time,
-	-- but keep the same route for a period in case of repaths
-	
-	local area = start
-    local dist
-	
-    -- Unique random penalty per bot/area to vary routes
-    local preference = 1.0
-    if not m_me:IsMiniBoss() then
-        local timeMod = math.floor(CurTime() / 10) + 1
-        preference = 1.0 + 50.0 * (1.0 + math.cos(m_me:EntIndex() * area:GetID() * timeMod))
-    end
-    if ladder then
-        dist = ladder:GetLength()
-    elseif length and length > 0 then
-        dist = length
-    else
-        dist = start:GetCenter():Distance(goal:GetCenter())
-    end
-		-- Crawling through a vent is very slow.
-		-- NOTE: The cost is determined by the bot's crouch speed
-		if area:HasAttributes( NAV_MESH_CROUCH ) then 
-			
-			local crouchPenalty = 5
-			if IsValid( bot ) then crouchPenalty = math.floor( 1 / bot:GetCrouchedWalkSpeed() ) end
-			
-			dist	=	dist + ( dist * crouchPenalty )
-			
-		end
-		
-		-- If this area might damage us if we walk through it we should avoid it at all costs.
-		if area:IsDamaging() || area:HasAttributes( NAV_MESH_CLIFF ) then
-		
-			dist	=	dist + ( dist * 100.0 )
-			
-		end
-		
-		-- The bot should avoid this area unless alternatives are too dangerous or too far.
-		if area:HasAttributes( NAV_MESH_AVOID ) then 
-			
-			dist	=	dist + ( dist * 20 )
-			
-		end
-		
-		-- We will try not to swim since it can be slower than running on land, it can also be very dangerous, Ex. "Acid, Lava, Etc."
-		if area:IsUnderwater() then
-		
-			dist	=	dist + ( dist * 2 )
-			
-		end
-
-    local cost = dist * preference
-
-    return cost + goal:GetCostSoFar()
-end
 
 // using CNavAreas as table keys doesn't work, we use IDs
 function reconstruct_path( cameFrom, current )
@@ -3665,6 +4117,10 @@ function AstarVector( bot, start, goal )
 	end
 	if not IsValid(startArea) or not IsValid(goalArea) then
 		return nil
+	end
+	-- Always return a segmentable path even for very short moves inside the same area.
+	if startArea == goalArea then
+		return { goalArea, startArea }
 	end
 	return Astar( bot, startArea, goalArea )
 end
@@ -3703,6 +4159,28 @@ end)
 
 local rePathDelay = 1 // How many seconds need to pass before we need to remake the path to keep it updated
 
+local function GetAreaSteerPos(area, fromPos, fallbackPos)
+	if not IsValid(area) then
+		return fallbackPos or fromPos
+	end
+
+	local steerPos = area:GetCenter()
+	if area.GetClosestPointOnArea and fromPos then
+		local ok, closest = pcall(area.GetClosestPointOnArea, area, fromPos)
+		if ok and isvector(closest) then
+			steerPos = closest
+		end
+	end
+
+	return steerPos
+end
+
+local function ResetPathFollowingState(ply)
+	ply._segmentAreaId = nil
+	ply._segmentBestDist = nil
+	ply._segmentBestStamp = nil
+end
+
 local function ShouldForceJumpAtObstacle(ply, targetAng)
 	if not IsValid(ply) or not ply:IsOnGround() then return false end
 	local startPos = ply:GetPos() + Vector(0, 0, 8)
@@ -3728,6 +4206,7 @@ hook.Add( "StartCommand", "TFBot_Movement", function( ply, cmd )
 	local currentArea = navmesh.GetNearestNavArea( ply:GetPos() )
 	local hiding
 	cmd:ClearMovement()
+	cmd:RemoveKey(IN_DUCK)
 
 	// internal variable to regenerate the path every X seconds to keep the pace with the target player
 	ply.lastRePath = ply.lastRePath or 0
@@ -3735,16 +4214,13 @@ hook.Add( "StartCommand", "TFBot_Movement", function( ply, cmd )
 	// internal variable to limit how often the path can be (re)generated
 	ply.lastRePath2 = ply.lastRePath2 or 0 
 
-	if IsMvMMap() and IsMvMInvaderBot(ply) and ply:GetNWBool("InRespawnRoom", false) and not ply.botPos then
-		ply.botPos = GetSpawnExitTargetPos(ply)
-	end
-
 	local repathDelay = rePathDelay
 	if PerfEnabled() then
 		repathDelay = GetAdaptiveInterval(CVFloat(tf_bot_repath_interval, 1.75), 0.25)
 	end
-	if ( ply.path && ply.lastRePath + repathDelay < CurTime() && currentArea != ply.targetArea ) then
+	if ( ply.path && ply.lastRePath + repathDelay < CurTime() ) then
 		ply.path = nil
+		ResetPathFollowingState(ply)
 		ply.lastRePath = CurTime()
 	end
 
@@ -3760,10 +4236,6 @@ hook.Add( "StartCommand", "TFBot_Movement", function( ply, cmd )
 
 		local targetPos = ply.botPos // target position to go to, the first player on the server
 		if targetPos and navmesh and navmesh.GetNearestNavArea then
-			local targetArea = navmesh.GetNearestNavArea(targetPos)
-			if IsValid(targetArea) then
-				targetPos = targetArea:GetCenter()
-			end
 		end
 		ply.targetArea = nil
 
@@ -3790,6 +4262,7 @@ hook.Add( "StartCommand", "TFBot_Movement", function( ply, cmd )
 		end
 			if ( !istable( ply.path ) ) then // We are in the same area as the target, or we can't navigate to the target
 				ply.path = nil -- let fallback recovery logic below run this tick
+				ResetPathFollowingState(ply)
 				ply.lastRePath2 = CurTime()
 			end
 			if not istable(ply.path) then
@@ -3800,6 +4273,7 @@ hook.Add( "StartCommand", "TFBot_Movement", function( ply, cmd )
 			// TODO: Add inbetween points on area intersections
 			// TODO: On last area, move towards the target position, not center of the last area
 			table.remove( ply.path ) // Just for this example, remove the starting area, we are already in it!
+			ResetPathFollowingState(ply)
 			end
 	end
 
@@ -3807,6 +4281,7 @@ hook.Add( "StartCommand", "TFBot_Movement", function( ply, cmd )
 	if ( !ply.path || #ply.path < 1 ) then
 		ply.path = nil
 		ply.targetArea = nil
+		ResetPathFollowingState(ply)
 		-- If we cannot build a path, recover to a nearby nav position instead of
 		-- forcing straight-line movement into non-walkable space.
 		if not ply._nextObjectiveRecover or ply._nextObjectiveRecover < CurTime() then
@@ -3836,8 +4311,6 @@ hook.Add( "StartCommand", "TFBot_Movement", function( ply, cmd )
 		-- objective so bots can cross doors/thresholds and regain normal nav paths.
 		if ply:GetNWBool("InRespawnRoom", false) and ply.botPos then
 			local dir = ply.botPos - ply:GetPos()
-			dir.z = 0
-			if dir:LengthSqr() > 64 then
 				local ang = dir:GetNormalized():Angle()
 				cmd:SetForwardMove(320)
 				cmd:SetViewAngles(ang)
@@ -3848,7 +4321,6 @@ hook.Add( "StartCommand", "TFBot_Movement", function( ply, cmd )
 				if (!IsValid(ply.TargetEnt)) then
 					ply:SetEyeAngles(LerpAngle(FrameTime() * 5 * 1.2, ply:EyeAngles(), ang))
 				end
-			end
 		end
 		return
 	end
@@ -3863,35 +4335,78 @@ hook.Add( "StartCommand", "TFBot_Movement", function( ply, cmd )
 		ply.targetArea = ply.path[ #ply.path ]
 	end
 
-	// The area we selected is invalid or we are already there, remove it, bail and wait for next cycle
-	if ( !IsValid( ply.targetArea ) || ( ply.targetArea == currentArea && ply.targetArea:GetCenter():Distance( ply:GetPos() ) < 10 * ply:GetModelScale() ) ) then
-		table.remove( ply.path ) // Removes last element
-		ply.targetArea = nil
+	local areaAdvanceDist = math.max(28, 20 * ply:GetModelScale())
+	while IsValid(ply.targetArea) do
+		local steerPos = GetAreaSteerPos(ply.targetArea, ply:GetPos(), ply.botPos or ply:GetPos())
+		if ply.targetArea ~= currentArea and ply:GetPos():DistToSqr(steerPos) > (areaAdvanceDist * areaAdvanceDist) then
+			break
+		end
+
+		table.remove(ply.path) -- Removes current segment and advances
+		ply.targetArea = ply.path[#ply.path]
+		ResetPathFollowingState(ply)
+		if not ply.path or #ply.path < 1 then
+			ply.path = nil
+			ply.targetArea = nil
+			return
+		end
+	end
+
+	if not IsValid(ply.targetArea) then
+		ply.path = nil
+		ResetPathFollowingState(ply)
 		return
 	end
 
 	// We got the target to go to, aim there and MOVE
-	local targetang = ( ply.targetArea:GetCenter() - ply:GetPos() ):GetNormalized():Angle()
-	local distToArea = ply.targetArea:GetCenter():Distance(ply:GetPos())
+	local steerPos = GetAreaSteerPos(ply.targetArea, ply:GetPos(), ply.botPos or ply:GetPos())
+	local toSteer = steerPos - ply:GetPos()
+	local targetang = toSteer:GetNormalized():Angle()
+	local distToArea = toSteer:Length()
 
-	-- Deterministic stuck detection: if grounded, far from next area, and barely moving for a short time,
-	-- aggressively repath and apply a brief movement nudge to escape ledges/fences.
+	-- NextBot-like segment progress monitor: if we don't get measurably closer to the current
+	-- segment for a short window, force a repath and nudge out of blockers.
+	local areaId = ply.targetArea:GetID()
+	local now = CurTime()
+	if ply._segmentAreaId ~= areaId then
+		ply._segmentAreaId = areaId
+		ply._segmentBestDist = distToArea
+		ply._segmentBestStamp = now
+	elseif distToArea + 8 < (ply._segmentBestDist or math.huge) then
+		ply._segmentBestDist = distToArea
+		ply._segmentBestStamp = now
+	elseif now - (ply._segmentBestStamp or now) > 0.85 and ply:IsOnGround() then
+		ply.path = nil
+		ply.targetArea = nil
+		ply.lastRePath = 0
+		ply.lastRePath2 = 0
+		ResetPathFollowingState(ply)
+		ply._nextUnstuck = now + 0.45
+
+		local current = cmd:GetButtons()
+		cmd:SetButtons(bit.bor(current, IN_JUMP))
+		cmd:SetForwardMove(280)
+		cmd:SetSideMove((ply:EntIndex() % 2 == 0) and 220 or -220)
+		return
+	end
+
+	-- Extra fallback if velocity collapses for too long while far from steer point.
 	local speed2D = ply:GetVelocity():Length2D()
 	if ply:IsOnGround() and distToArea > 120 and speed2D < 28 then
-		ply._stuckSince = ply._stuckSince or CurTime()
-		if CurTime() - ply._stuckSince > 0.9 then
-			if not ply._nextUnstuck or ply._nextUnstuck < CurTime() then
-				ply.path = nil
-				ply.targetArea = nil
-				ply.lastRePath = 0
-				ply.lastRePath2 = 0
-				ply._nextUnstuck = CurTime() + 0.45
+		ply._stuckSince = ply._stuckSince or now
+		if now - ply._stuckSince > 0.9 and (not ply._nextUnstuck or ply._nextUnstuck < now) then
+			ply.path = nil
+			ply.targetArea = nil
+			ply.lastRePath = 0
+			ply.lastRePath2 = 0
+			ResetPathFollowingState(ply)
+			ply._nextUnstuck = now + 0.45
 
-				local current = cmd:GetButtons()
-				cmd:SetButtons(bit.bor(current, IN_JUMP))
-				cmd:SetForwardMove(280)
-				cmd:SetSideMove((ply:EntIndex() % 2 == 0) and 220 or -220)
-			end
+			local current = cmd:GetButtons()
+			cmd:SetButtons(bit.bor(current, IN_JUMP))
+			cmd:SetForwardMove(280)
+			cmd:SetSideMove((ply:EntIndex() % 2 == 0) and 220 or -220)
+			return
 		end
 	else
 		ply._stuckSince = nil

@@ -101,12 +101,17 @@ function TFJoinFlow:OpenMOTD(initialFlow)
 	end
 
 	self.MOTDPanel:SetInitialFlow(initialFlow)
-	self.MOTDPanel:SetNextCallback(function()
-		TFJoinFlow:OpenTeamSelect(initialFlow)
-	end)
-	self.MOTDPanel:SetSkipCallback(function()
-		TFJoinFlow:OpenTeamSelect(initialFlow)
-	end)
+	if initialFlow then
+		self.MOTDPanel:SetNextCallback(function()
+			TFJoinFlow:OpenTeamSelect(initialFlow)
+		end)
+		self.MOTDPanel:SetSkipCallback(function()
+			TFJoinFlow:OpenTeamSelect(initialFlow)
+		end)
+	else
+		self.MOTDPanel:SetNextCallback(nil)
+		self.MOTDPanel:SetSkipCallback(nil)
+	end
 	self.MOTDPanel:OpenPanel()
 	jfLog("MOTD panel opened valid=" .. tostring(IsValid(self.MOTDPanel)))
 end
@@ -172,14 +177,6 @@ hook.Add("InitPostEntity", "TFJoinFlow_ResetInitialFlow", function()
 	TFJoinFlow.InitialFlowShown = false
 end)
 
-concommand.Add("tf_open_motd", function()
-	TFJoinFlow:OpenMOTD(false)
-end)
-
-concommand.Add("tf_open_mapintro", function()
-	TFJoinFlow:OpenMOTD(false)
-end)
-
 if concommand.Remove then
 	concommand.Remove("tf_open_teamselect")
 	concommand.Remove("tf_changeteam")
@@ -200,4 +197,12 @@ end)
 
 concommand.Add("tf_open_initial_joinflow", function()
 	TFJoinFlow:OpenInitialFlow(true)
+end)
+
+concommand.Add("tf_open_motd", function()
+	TFJoinFlow:OpenMOTD(false)
+end)
+
+concommand.Add("tf_open_mapintro", function()
+	TFJoinFlow:OpenMOTD(false)
 end)

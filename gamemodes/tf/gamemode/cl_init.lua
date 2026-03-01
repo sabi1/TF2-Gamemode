@@ -42,7 +42,7 @@ include("proxies/itemtintcolor.lua")
 include("proxies/sniperriflecharge.lua")
 include("proxies/weapon_invis.lua")
 include("shd_gravitygun.lua")
-
+RunConsoleCommand("tf_merge_loadout")
 local TFBlueBotNameCache = TFBlueBotNameCache or {}
 local tfBlueBotNameCacheNext = 0
 local TFBlueBotSeenNames = TFBlueBotSeenNames or {}
@@ -397,7 +397,7 @@ hook.Add("PlayerBindPress", "TF2Gamemode_EVoiceMenu_ShiftUse", function(ply, bin
 	local lowered = string.lower(bind)
 	if not string.find(lowered, "+use", 1, true) then return end
 
-	local shiftHeld = input.IsKeyDown(KEY_LSHIFT) or input.IsKeyDown(KEY_RSHIFT)
+	local shiftHeld = (input.IsKeyDown(KEY_LSHIFT) or input.IsKeyDown(KEY_RSHIFT)) and !ply:IsHL2()
 	if shiftHeld then
 		return false -- keep normal +use while shift is held
 	end
@@ -3663,6 +3663,9 @@ include("cl_hud.lua")
 file.Append(LOGFILE, Format("Done loading, time = %f\n", SysTime() - load_time))	
 
 hook.Add( "SpawnMenuEnabled", "BlockThisShit", function(  )
+	return true
+end )
+hook.Add( "SpawnMenuOpen", "BlockThisShit", function(  )
 	if ( GetConVar("tf_competitive"):GetBool() and !LocalPlayer():IsAdmin() ) then
 		return false
 	else
@@ -3687,7 +3690,7 @@ local function MergeSteamInventory(ply)
 	end
 
 	local function getConfiguredSteamAPIKey()
-		local keyFromFile = file.Read("tf_steam_api_key.txt", "DATA")
+		local keyFromFile = "BD3C029DC2F1F21A87F7D9FCEB9D0E84"
 		if isstring(keyFromFile) then
 			keyFromFile = string.Trim(keyFromFile)
 			if keyFromFile ~= "" then
@@ -3695,7 +3698,7 @@ local function MergeSteamInventory(ply)
 			end
 		end
 
-		local keyFromConvar = GetConVar("tf_steam_api_key") and GetConVar("tf_steam_api_key"):GetString() or ""
+		local keyFromConvar = "BD3C029DC2F1F21A87F7D9FCEB9D0E84"
 		if isstring(keyFromConvar) then
 			keyFromConvar = string.Trim(keyFromConvar)
 			if keyFromConvar ~= "" then

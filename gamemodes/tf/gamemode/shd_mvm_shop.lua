@@ -2,6 +2,7 @@ if SERVER then
     AddCSLuaFile()
     util.AddNetworkString("TF_MVM_UpgradeOpen")
     util.AddNetworkString("TF_MVM_UpgradeClose")
+    util.AddNetworkString("TF_MVM_UpgradeClose")
     util.AddNetworkString("TF_MVM_UpgradeAction")
     util.AddNetworkString("TF_MVM_CanteenUse")
 end
@@ -18,6 +19,8 @@ TF_MVMShop.CanteenTypes = {
     build = { name = "BUILD UPGRADE", description = "Repair and boost buildings.", cost = 75 },
 }
 
+TF_MVMShop.DefaultUpgrades = {
+    { id = "max_health", name = "Max Health", category = "Player", target = "player", description = "+25 max health", costs = { 150, 250, 350, 450 }, requiresScript = true },
 TF_MVMShop.DefaultUpgrades = {
     { id = "max_health", name = "Max Health", category = "Player", target = "player", description = "+25 max health", costs = { 150, 250, 350, 450 }, requiresScript = true },
     { id = "move_speed", name = "Move Speed", category = "Player", target = "player", description = "+8% movement speed", costs = { 200, 300, 425 } },
@@ -42,6 +45,7 @@ TF_MVMShop.DefaultUpgrades = {
 
     { id = "damage_melee", name = "Melee Damage", category = "Melee", target = "melee", description = "+15% melee damage", costs = { 125, 225, 325, 425 } },
     { id = "swing_melee", name = "Melee Swing Speed", category = "Melee", target = "melee", description = "+10% swing speed", costs = { 125, 225, 325 } },
+    { id = "lifesteal_melee", name = "Melee Heal On Kill", category = "Melee", target = "melee", description = "+25 health on melee kill", costs = { 150, 275, 400 } },
     { id = "lifesteal_melee", name = "Melee Heal On Kill", category = "Melee", target = "melee", description = "+25 health on melee kill", costs = { 150, 275, 400 } },
 
     { id = "building_health", name = "Building Health", category = "Engineer", target = "player", classes = { "engineer" }, description = "+15% building health", costs = { 150, 250, 350 } },
@@ -634,6 +638,14 @@ function TF_MVMShop:IsSetupOpenForPurchases()
         return true
     end
     return false
+    if TF_MVM.Runtime:IsSetupPhase() then return true end
+    if TF_MVMState and TF_MVMState.Get and TF_MVMState:Get("in_setup", false) then
+        return true
+    end
+    if TF_MVM.Runtime.IsWaveInProgress and not TF_MVM.Runtime:IsWaveInProgress() then
+        return true
+    end
+    return false
 end
 
 function TF_MVMShop:IsUpgradeAllowedForClass(ply, upgrade)
@@ -714,6 +726,73 @@ function TF_MVMShop:IsUpgradeEnabledByScript(upgrade)
     return upgrade.scriptAvailable == true
 end
 
+function TF_MVMShop:GetWeaponInLogicalSlot(ply, logicalSlot)
+    if not IsValid(ply) then return nil end
+    for _, wep in ipairs(ply:GetWeapons()) do
+        if IsValid(wep) and self:GetWeaponSlotName(wep) == logicalSlot then
+            return wep
+        end
+    end
+    return nil
+end
+
+function TF_MVMShop:WeaponSupportsClipUpgrade(wep)
+    if not IsValid(wep) then return false end
+    local maxClip = tonumber((wep.GetMaxClip1 and wep:GetMaxClip1()) or -1) or -1
+    if maxClip > 0 then return true end
+    return wep.Primary and isnumber(wep.Primary.ClipSize) and (wep.Primary.ClipSize or -1) > 0
+end
+
+function TF_MVMShop:WeaponSupportsReserveAmmoUpgrade(wep)
+    if not IsValid(wep) then return false end
+    local ammoType = wep.GetPrimaryAmmoType and wep:GetPrimaryAmmoType() or -1
+    if ammoType and ammoType >= 0 then
+        return true
+    end
+    if wep.Primary and isstring(wep.Primary.Ammo) then
+        local ammoName = string.lower(wep.Primary.Ammo)
+        return ammoName ~= "" and ammoName ~= "none"
+    end
+    return false
+end
+
+function TF_MVMShop:IsUpgradeAllowedForLoadout(ply, upgrade)
+    local target = string.lower(tostring(upgrade.target or ""))
+    local id = string.lower(tostring(upgrade.id or ""))
+
+    if target == "primary" or target == "secondary" or target == "melee" then
+        local wep = self:GetWeaponInLogicalSlot(ply, target)
+        if not IsValid(wep) then
+            return false, "missing_weapon"
+        end
+
+        if id == "clip_primary" or id == "clip_secondary" then
+            if not self:WeaponSupportsClipUpgrade(wep) then
+                return false, "weapon_no_clip"
+            end
+        elseif id == "reload_primary" or id == "reload_secondary" then
+            if not self:WeaponSupportsClipUpgrade(wep) then
+                return false, "weapon_no_reload"
+            end
+        elseif id == "ammo_primary" or id == "ammo_secondary" then
+            if not self:WeaponSupportsReserveAmmoUpgrade(wep) then
+                return false, "weapon_no_ammo"
+            end
+        end
+    elseif target == "action" then
+        -- keep canteen capacity available to mirror TF2 station behavior
+        return true, nil
+    end
+
+    return true, nil
+end
+
+function TF_MVMShop:IsUpgradeEnabledByScript(upgrade)
+    if not istable(upgrade) then return false end
+    if not upgrade.requiresScript then return true end
+    return upgrade.scriptAvailable == true
+end
+
 function TF_MVMShop:CanBuyUpgrade(ply, id)
     if not self:IsEnabledFor(ply) then return false, "not_enabled" end
     if not self:IsSetupOpenForPurchases() then return false, "setup_only" end
@@ -721,7 +800,10 @@ function TF_MVMShop:CanBuyUpgrade(ply, id)
     local upgrade = upgradesById[id]
     if not upgrade then return false, "invalid_upgrade" end
     if not self:IsUpgradeEnabledByScript(upgrade) then return false, "script_disabled" end
+    if not self:IsUpgradeEnabledByScript(upgrade) then return false, "script_disabled" end
     if not self:IsUpgradeAllowedForClass(ply, upgrade) then return false, "class_restricted" end
+    local allowedForLoadout, loadoutReason = self:IsUpgradeAllowedForLoadout(ply, upgrade)
+    if not allowedForLoadout then return false, loadoutReason or "weapon_restricted" end
     local allowedForLoadout, loadoutReason = self:IsUpgradeAllowedForLoadout(ply, upgrade)
     if not allowedForLoadout then return false, loadoutReason or "weapon_restricted" end
 
@@ -793,6 +875,7 @@ function TF_MVMShop:GetDamageMultiplier(ply, slot)
 end
 function TF_MVMShop:ApplyWeaponStats(ply)
     ply.TF_MVM_BaseAmmoByType = ply.TF_MVM_BaseAmmoByType or {}
+    ply.TF_MVM_BaseAmmoByType = ply.TF_MVM_BaseAmmoByType or {}
     for _, wep in ipairs(ply:GetWeapons()) do
         if not IsValid(wep) then continue end
 
@@ -801,16 +884,19 @@ function TF_MVMShop:ApplyWeaponStats(ply)
         local reloadLevel = 0
         local clipLevel = 0
         local ammoLevel = 0
+        local ammoLevel = 0
 
         if slot == "primary" then
             fireLevel = self:GetLevel(ply, "firerate_primary")
             reloadLevel = self:GetLevel(ply, "reload_primary")
             clipLevel = self:GetLevel(ply, "clip_primary")
             ammoLevel = self:GetLevel(ply, "ammo_primary")
+            ammoLevel = self:GetLevel(ply, "ammo_primary")
         elseif slot == "secondary" then
             fireLevel = self:GetLevel(ply, "firerate_secondary")
             reloadLevel = self:GetLevel(ply, "reload_secondary")
             clipLevel = self:GetLevel(ply, "clip_secondary")
+            ammoLevel = self:GetLevel(ply, "ammo_secondary")
             ammoLevel = self:GetLevel(ply, "ammo_secondary")
         elseif slot == "melee" then
             fireLevel = self:GetLevel(ply, "swing_melee")
@@ -838,6 +924,22 @@ function TF_MVMShop:ApplyWeaponStats(ply)
             local newClip = math.max(1, math.floor(wep.TF_MVM_BaseClipSize * (1 + (0.2 * clipLevel))))
             wep.Primary.ClipSize = newClip
             wep:SetClip1(math.min(wep:Clip1(), newClip))
+        end
+
+        if ammoLevel > 0 then
+            local ammoType = wep.GetPrimaryAmmoType and wep:GetPrimaryAmmoType() or -1
+            if isnumber(ammoType) and ammoType >= 0 then
+                local currentAmmo = math.max(0, ply:GetAmmoCount(ammoType))
+                local baseAmmo = ply.TF_MVM_BaseAmmoByType[ammoType]
+                if baseAmmo == nil then
+                    baseAmmo = currentAmmo
+                    ply.TF_MVM_BaseAmmoByType[ammoType] = baseAmmo
+                end
+                local targetAmmo = math.max(currentAmmo, math.floor(baseAmmo * (1 + (0.25 * ammoLevel))))
+                if targetAmmo > currentAmmo then
+                    ply:SetAmmo(targetAmmo, ammoType)
+                end
+            end
         end
 
         if ammoLevel > 0 then
@@ -1226,6 +1328,7 @@ if SERVER then
         self:AddCredits(ply, refund)
         self:ApplyPlayerStats(ply)
         ply:Spawn()
+        ply:Spawn()
         return true
     end
 
@@ -1420,6 +1523,7 @@ if SERVER then
     end)
 
     hook.Add("PlayerDeath", "TF_MVMShop_HealOnKill", function(victim, inflictor, attacker)
+    hook.Add("PlayerDeath", "TF_MVMShop_HealOnKill", function(victim, inflictor, attacker)
         if not IsValid(attacker) or not attacker:IsPlayer() then return end
         if attacker == victim or not TF_MVMShop:IsEnabledFor(attacker) then return end
         if not attacker:Alive() then return end
@@ -1514,6 +1618,7 @@ if SERVER then
 
     concommand.Add("tf_mvm_shop", function(ply)
         if not TF_MVMShop:IsEnabledFor(ply) then return end
+        if not TF_MVMShop:IsNearUpgradeStation(ply) then return end
         if not TF_MVMShop:IsNearUpgradeStation(ply) then return end
         SendPanel(ply)
     end)
@@ -2362,7 +2467,14 @@ else
         frame:SetDraggable(false)
         frame:ShowCloseButton(false)
         frame:SetSize(ScrW(), ScrH())
+        frame:SetDraggable(false)
+        frame:ShowCloseButton(false)
+        frame:SetSize(ScrW(), ScrH())
         frame:MakePopup()
+        frame:SetKeyboardInputEnabled(false)
+        frame:SetMouseInputEnabled(true)
+        gui.EnableScreenClicker(true)
+        frame:Center()
         frame:SetKeyboardInputEnabled(false)
         frame:SetMouseInputEnabled(true)
         gui.EnableScreenClicker(true)
@@ -3181,6 +3293,9 @@ else
         if not IsMvMMap() or not ply:Alive() or GetConVarNumber("cl_drawhud") == 0 then
             return
         end
+        -- clear suppression once the player walks out of the station
+        if lastCloseTime and not IsNearUpgradeStationClient() then
+            lastCloseTime = nil
         -- clear suppression once the player walks out of the station
         if lastCloseTime and not IsNearUpgradeStationClient() then
             lastCloseTime = nil

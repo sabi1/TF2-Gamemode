@@ -149,37 +149,37 @@ end
 
 local ICON_PATH = {
 	["scout"] = "hud/leaderboard_class_scout",
-	["scout giant fast"] = "hud/leaderboard_class_scout_giant_fast",
-	["scout stun"] = "hud/leaderboard_class_scout_stun",
-	["scout bonk"] = "hud/leaderboard_class_scout_bonk",
-	["scout fan"] = "hud/leaderboard_class_scout_fan",
-	["scout shortstop"] = "hud/leaderboard_class_scout_shortstop",
+	["scout_giant_fast"] = "hud/leaderboard_class_scout_giant_fast",
+	["scout_stun"] = "hud/leaderboard_class_scout_stun",
+	["scout_bonk"] = "hud/leaderboard_class_scout_bonk",
+	["scout_fan"] = "hud/leaderboard_class_scout_fan",
+	["scout_shortstop"] = "hud/leaderboard_class_scout_shortstop",
 	["soldier"] = "hud/leaderboard_class_soldier",
-	["soldier spammer"] = "hud/leaderboard_class_soldier_spammer",
-	["soldier barrage"] = "hud/leaderboard_class_soldier_barrage",
-	["soldier crit"] = "hud/leaderboard_class_soldier_crit",
-	["soldier blackbox"] = "hud/leaderboard_class_soldier_blackbox",
+	["soldier_spammer"] = "hud/leaderboard_class_soldier_spammer",
+	["soldier_barrage"] = "hud/leaderboard_class_soldier_barrage",
+	["soldier_crit"] = "hud/leaderboard_class_soldier_crit",
+	["soldier_blackbox"] = "hud/leaderboard_class_soldier_blackbox",
 	["pyro"] = "hud/leaderboard_class_pyro",
-	["pyro flare"] = "hud/leaderboard_class_pyro_flare",
+	["pyro_flare"] = "hud/leaderboard_class_pyro_flare",
 	["demoman"] = "hud/leaderboard_class_demo",
 	["demo"] = "hud/leaderboard_class_demo",
 	["demoknight"] = "hud/leaderboard_class_demoknight",
-	["demoknight samurai"] = "hud/leaderboard_class_demoknight_samurai",
+	["demoknight_samurai"] = "hud/leaderboard_class_demoknight_samurai",
 	["heavy"] = "hud/leaderboard_class_heavy",
-	["heavy champ"] = "hud/leaderboard_class_heavy_champ",
-	["heavy deflector"] = "hud/leaderboard_class_heavy_deflector",
-	["heavy shotgun"] = "hud/leaderboard_class_heavy_shotgun",
-	["heavy heater"] = "hud/leaderboard_class_heavy_heater",
-	["heavy steelfist"] = "hud/leaderboard_class_heavy_steelfist",
-	["heavy gru"] = "hud/leaderboard_class_heavy_gru",
+	["heavy_champ"] = "hud/leaderboard_class_heavy_champ",
+	["heavy_deflector"] = "hud/leaderboard_class_heavy_deflector",
+	["heavy_shotgun"] = "hud/leaderboard_class_heavy_shotgun",
+	["heavy_heater"] = "hud/leaderboard_class_heavy_heater",
+	["heavy_steelfist"] = "hud/leaderboard_class_heavy_steelfist",
+	["heavy_gru"] = "hud/leaderboard_class_heavy_gru",
 	["engineer"] = "hud/leaderboard_class_engineer",
 	["teleporter"] = "hud/leaderboard_class_teleporter",
 	["medic"] = "hud/leaderboard_class_medic",
-	["medic uber"] = "hud/leaderboard_class_medic_uber",
+	["medic_uber"] = "hud/leaderboard_class_medic_uber",
 	["sniper"] = "hud/leaderboard_class_sniper",
-	["sniper bow"] = "hud/leaderboard_class_sniper_bow",
+	["sniper_bow"] = "hud/leaderboard_class_sniper_bow",
 	["spy"] = "hud/leaderboard_class_spy",
-	["sentry buster"] = "hud/leaderboard_class_sentry_buster",
+	["sentry_buster"] = "hud/leaderboard_class_sentry_buster",
 	["sentrybuster"] = "hud/leaderboard_class_sentry_buster",
 	["sentry_buster"] = "hud/leaderboard_class_sentry_buster",
 	["tank"] = "hud/leaderboard_class_tank",
@@ -283,10 +283,13 @@ local function GetRobotIconPath(rawClass, giant)
 	if cls == "" then cls = "scout" end
 	if cls == "heavyweapons" then cls = "heavy" end
 	if giant then
-		local giantKey = cls .. " giant"
-		if ICON_PATH[giantKey] then return ICON_PATH[giantKey] end
-		if cls == "scout" and ICON_PATH["scout giant fast"] then
-			return ICON_PATH["scout giant fast"]
+		local giantKeySpace = cls .. " giant"
+		local giantKeyUnder = cls .. "_giant"
+		if ICON_PATH[giantKeySpace] then return ICON_PATH[giantKeySpace] end
+		if ICON_PATH[giantKeyUnder] then return ICON_PATH[giantKeyUnder] end
+		if cls == "scout" then
+			if ICON_PATH["scout giant fast"] then return ICON_PATH["scout giant fast"] end
+			if ICON_PATH["scout_giant_fast"] then return ICON_PATH["scout_giant_fast"] end
 		end
 	end
 	return ICON_PATH[cls] or ICON_PATH["scout"]
@@ -313,9 +316,11 @@ local function DrawSimpleBar(x, y, w, h, frac, bgTex, fillTex)
 end
 
 local function ClassifyWaveEntries(entries)
-	local miniboss, normal, support = {}, {}, {}
+	local miniboss, normal, support, mission = {}, {}, {}, {}
 	for _, e in ipairs(entries or {}) do
-		if e.support then
+		if e.mission then
+			mission[#mission + 1] = e
+		elseif e.support then
 			support[#support + 1] = e
 		elseif e.giant or e.tank then
 			miniboss[#miniboss + 1] = e
@@ -323,7 +328,7 @@ local function ClassifyWaveEntries(entries)
 			normal[#normal + 1] = e
 		end
 	end
-	return miniboss, normal, support
+	return miniboss, normal, support, mission
 end
 
 local function IsMiniBossEntry(e)
@@ -396,7 +401,7 @@ function PANEL:DrawWaveStatus(lp)
 
 	local remainingNoSupport = 0
 	for _, e in ipairs(entries) do
-		if not e.support then
+		if not e.support and not e.mission then
 			remainingNoSupport = remainingNoSupport + math.max(0, tonumber(e.count) or 0)
 		end
 	end
@@ -472,12 +477,15 @@ function PANEL:DrawWaveStatus(lp)
 		tex_wave_prog
 	)
 
-	if #iconsToDraw > 0 and showVerbose then
-		local totalContentW = contentW + supportGap + supportLabelW
+	if #iconsToDraw > 0 then
+		local totalContentW = contentW + supportGap + supportLabelW + separatorW + separatorGap
 		local sx = px + math.floor((panelW - totalContentW) * 0.5)
 		local y = py + math.floor(MvMRes.iconsY * Scale)
 		for i, e in ipairs(iconsToDraw) do
 			local ex = sx + (i - 1) * (enemyW + enemyGap)
+			if showVerbose and hasSupport and #iconsNormal > 0 and i > #iconsNormal then
+				ex = ex + separatorW + separatorGap
+			end
 			local iconTex = surface.GetTextureID(GetRobotIconPath(e.class, e.giant))
 
 			local mini = IsMiniBossEntry(e)
@@ -487,7 +495,9 @@ function PANEL:DrawWaveStatus(lp)
 			surface.SetTexture(iconTex)
 			surface.DrawTexturedRect(ex + math.floor(3 * Scale), y + math.floor(2 * Scale), math.floor(14 * Scale), math.floor(14 * Scale))
 
-			if not e.support then
+			local cls = string.lower(string.Trim(tostring(e.class or "")))
+			local nonVerboseSpy = (not showVerbose) and cls == "spy"
+			if not e.support and not e.mission and not nonVerboseSpy then
 				draw.Text({
 					text = tostring(math.max(0, tonumber(e.count) or 0)),
 					font = "HudFontSmall",
@@ -499,7 +509,7 @@ function PANEL:DrawWaveStatus(lp)
 			end
 		end
 
-		if hasSupport then
+		if showVerbose and hasSupport then
 			draw.Text({
 				text = "SUPPORT",
 				font = "HudFontSmallestBold",

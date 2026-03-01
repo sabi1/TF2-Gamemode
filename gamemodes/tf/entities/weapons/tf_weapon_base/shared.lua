@@ -26,6 +26,42 @@ local function ApplyNoWeaponDrawState(wep, hide)
 	if IsValid(wep.AttachedWModel) then wep.AttachedWModel:SetNoDraw(hide) end
 	if IsValid(wep.ExtraWModel) then wep.ExtraWModel:SetNoDraw(hide) end
 end
+
+local function GetOwnerInvulnMaterial(wep)
+	local owner = IsValid(wep) and wep:GetOwner() or nil
+	if not IsValid(owner) then return nil end
+	if not owner.GetNWBool or not owner:GetNWBool("Invulnerable", false) then return nil end
+	local function pick_red_mat()
+		if file.Exists("materials/models/effects/invulnfx_red.vmt", "GAME") then
+			return "models/effects/invulnfx_red"
+		end
+		return "models/effects/invulnfx_red2"
+	end
+	if owner:IsPlayer() then
+		local skin = owner:GetSkin()
+		if skin and skin >= 0 and bit.band(skin, 1) == 1 then
+			return "models/effects/invulnfx_blue"
+		end
+		return pick_red_mat()
+	end
+	if GAMEMODE and GAMEMODE.EntityTeam and (GAMEMODE:EntityTeam(owner) == TEAM_BLU or GAMEMODE:EntityTeam(owner) == TF_TEAM_PVE_INVADERS) then
+		return "models/effects/invulnfx_blue"
+	end
+	return pick_red_mat()
+end
+
+local function GetEffectiveWeaponMaterial(wep, fallbackMat)
+	return GetOwnerInvulnMaterial(wep) or fallbackMat or ""
+end
+
+local function GetDefaultViewModelMaterial(wep)
+	if not IsValid(wep) or not IsValid(wep:GetOwner()) then return "" end
+	if wep:GetOwner():IsHL2() then return "" end
+	if string.find(wep.ViewModel or "", "c_models", 1, true) then
+		return "color"
+	end
+	return ""
+end
 local defaultdeployspeed = CreateConVar( "tf_default_deploy_speed", "1.34", {FCVAR_SERVER_CAN_EXECUTE, FCVAR_REPLICATED, FCVAR_NOTIFY, FCVAR_ARCHIVE}, "LEGS!" )
 -- Sounds
 
@@ -75,7 +111,7 @@ function SWEP:DrawWorldModel(  )
 
 					self.WModel:SetupBones()
 				end
-				local mat = self.CustomMaterialOverride2 or self.MaterialOverride or self.WeaponMaterial or ""
+				local mat = GetEffectiveWeaponMaterial(self, self.CustomMaterialOverride2 or self.MaterialOverride or self.WeaponMaterial or "")
 				if (self.WModel:GetMaterial() != mat) then
 					self.WModel:SetMaterial(mat)	
 				end
@@ -664,11 +700,11 @@ function SWEP:ProjectileShootPos()
 end
 
 function SWEP:Precache()
-	if self.MuzzleEffect then
+	if isstring(self.MuzzleEffect) and self.MuzzleEffect ~= "" then
 		PrecacheParticleSystem(self.MuzzleEffect)
 	end
 	
-	if self.TracerEffect then
+	if isstring(self.TracerEffect) and self.TracerEffect ~= "" then
 		PrecacheParticleSystem(self.TracerEffect.."_red")
 		PrecacheParticleSystem(self.TracerEffect.."_blue")
 		PrecacheParticleSystem(self.TracerEffect.."_red_crit")
@@ -965,9 +1001,92 @@ function SWEP:Deploy()
 					self.CModel:DrawModel()
 					self.CModel:SetSkin(self.WeaponSkin or self:GetOwner():GetSkin())
 				end
-				if (self:GetItemData() and self:GetItemData().extra_wearable) then
+				if self:GetItemData() then
+					local extraWorldModel = self:GetItemData().extra_wearable
+					local extraViewModel = self:GetItemData().extra_wearable_vm
+
+					-- Wearables like the Quick-Fix backpack should follow the player skeleton, not the weapon/viewmodel.
+					if extraViewModel and IsValid(self.CModel) then
+						if IsValid(self.ExtraCModel) then
+							self.ExtraCModel:SetModel(extraViewModel)
+							self.ExtraCModel:SetNoDraw(true)
+							self.ExtraCModel:SetParent(self.CModel)
+							self.ExtraCModel:AddEffects(bit.bor(EF_BONEMERGE, EF_BONEMERGE_FASTCULL))
+							self.ExtraCModel:DrawModel()
+						elseif IsValid(vm) and not IsValid(self.ExtraCModel) then
+							self.ExtraCModel = ClientsideModel(wmodel)
+							if not IsValid(self.ExtraCModel) then return end
+							self.ExtraCModel:SetModel(extraViewModel)
+							self.ExtraCModel:SetNoDraw(true)
+							self.ExtraCModel:SetParent(self.CModel)
+							self.ExtraCModel:AddEffects(bit.bor(EF_BONEMERGE, EF_BONEMERGE_FASTCULL))
+							self.ExtraCModel:Spawn()
+							self.ExtraCModel:Activate()
+							self.ExtraCModel:DrawModel()
+						end
+					elseif IsValid(self.ExtraCModel) then
+						self.ExtraCModel:Remove()
+						self.ExtraCModel = nil
+					end
+
+					if extraWorldModel then
+						if IsValid(self.ExtraWModel) then
+							self.ExtraWModel:SetModel(extraWorldModel)
+							self.ExtraWModel:SetNoDraw(false)
+							self.ExtraWModel:SetParent(self.Owner)
+							self.ExtraWModel:AddEffects(bit.bor(EF_BONEMERGE, EF_BONEMERGE_FASTCULL))
+							self.ExtraWModel:DrawModel()
+						elseif IsValid(self.Owner) and not IsValid(self.ExtraWModel) then
+							self.ExtraWModel = ClientsideModel(wmodel)
+							if not IsValid(self.ExtraWModel) then return end
+							self.ExtraWModel:SetModel(extraWorldModel)
+							self.ExtraWModel:SetNoDraw(false)
+							self.ExtraWModel:SetParent(self.Owner)
+							self.ExtraWModel:AddEffects(bit.bor(EF_BONEMERGE, EF_BONEMERGE_FASTCULL))
+							self.ExtraWModel:Spawn()
+							self.ExtraWModel:Activate()
+							self.ExtraWModel:DrawModel()
+						end
+					elseif IsValid(self.ExtraWModel) then
+						self.ExtraWModel:Remove()
+						self.ExtraWModel = nil
+					end
+				end
+				local attachedViewModelPath, attachedWorldModelPath
+				local visuals = self:GetVisuals()
+				if visuals then
+					if istable(visuals.attached_models) then
+						local attachedModels = visuals.attached_models
+						local attachedData = attachedModels[0] or attachedModels["0"] or attachedModels[1] or attachedModels["1"]
+						if not (istable(attachedData) and attachedData.model) then
+							for _, data in pairs(attachedModels) do
+								if istable(data) and data.model then
+									attachedData = data
+									break
+								end
+							end
+						end
+						local model = istable(attachedData) and attachedData.model or nil
+						attachedViewModelPath = attachedViewModelPath or model
+						attachedWorldModelPath = attachedWorldModelPath or model
+					end
+
+					-- Older parsed format from shd_items.lua keeps only singular keys.
+					if istable(visuals.attached_model_view) and visuals.attached_model_view.model then
+						attachedViewModelPath = visuals.attached_model_view.model
+					end
+					if istable(visuals.attached_model_world) and visuals.attached_model_world.model then
+						attachedWorldModelPath = visuals.attached_model_world.model
+					end
+					if istable(visuals.attached_model) and visuals.attached_model.model then
+						attachedViewModelPath = attachedViewModelPath or visuals.attached_model.model
+						attachedWorldModelPath = attachedWorldModelPath or visuals.attached_model.model
+					end
+				end
+
+				if attachedViewModelPath or attachedWorldModelPath then
 					if IsValid(self.ExtraCModel) then
-						self.ExtraCModel:SetModel(self:GetItemData().extra_wearable)
+						self.ExtraCModel:SetModel(attachedViewModelPath or attachedWorldModelPath)
 						self.ExtraCModel:SetNoDraw(true)
 						self.ExtraCModel:SetParent(self.CModel)
 						self.ExtraCModel:AddEffects(bit.bor(EF_BONEMERGE,EF_BONEMERGE_FASTCULL))
@@ -975,7 +1094,7 @@ function SWEP:Deploy()
 					elseif IsValid(vm) and !IsValid(self.ExtraCModel) then
 						self.ExtraCModel = ClientsideModel(wmodel)
 						if not IsValid(self.ExtraCModel) then return end
-						self.ExtraCModel:SetModel(self:GetItemData().extra_wearable)
+						self.ExtraCModel:SetModel(attachedViewModelPath or attachedWorldModelPath)
 						self.ExtraCModel:SetNoDraw(true)
 						self.ExtraCModel:SetParent(self.CModel)
 						self.ExtraCModel:AddEffects(bit.bor(EF_BONEMERGE,EF_BONEMERGE_FASTCULL))
@@ -984,51 +1103,15 @@ function SWEP:Deploy()
 						self.ExtraCModel:DrawModel()
 					end
 					if IsValid(self.ExtraWModel) then
-						self.ExtraWModel:SetModel(self:GetItemData().extra_wearable)
-						self.ExtraWModel:SetNoDraw(true)
-						self.ExtraWModel:SetParent(vm)
-						self.ExtraWModel:AddEffects(bit.bor(EF_BONEMERGE,EF_BONEMERGE_FASTCULL))
-						self.ExtraWModel:DrawModel()
-					elseif IsValid(vm) and !IsValid(self.ExtraWModel) then
-						self.ExtraWModel = ClientsideModel(wmodel)
-						if not IsValid(self.ExtraWModel) then return end
-						self.ExtraWModel:SetModel(self:GetItemData().extra_wearable)
+						self.ExtraWModel:SetModel(attachedWorldModelPath or attachedViewModelPath)
 						self.ExtraWModel:SetNoDraw(false)
 						self.ExtraWModel:SetParent(self)
 						self.ExtraWModel:AddEffects(bit.bor(EF_BONEMERGE,EF_BONEMERGE_FASTCULL))
-						self.ExtraWModel:Spawn()
-						self.ExtraWModel:Activate()
-						self.ExtraWModel:DrawModel()
-					end
-				end 
-				if (self:GetVisuals() and self:GetVisuals().attached_models and self:GetVisuals().attached_models[0]["model"]) then
-					if IsValid(self.ExtraCModel) then
-						self.ExtraCModel:SetModel(self:GetVisuals().attached_models[0]["model"])
-						self.ExtraCModel:SetNoDraw(true)
-						self.ExtraCModel:SetParent(self.CModel)
-						self.ExtraCModel:AddEffects(bit.bor(EF_BONEMERGE,EF_BONEMERGE_FASTCULL))
-						self.ExtraCModel:DrawModel()
-					elseif IsValid(vm) and !IsValid(self.ExtraCModel) then
-						self.ExtraCModel = ClientsideModel(wmodel)
-						if not IsValid(self.ExtraCModel) then return end
-						self.ExtraCModel:SetModel(self:GetVisuals().attached_models[0]["model"])
-						self.ExtraCModel:SetNoDraw(true)
-						self.ExtraCModel:SetParent(self.CModel)
-						self.ExtraCModel:AddEffects(bit.bor(EF_BONEMERGE,EF_BONEMERGE_FASTCULL))
-						self.ExtraCModel:Spawn()
-						self.ExtraCModel:Activate()
-						self.ExtraCModel:DrawModel()
-					end
-					if IsValid(self.ExtraWModel) then
-						self.ExtraWModel:SetModel(self:GetVisuals().attached_models[0]["model"])
-						self.ExtraWModel:SetNoDraw(true)
-						self.ExtraWModel:SetParent(vm)
-						self.ExtraWModel:AddEffects(bit.bor(EF_BONEMERGE,EF_BONEMERGE_FASTCULL))
 						self.ExtraWModel:DrawModel()
 					elseif IsValid(vm) and !IsValid(self.ExtraWModel) then
 						self.ExtraWModel = ClientsideModel(wmodel)
 						if not IsValid(self.ExtraWModel) then return end
-						self.ExtraWModel:SetModel(self:GetVisuals().attached_models[0]["model"])
+						self.ExtraWModel:SetModel(attachedWorldModelPath or attachedViewModelPath)
 						self.ExtraWModel:SetNoDraw(false)
 						self.ExtraWModel:SetParent(self)
 						self.ExtraWModel:AddEffects(bit.bor(EF_BONEMERGE,EF_BONEMERGE_FASTCULL))
@@ -1727,12 +1810,23 @@ function SWEP:Think()
 			and lp:GetObserverMode() == OBS_MODE_NONE
 			and not lp.FrozenScreen
 			and (not IsValid(GetViewEntity()) or GetViewEntity() == lp)
+		local vm = IsValid(self.Owner) and self.Owner:GetViewModel() or nil
+		if IsValid(vm) then
+			local vmat = GetDefaultViewModelMaterial(self)
+			if vm:GetMaterial() ~= vmat then
+				vm:SetMaterial(vmat)
+			end
+		end
 		if (self:GetItemData().item_name) then
 			self.PrintName = self:GetItemData().name
 		end
 		if not hideForTaunt and drawLocalViewModel and IsValid(self.CModel) then
 			self.CModel:DrawModel()
 			self.CModel:SetSkin(self.WeaponSkin or self.Owner:GetSkin())
+			local cmat = GetEffectiveWeaponMaterial(self, self.WeaponMaterial)
+			if self.CModel:GetMaterial() ~= cmat then
+				self.CModel:SetMaterial(cmat)
+			end
 		end
 		if IsValid(self.CModel) then
 	
@@ -1748,14 +1842,15 @@ function SWEP:Think()
 			if (self.WModel:GetSkin() != skin) then
 				self.WModel:SetSkin(skin)	
 			end
-			if (self.WModel:GetMaterial() != self.WeaponMaterial) then
-				self.WModel:SetMaterial(self.WeaponMaterial)
+			local wmat = GetEffectiveWeaponMaterial(self, self.WeaponMaterial)
+			if (self.WModel:GetMaterial() != wmat) then
+				self.WModel:SetMaterial(wmat)
 			end
 		end
 		if not hideForTaunt and drawLocalViewModel and IsValid(self.ExtraCModel) then
 			self.ExtraCModel:DrawModel()
 			self.ExtraCModel:SetParent(self.CModel)
-			self.CModel:AddEffects(bit.bor(EF_BONEMERGE,EF_BONEMERGE_FASTCULL))
+			self.ExtraCModel:AddEffects(bit.bor(EF_BONEMERGE,EF_BONEMERGE_FASTCULL))
 		end
 		self:DrawOffhandProjectileModel(drawLocalViewModel, hideForTaunt)
 	end
