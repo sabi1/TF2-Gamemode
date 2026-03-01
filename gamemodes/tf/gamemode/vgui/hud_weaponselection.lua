@@ -27,6 +27,22 @@ local DEFAULT_ICONS = {
 weapon_physgun					= "entities/weapon_physgun.png",
 }
 
+local WeaponSelRes = {
+	modelY = 5,
+	activeModelTall = 62,
+	inactiveModelTall = 42,
+	activeTextY = 62.5,
+	inactiveTextY = 38.5,
+}
+
+do
+	local tree = TF2Res and TF2Res.Load and TF2Res.Load("resource/ui/hudweaponselection.res")
+	local model = tree and TF2Res.FindByFieldName and TF2Res.FindByFieldName(tree, "modelpanel0")
+	if model and TF2Res.GetNumber then
+		WeaponSelRes.modelY = TF2Res.GetNumber(model, "model_ypos", WeaponSelRes.modelY)
+	end
+end
+
 function PANEL:Init()
 	self:SetPaintBackgroundEnabled(false)
 	self:ParentToHUD()
@@ -69,17 +85,17 @@ function PANEL:PerformLayout()
 		if k == self.Current then
 			t:SetPos(W-(ACTIVE_WIDTH+3)*Scale, y)
 			t:SetSize(ACTIVE_WIDTH*Scale, ACTIVE_HEIGHT*Scale)
-			t.model_ypos = 5
-			t.model_tall = 62
-			t.text_ypos = 57.5 +5
+			t.model_ypos = WeaponSelRes.modelY
+			t.model_tall = WeaponSelRes.activeModelTall
+			t.text_ypos = WeaponSelRes.activeTextY
 			t.inactiveImage = color_panel[1]
 			y = y + (ACTIVE_HEIGHT+GAP_HEIGHT)*Scale
 		else
 			t:SetPos(W-(INACTIVE_WIDTH+3)*Scale, y)
 			t:SetSize(INACTIVE_WIDTH*Scale, INACTIVE_HEIGHT*Scale)
-			t.model_ypos = 5
-			t.model_tall = 42
-			t.text_ypos = 38.5
+			t.model_ypos = WeaponSelRes.modelY
+			t.model_tall = WeaponSelRes.inactiveModelTall
+			t.text_ypos = WeaponSelRes.inactiveTextY
 			t.inactiveImage = color_panel[0]
 			y = y + (INACTIVE_HEIGHT+GAP_HEIGHT)*Scale
 		end

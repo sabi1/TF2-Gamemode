@@ -29,7 +29,7 @@ function PANEL:Paint(w, h)
     if not IsValid(ply) then return end
     if not IsMvMMap() then return end
     if GetConVarNumber("cl_drawhud") == 0 then return end
-    if GAMEMODE and GAMEMODE.ShowScoreboard then return end
+    if GAMEMODE and GAMEMODE.ShowScoreboard == true then return end
 
     DrawPanel(0, 0, w, h)
 
@@ -51,8 +51,12 @@ function PANEL:Paint(w, h)
 
     local setupText = "ACTIVE"
     if inSetup then
-        local left = math.max(0, math.ceil(setupEnd - CurTime()))
-        setupText = "SETUP " .. tostring(left)
+        if setupEnd and setupEnd > CurTime() then
+            local left = math.max(0, math.ceil(setupEnd - CurTime()))
+            setupText = "SETUP " .. tostring(left)
+        else
+            setupText = "SETUP WAITING"
+        end
     end
 
     local credits = ply:GetNWInt("TF_MVM_Credits", 0)
@@ -66,9 +70,15 @@ function PANEL:Paint(w, h)
 
     local canteenText = string.upper(selected) .. ": " .. tostring(selectedCharges)
     if inSetup then
-        local spare2Bind = string.upper(input.LookupBinding("gm_showspare2") or "F4")
+        local spare2Bind = "F4"
         local isReady = ply:GetNWBool("TF_MVM_Ready", false)
-        local readyText = string.format("%s READY (%d/%d)%s", spare2Bind, readyCount, readyTotal, isReady and " - READY" or "")
+        local waitingForReady = not (setupEnd and setupEnd > CurTime())
+        local readyText
+        if waitingForReady then
+            readyText = string.format("PRESS %s TO READY UP (%d/%d)%s", spare2Bind, readyCount, readyTotal, isReady and " - READY" or "")
+        else
+            readyText = string.format("%s READY (%d/%d)%s", spare2Bind, readyCount, readyTotal, isReady and " - READY" or "")
+        end
         draw.SimpleText(readyText, "DermaDefaultBold", w - 10, 36, Color(212, 198, 170), TEXT_ALIGN_RIGHT, TEXT_ALIGN_TOP)
     else
         draw.SimpleText("Canteen " .. canteenText, "DermaDefaultBold", w - 10, 36, Color(212, 198, 170), TEXT_ALIGN_RIGHT, TEXT_ALIGN_TOP)

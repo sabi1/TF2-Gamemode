@@ -2,6 +2,7 @@ if SERVER then
     AddCSLuaFile()
     util.AddNetworkString("TF_MVM_UpgradeOpen")
     util.AddNetworkString("TF_MVM_UpgradeClose")
+    util.AddNetworkString("TF_MVM_UpgradeClose")
     util.AddNetworkString("TF_MVM_UpgradeAction")
     util.AddNetworkString("TF_MVM_CanteenUse")
 end
@@ -20,12 +21,14 @@ TF_MVMShop.CanteenTypes = {
 
 TF_MVMShop.DefaultUpgrades = {
     { id = "max_health", name = "Max Health", category = "Player", target = "player", description = "+25 max health", costs = { 150, 250, 350, 450 }, requiresScript = true },
+TF_MVMShop.DefaultUpgrades = {
+    { id = "max_health", name = "Max Health", category = "Player", target = "player", description = "+25 max health", costs = { 150, 250, 350, 450 }, requiresScript = true },
     { id = "move_speed", name = "Move Speed", category = "Player", target = "player", description = "+8% movement speed", costs = { 200, 300, 425 } },
     { id = "resist_all", name = "Damage Resistance", category = "Player", target = "player", description = "-8% incoming damage", costs = { 200, 325, 450, 600 } },
     { id = "resist_bullet", name = "Bullet Resistance", category = "Player", target = "player", description = "-10% bullet damage", costs = { 150, 250, 350 } },
     { id = "resist_blast", name = "Blast Resistance", category = "Player", target = "player", description = "-10% explosive damage", costs = { 150, 250, 350 } },
     { id = "resist_fire", name = "Fire Resistance", category = "Player", target = "player", description = "-12% fire damage", costs = { 150, 250, 350 } },
-    { id = "heal_on_kill", name = "Health On Kill", category = "Player", target = "player", description = "+15 health per kill", costs = { 100, 200, 300, 450 } },
+    { id = "autoheal", name = "Auto-Heal", category = "Player", target = "player", description = "+2 health regen", costs = { 200, 200, 200, 200, 200 } },
     { id = "jump_height", name = "Jump Height", category = "Player", target = "player", description = "+10% jump height", costs = { 100, 175, 250 } },
 
     { id = "damage_primary", name = "Primary Damage", category = "Primary", target = "primary", description = "+12% damage", costs = { 150, 250, 350, 475 } },
@@ -43,11 +46,25 @@ TF_MVMShop.DefaultUpgrades = {
     { id = "damage_melee", name = "Melee Damage", category = "Melee", target = "melee", description = "+15% melee damage", costs = { 125, 225, 325, 425 } },
     { id = "swing_melee", name = "Melee Swing Speed", category = "Melee", target = "melee", description = "+10% swing speed", costs = { 125, 225, 325 } },
     { id = "lifesteal_melee", name = "Melee Heal On Kill", category = "Melee", target = "melee", description = "+25 health on melee kill", costs = { 150, 275, 400 } },
+    { id = "lifesteal_melee", name = "Melee Heal On Kill", category = "Melee", target = "melee", description = "+25 health on melee kill", costs = { 150, 275, 400 } },
 
     { id = "building_health", name = "Building Health", category = "Engineer", target = "player", classes = { "engineer" }, description = "+15% building health", costs = { 150, 250, 350 } },
     { id = "building_rate", name = "Building Fire Rate", category = "Engineer", target = "player", classes = { "engineer" }, description = "+10% sentry fire rate", costs = { 200, 300, 450 } },
     { id = "canteen_capacity", name = "Canteen Specialist", category = "Canteen", target = "action", description = "+1 max canteen charge", costs = { 150, 300 } },
 }
+
+local function NormalizeUpgradeCostsFlat(list)
+    for _, up in ipairs(list or {}) do
+        if istable(up.costs) and #up.costs > 0 then
+            local flat = tonumber(up.costs[1]) or 0
+            for i = 1, #up.costs do
+                up.costs[i] = flat
+            end
+        end
+    end
+end
+
+NormalizeUpgradeCostsFlat(TF_MVMShop.DefaultUpgrades)
 
 TF_MVMShop.Upgrades = table.Copy(TF_MVMShop.DefaultUpgrades)
 TF_MVMShop.CustomUpgradeAttributeMap = {
@@ -57,7 +74,7 @@ TF_MVMShop.CustomUpgradeAttributeMap = {
     resist_bullet = "dmg taken from bullets reduced",
     resist_blast = "dmg taken from blast reduced",
     resist_fire = "dmg taken from fire reduced",
-    heal_on_kill = "heal on kill",
+    autoheal = "health regen",
     jump_height = "increased jump height",
 
     damage_primary = "damage bonus",
@@ -92,7 +109,7 @@ TF_MVMShop.DisplayNameById = {
     resist_bullet = "Bullet Resistance",
     resist_blast = "Blast Resistance",
     resist_fire = "Fire Resistance",
-    heal_on_kill = "+25 Health On Kill",
+    autoheal = "Auto-Heal",
     jump_height = "+20% Jump Height",
     damage_primary = "+20% Damage",
     firerate_primary = "+10% Firing Speed",
@@ -125,6 +142,7 @@ TF_MVMShop.AttributeDisplayNameMap = {
     ["dmg taken from blast reduced"] = "Blast Resistance",
     ["dmg taken from fire reduced"] = "Fire Resistance",
     ["dmg taken from crit reduced"] = "Crit Resistance",
+    ["health regen"] = "Auto-Heal",
     ["heal on kill"] = "+25 Health On Kill",
     ["engy building health bonus"] = "+100% Building Health",
     ["engy sentry fire rate increased"] = "+10% Sentry Fire Speed",
@@ -239,6 +257,10 @@ local function ParseUpgradeScriptLookupFromText(txt)
         return byAttrib
     end
 
+    -- Strip C++-style line comments so disabled entries (// "14" { ... }) are
+    -- not parsed as active upgrades.
+    txt = string.gsub(txt, "//[^\r\n]*", "")
+
     for entry in string.gmatch(txt, "\"[%w%._%-]+\"%s*%b{}") do
         local attrib = entry:match("\"attribute\"%s*\"([^\"]+)\"")
         local icon = entry:match("\"icon\"%s*\"([^\"]+)\"")
@@ -328,6 +350,61 @@ local function ApplyCustomUpgradeScriptData(dataByAttrib)
     end
 end
 
+local function GetPreferredScriptEntryForUpgrade(up, dataByAttrib)
+    if not istable(up) or not istable(dataByAttrib) then return nil end
+    local attr = tostring(up.attribute or TF_MVMShop.CustomUpgradeAttributeMap[up.id] or "")
+    if attr == "" then return nil end
+    local byQuality = dataByAttrib[string.lower(attr)]
+    if not byQuality then return nil end
+    local preferQuality = tonumber(TF_MVMShop.CustomUpgradeQualityById[up.id]) or 2
+    return byQuality[preferQuality] or byQuality[2] or byQuality[1] or byQuality[3]
+end
+
+local function ApplyScriptDataToUpgradeList(list, dataByAttrib)
+    if not istable(list) then return end
+    for _, up in ipairs(list) do
+        if up.requiresScript then
+            up.scriptAvailable = false
+        end
+
+        local scriptData = GetPreferredScriptEntryForUpgrade(up, dataByAttrib)
+        if scriptData then
+            up.scriptAvailable = true
+            up.attribute = tostring(scriptData.attribute or up.attribute or "")
+            up.scriptIncrement = tonumber(scriptData.increment) or up.scriptIncrement
+            up.scriptCap = tonumber(scriptData.cap) or up.scriptCap
+            up.scriptQuality = tonumber(scriptData.quality) or up.scriptQuality
+            if scriptData.icon and scriptData.icon ~= "" then
+                up.icon = scriptData.icon
+            end
+
+            local tierCount = DeriveTierCountFromScript(scriptData.increment, scriptData.cap, #(up.costs or {}))
+            local baseCost = tonumber(scriptData.cost) or 0
+            if baseCost > 0 and tierCount > 0 then
+                up.costs = {}
+                for i = 1, tierCount do
+                    up.costs[i] = baseCost
+                end
+            end
+
+            local attrLower = string.lower(tostring(scriptData.attribute or up.attribute or ""))
+            up.name = TF_MVMShop.AttributeDisplayNameMap[attrLower]
+                or TF_MVMShop.DisplayNameById[up.id]
+                or PrettifyAttributeName(attrLower)
+        else
+            local attrLower = string.lower(tostring(up.attribute or TF_MVMShop.CustomUpgradeAttributeMap[up.id] or ""))
+            if (not isstring(up.name)) or up.name == "" then
+                up.name = TF_MVMShop.AttributeDisplayNameMap[attrLower]
+                    or TF_MVMShop.DisplayNameById[up.id]
+                    or PrettifyAttributeName(attrLower ~= "" and attrLower or tostring(up.id or "upgrade"))
+            end
+            up.scriptIncrement = tonumber(up.scriptIncrement) or nil
+            up.scriptCap = tonumber(up.scriptCap) or nil
+            up.scriptQuality = tonumber(up.scriptQuality) or nil
+        end
+    end
+end
+
 function TF_MVMShop:LoadUpgrades()
     for _, up in ipairs(TF_MVMShop.DefaultUpgrades) do
         if up.requiresScript then
@@ -350,6 +427,10 @@ function TF_MVMShop:LoadUpgrades()
         table.insert(paths, string.format("maps/%s_upgrades.txt", map))
     end
 
+    -- bundled stock copy extracted from Valve TF2 (fallback when loose files
+    -- are unavailable through mounted GAME paths)
+    table.insert(paths, "scripts/items/mvm_upgrades_tf2_stock.txt")
+
     -- default TF2 file(s)
     table.insert(paths, "scripts/items/mvm_upgrades.txt")
     table.insert(paths, "tf/scripts/items/mvm_upgrades.txt")
@@ -368,12 +449,19 @@ function TF_MVMShop:LoadUpgrades()
                 local parsed = parseUpgradesKV(kv)
                 local supported = {}
                 local known = {}
+                local defaultById = {}
                 for _, u in ipairs(TF_MVMShop.DefaultUpgrades) do
                     known[u.id] = true
+                    defaultById[u.id] = u
                 end
                 for _, u in ipairs(parsed or {}) do
                     if known[u.id] then
-                        supported[#supported + 1] = u
+                        local base = table.Copy(defaultById[u.id] or {})
+                        if istable(u.costs) and #u.costs > 0 then base.costs = u.costs end
+                        if isstring(u.description) and u.description ~= "" then base.description = u.description end
+                        if isstring(u.icon) and u.icon ~= "" then base.icon = u.icon end
+                        if isstring(u.name) and u.name ~= "" then base.name = u.name end
+                        supported[#supported + 1] = base
                     end
                 end
 
@@ -382,6 +470,8 @@ function TF_MVMShop:LoadUpgrades()
                 else
                     TF_MVMShop.Upgrades = table.Copy(TF_MVMShop.DefaultUpgrades)
                 end
+
+                ApplyScriptDataToUpgradeList(TF_MVMShop.Upgrades, scriptLookup)
 
                 rebuildUpgradesById()
                 if SERVER then
@@ -466,11 +556,65 @@ function TF_MVMShop:AddCredits(ply, amount)
 end
 
 function TF_MVMShop:GetLevel(ply, id)
-    return ClampInt(self:GetState(ply).upgrades[id] or 0)
+    local upgrades = self:GetState(ply).upgrades
+    if id == "autoheal" then
+        local v = upgrades.autoheal or upgrades.heal_on_kill or 0
+        return ClampInt(v)
+    end
+    return ClampInt(upgrades[id] or 0)
 end
 
 function TF_MVMShop:SetLevel(ply, id, level)
-    self:GetState(ply).upgrades[id] = ClampInt(level)
+    local upgrades = self:GetState(ply).upgrades
+    if id == "autoheal" then
+        upgrades.heal_on_kill = nil
+    end
+    upgrades[id] = ClampInt(level)
+end
+
+function TF_MVMShop:GetPendingSession(ply, createIfMissing)
+    if not IsValid(ply) then return nil end
+    local state = self:GetState(ply)
+    state.pending = state.pending or {
+        active = false,
+        deltas = {},
+        creditDelta = 0,
+    }
+    if createIfMissing and not state.pending.active then
+        state.pending.active = true
+        state.pending.deltas = {}
+        state.pending.creditDelta = 0
+    end
+    return state.pending
+end
+
+function TF_MVMShop:ClearPendingSession(ply)
+    local pending = self:GetPendingSession(ply, false)
+    if not pending then return end
+    pending.active = false
+    pending.deltas = {}
+    pending.creditDelta = 0
+end
+
+function TF_MVMShop:GetPendingDelta(ply, id)
+    local pending = self:GetPendingSession(ply, false)
+    if not pending or not pending.active then return 0 end
+    return ClampInt((pending.deltas and pending.deltas[id]) or 0)
+end
+
+function TF_MVMShop:GetEffectiveLevel(ply, id)
+    local base = self:GetLevel(ply, id)
+    local delta = self:GetPendingDelta(ply, id)
+    return math.max(0, base + delta)
+end
+
+function TF_MVMShop:GetEffectiveCredits(ply)
+    local base = self:GetCredits(ply)
+    local pending = self:GetPendingSession(ply, false)
+    if not pending or not pending.active then
+        return base
+    end
+    return math.max(0, base + ClampInt(pending.creditDelta or 0))
 end
 
 function TF_MVMShop:GetBaseSpeed(ply)
@@ -486,6 +630,14 @@ end
 function TF_MVMShop:IsSetupOpenForPurchases()
     if not TF_MVM or not TF_MVM.Runtime then return true end
     if not TF_MVM.Runtime:IsManagedActive() then return true end
+    if TF_MVM.Runtime:IsSetupPhase() then return true end
+    if TF_MVMState and TF_MVMState.Get and TF_MVMState:Get("in_setup", false) then
+        return true
+    end
+    if TF_MVM.Runtime.IsWaveInProgress and not TF_MVM.Runtime:IsWaveInProgress() then
+        return true
+    end
+    return false
     if TF_MVM.Runtime:IsSetupPhase() then return true end
     if TF_MVMState and TF_MVMState.Get and TF_MVMState:Get("in_setup", false) then
         return true
@@ -574,7 +726,103 @@ function TF_MVMShop:IsUpgradeEnabledByScript(upgrade)
     return upgrade.scriptAvailable == true
 end
 
+function TF_MVMShop:GetWeaponInLogicalSlot(ply, logicalSlot)
+    if not IsValid(ply) then return nil end
+    for _, wep in ipairs(ply:GetWeapons()) do
+        if IsValid(wep) and self:GetWeaponSlotName(wep) == logicalSlot then
+            return wep
+        end
+    end
+    return nil
+end
+
+function TF_MVMShop:WeaponSupportsClipUpgrade(wep)
+    if not IsValid(wep) then return false end
+    local maxClip = tonumber((wep.GetMaxClip1 and wep:GetMaxClip1()) or -1) or -1
+    if maxClip > 0 then return true end
+    return wep.Primary and isnumber(wep.Primary.ClipSize) and (wep.Primary.ClipSize or -1) > 0
+end
+
+function TF_MVMShop:WeaponSupportsReserveAmmoUpgrade(wep)
+    if not IsValid(wep) then return false end
+    local ammoType = wep.GetPrimaryAmmoType and wep:GetPrimaryAmmoType() or -1
+    if ammoType and ammoType >= 0 then
+        return true
+    end
+    if wep.Primary and isstring(wep.Primary.Ammo) then
+        local ammoName = string.lower(wep.Primary.Ammo)
+        return ammoName ~= "" and ammoName ~= "none"
+    end
+    return false
+end
+
+function TF_MVMShop:IsUpgradeAllowedForLoadout(ply, upgrade)
+    local target = string.lower(tostring(upgrade.target or ""))
+    local id = string.lower(tostring(upgrade.id or ""))
+
+    if target == "primary" or target == "secondary" or target == "melee" then
+        local wep = self:GetWeaponInLogicalSlot(ply, target)
+        if not IsValid(wep) then
+            return false, "missing_weapon"
+        end
+
+        if id == "clip_primary" or id == "clip_secondary" then
+            if not self:WeaponSupportsClipUpgrade(wep) then
+                return false, "weapon_no_clip"
+            end
+        elseif id == "reload_primary" or id == "reload_secondary" then
+            if not self:WeaponSupportsClipUpgrade(wep) then
+                return false, "weapon_no_reload"
+            end
+        elseif id == "ammo_primary" or id == "ammo_secondary" then
+            if not self:WeaponSupportsReserveAmmoUpgrade(wep) then
+                return false, "weapon_no_ammo"
+            end
+        end
+    elseif target == "action" then
+        -- keep canteen capacity available to mirror TF2 station behavior
+        return true, nil
+    end
+
+    return true, nil
+end
+
+function TF_MVMShop:IsUpgradeEnabledByScript(upgrade)
+    if not istable(upgrade) then return false end
+    if not upgrade.requiresScript then return true end
+    return upgrade.scriptAvailable == true
+end
+
 function TF_MVMShop:CanBuyUpgrade(ply, id)
+    if not self:IsEnabledFor(ply) then return false, "not_enabled" end
+    if not self:IsSetupOpenForPurchases() then return false, "setup_only" end
+
+    local upgrade = upgradesById[id]
+    if not upgrade then return false, "invalid_upgrade" end
+    if not self:IsUpgradeEnabledByScript(upgrade) then return false, "script_disabled" end
+    if not self:IsUpgradeEnabledByScript(upgrade) then return false, "script_disabled" end
+    if not self:IsUpgradeAllowedForClass(ply, upgrade) then return false, "class_restricted" end
+    local allowedForLoadout, loadoutReason = self:IsUpgradeAllowedForLoadout(ply, upgrade)
+    if not allowedForLoadout then return false, loadoutReason or "weapon_restricted" end
+    local allowedForLoadout, loadoutReason = self:IsUpgradeAllowedForLoadout(ply, upgrade)
+    if not allowedForLoadout then return false, loadoutReason or "weapon_restricted" end
+
+    local level = self:GetEffectiveLevel(ply, id)
+    if level >= #upgrade.costs then return false, "maxed" end
+    local cost = upgrade.costs[level + 1]
+    if self:GetEffectiveCredits(ply) < cost then return false, "no_credits" end
+
+    return true
+end
+
+function TF_MVMShop:IsSellWindowOpen()
+    local waveCurrent = TF_MVMState and ClampInt(TF_MVMState:Get("wave_current", 1)) or 1
+    -- TF2 parity baseline: selling prior upgrades is allowed in wave 1.
+    -- (Valve also allows undo of in-flight purchases later, but this UI applies immediately.)
+    return waveCurrent <= 1
+end
+
+function TF_MVMShop:CanSellUpgrade(ply, id)
     if not self:IsEnabledFor(ply) then return false, "not_enabled" end
     if not self:IsSetupOpenForPurchases() then return false, "setup_only" end
 
@@ -585,10 +833,10 @@ function TF_MVMShop:CanBuyUpgrade(ply, id)
     local allowedForLoadout, loadoutReason = self:IsUpgradeAllowedForLoadout(ply, upgrade)
     if not allowedForLoadout then return false, loadoutReason or "weapon_restricted" end
 
-    local level = self:GetLevel(ply, id)
-    if level >= #upgrade.costs then return false, "maxed" end
-    local cost = upgrade.costs[level + 1]
-    if self:GetCredits(ply) < cost then return false, "no_credits" end
+    local level = self:GetEffectiveLevel(ply, id)
+    if level <= 0 then return false, "no_upgrade" end
+    local pendingDelta = self:GetPendingDelta(ply, id)
+    if (not self:IsSellWindowOpen()) and pendingDelta <= 0 then return false, "sell_locked" end
 
     return true
 end
@@ -596,7 +844,7 @@ end
 function TF_MVMShop:GetUpgradeCost(ply, id)
     local upgrade = upgradesById[id]
     if not upgrade then return nil end
-    local level = self:GetLevel(ply, id)
+    local level = self:GetEffectiveLevel(ply, id)
     return upgrade.costs[level + 1]
 end
 
@@ -627,6 +875,7 @@ function TF_MVMShop:GetDamageMultiplier(ply, slot)
 end
 function TF_MVMShop:ApplyWeaponStats(ply)
     ply.TF_MVM_BaseAmmoByType = ply.TF_MVM_BaseAmmoByType or {}
+    ply.TF_MVM_BaseAmmoByType = ply.TF_MVM_BaseAmmoByType or {}
     for _, wep in ipairs(ply:GetWeapons()) do
         if not IsValid(wep) then continue end
 
@@ -635,16 +884,19 @@ function TF_MVMShop:ApplyWeaponStats(ply)
         local reloadLevel = 0
         local clipLevel = 0
         local ammoLevel = 0
+        local ammoLevel = 0
 
         if slot == "primary" then
             fireLevel = self:GetLevel(ply, "firerate_primary")
             reloadLevel = self:GetLevel(ply, "reload_primary")
             clipLevel = self:GetLevel(ply, "clip_primary")
             ammoLevel = self:GetLevel(ply, "ammo_primary")
+            ammoLevel = self:GetLevel(ply, "ammo_primary")
         elseif slot == "secondary" then
             fireLevel = self:GetLevel(ply, "firerate_secondary")
             reloadLevel = self:GetLevel(ply, "reload_secondary")
             clipLevel = self:GetLevel(ply, "clip_secondary")
+            ammoLevel = self:GetLevel(ply, "ammo_secondary")
             ammoLevel = self:GetLevel(ply, "ammo_secondary")
         elseif slot == "melee" then
             fireLevel = self:GetLevel(ply, "swing_melee")
@@ -689,6 +941,22 @@ function TF_MVMShop:ApplyWeaponStats(ply)
                 end
             end
         end
+
+        if ammoLevel > 0 then
+            local ammoType = wep.GetPrimaryAmmoType and wep:GetPrimaryAmmoType() or -1
+            if isnumber(ammoType) and ammoType >= 0 then
+                local currentAmmo = math.max(0, ply:GetAmmoCount(ammoType))
+                local baseAmmo = ply.TF_MVM_BaseAmmoByType[ammoType]
+                if baseAmmo == nil then
+                    baseAmmo = currentAmmo
+                    ply.TF_MVM_BaseAmmoByType[ammoType] = baseAmmo
+                end
+                local targetAmmo = math.max(currentAmmo, math.floor(baseAmmo * (1 + (0.25 * ammoLevel))))
+                if targetAmmo > currentAmmo then
+                    ply:SetAmmo(targetAmmo, ammoType)
+                end
+            end
+        end
     end
 end
 
@@ -713,11 +981,29 @@ function TF_MVMShop:ApplyPlayerStats(ply)
         ply:SetRunSpeed(speed)
     end
 
-    local baseJump = ply.TF_MVM_BaseJumpPower or ply:GetJumpPower()
+    local classTable = ply.GetPlayerClassTable and ply:GetPlayerClassTable() or nil
+    local baseJump = tonumber(ply.TF_MVM_BaseJumpPower)
+    if not baseJump or baseJump <= 0 then
+        baseJump = tonumber(ply.PlayerJumpPower)
+            or tonumber(classTable and classTable.JumpPower)
+            or tonumber(ply:GetJumpPower())
+            or 220
+        if baseJump <= 0 then
+            baseJump = 220
+        end
+    end
     ply.TF_MVM_BaseJumpPower = baseJump
-    ply:SetJumpPower(baseJump * jumpMul)
+    ply:SetJumpPower(math.floor((baseJump * jumpMul) + 0.5))
 
     self:ApplyWeaponStats(ply)
+end
+
+function TF_MVMShop:GetUpgradeSellRefund(ply, id)
+    local upgrade = upgradesById[id]
+    if not upgrade then return nil end
+    local level = self:GetEffectiveLevel(ply, id)
+    if level <= 0 then return nil end
+    return upgrade.costs[level]
 end
 
 function TF_MVMShop:GetMaxCanteenCharges(ply)
@@ -736,16 +1022,19 @@ end
 function TF_MVMShop:BuildPayload(ply)
     local state = self:GetState(ply)
     local list = {}
+    local sellWindowOpen = self:IsSellWindowOpen()
     for _, upgrade in ipairs(self.Upgrades) do
         local scriptAllowed = self:IsUpgradeEnabledByScript(upgrade)
         local classAllowed = self:IsUpgradeAllowedForClass(ply, upgrade)
         local weaponAllowed, restrictionReason = self:IsUpgradeAllowedForLoadout(ply, upgrade)
         local available = scriptAllowed and classAllowed and weaponAllowed
         if available then
-            local level = self:GetLevel(ply, upgrade.id)
+            local level = self:GetEffectiveLevel(ply, upgrade.id)
             local costs = istable(upgrade.costs) and upgrade.costs or {}
             local maxLevel = math.max(1, #costs)
             local nextCost = tonumber(costs[level + 1]) or 0
+            local pendingDelta = self:GetPendingDelta(ply, upgrade.id)
+            local canSellNow = (level > 0) and (sellWindowOpen or pendingDelta > 0)
             local displayName = tostring(upgrade.name or "")
             if displayName == "" or #displayName <= 2 then
                 displayName = TF_MVMShop.DisplayNameById[upgrade.id]
@@ -755,6 +1044,8 @@ function TF_MVMShop:BuildPayload(ply)
                 id = upgrade.id,
                 name = displayName,
                 description = upgrade.description,
+                attribute = upgrade.attribute,
+                scriptIncrement = upgrade.scriptIncrement,
                 category = upgrade.category,
                 target = upgrade.target,
                 level = level,
@@ -765,15 +1056,18 @@ function TF_MVMShop:BuildPayload(ply)
                 available = available,
                 restrictionReason = restrictionReason,
                 icon = upgrade.icon,
+                pendingDelta = pendingDelta,
+                canSellNow = canSellNow,
             }
         end
     end
 
     return {
-        credits = self:GetCredits(ply),
+        credits = self:GetEffectiveCredits(ply),
         inSetup = TF_MVMState and TF_MVMState:Get("in_setup", false) or false,
         waveCurrent = TF_MVMState and TF_MVMState:Get("wave_current", 0) or 0,
         waveTotal = TF_MVMState and TF_MVMState:Get("wave_total", 0) or 0,
+        sellWindowOpen = sellWindowOpen,
         canteen = {
             selected = state.canteen.selected,
             maxCharges = self:GetMaxCanteenCharges(ply),
@@ -790,13 +1084,126 @@ function TF_MVMShop:BuildPayload(ply)
 end
 
 if SERVER then
-    local function SendPanel(ply)
-        if not TF_MVMShop:IsEnabledFor(ply) then return end
+    local function IsPlayerSpectatingTarget(spec, target)
+        if not IsValid(spec) or not spec:IsPlayer() then return false end
+        if not IsValid(target) or not target:IsPlayer() then return false end
+        if spec == target then return false end
+        if not spec.GetObserverTarget then return false end
+        local observed = spec:GetObserverTarget()
+        return IsValid(observed) and observed == target
+    end
+
+    local function GetSpectatorsWatching(target)
+        local out = {}
+        for _, spec in ipairs(player.GetAll()) do
+            if IsPlayerSpectatingTarget(spec, target) then
+                out[#out + 1] = spec
+            end
+        end
+        return out
+    end
+
+    local function SendPanelToViewer(subject, viewer, spectatorView, readOnly)
+        if not IsValid(subject) or not IsValid(viewer) then return end
+        local payload = TF_MVMShop:BuildPayload(subject)
+        payload.spectatorView = spectatorView and true or false
+        payload.readOnly = readOnly and true or false
+        payload.observedEntIndex = subject:EntIndex()
+        payload.observedName = subject:Nick()
         net.Start("TF_MVM_UpgradeOpen")
-        net.WriteTable(TF_MVMShop:BuildPayload(ply))
-        net.Send(ply)
+        net.WriteTable(payload)
+        net.Send(viewer)
+    end
+
+    local function SendCloseToSpectators(target)
+        for _, spec in ipairs(GetSpectatorsWatching(target)) do
+            net.Start("TF_MVM_UpgradeClose")
+            net.Send(spec)
+        end
+    end
+
+    local function SendPanel(ply, opts)
+        if not TF_MVMShop:IsEnabledFor(ply) then return end
+        local readOnly = istable(opts) and opts.readOnly == true
+        TF_MVMShop:GetPendingSession(ply, true)
+        SendPanelToViewer(ply, ply, false, readOnly)
+        for _, spec in ipairs(GetSpectatorsWatching(ply)) do
+            SendPanelToViewer(ply, spec, true, readOnly)
+            spec.TF_MVMShopWatching = ply
+        end
         ply.TF_MVMUpgradePanelOpen = true
+        ply.TF_MVMUpgradeReadOnly = readOnly or nil
         ply.TF_MVMUpgradePanelOpenedAt = CurTime()
+    end
+
+    local function IsDroppedPickupCandidate(ent)
+        if not IsValid(ent) then return false end
+        if not ent.PlayerTouched or not ent.CanPickup then return false end
+        local className = string.lower(ent:GetClass() or "")
+        return string.find(className, "item_dropped", 1, true) ~= nil
+    end
+
+    local function IsReachableFromPlayer(ply, ent, maxDist)
+        if not IsValid(ply) or not IsValid(ent) then return false end
+        local shootPos = ply:GetShootPos()
+        local targetPos = ent.WorldSpaceCenter and ent:WorldSpaceCenter() or ent:GetPos()
+        if shootPos:DistToSqr(targetPos) > (maxDist * maxDist) then return false end
+
+        local tr = util.TraceLine({
+            start = shootPos,
+            endpos = targetPos,
+            filter = { ply, ent },
+            mask = MASK_SOLID,
+        })
+        return not tr.Hit
+    end
+
+    local function FindDroppedPickupInReach(ply, maxDist)
+        local shootPos = ply:GetShootPos()
+        local aimVec = ply:GetAimVector()
+        local tr = util.TraceLine({
+            start = shootPos,
+            endpos = shootPos + aimVec * maxDist,
+            filter = ply,
+            mask = MASK_SOLID,
+        })
+
+        local candidates = {}
+        if IsValid(tr.Entity) then
+            candidates[#candidates + 1] = tr.Entity
+        end
+
+        for _, ent in ipairs(ents.FindInSphere(tr.HitPos, 36)) do
+            candidates[#candidates + 1] = ent
+        end
+
+        local bestEnt = nil
+        local bestDistSqr = math.huge
+        for _, ent in ipairs(candidates) do
+            if not IsDroppedPickupCandidate(ent) then continue end
+            if not IsReachableFromPlayer(ply, ent, maxDist) then continue end
+            if not ent:CanPickup(ply) then continue end
+            local distSqr = ply:GetShootPos():DistToSqr(ent:GetPos())
+            if distSqr < bestDistSqr then
+                bestDistSqr = distSqr
+                bestEnt = ent
+            end
+        end
+
+        return bestEnt
+    end
+
+    local function TriggerQuickInspect(ply)
+        if not IsValid(ply) then return end
+        ply:SetNWString("inspect", "inspecting_start")
+        timer.Simple(0.12, function()
+            if not IsValid(ply) then return end
+            ply:SetNWString("inspect", "inspecting_released")
+            timer.Simple(0.02, function()
+                if not IsValid(ply) then return end
+                ply:SetNWString("inspect", "inspecting_done")
+            end)
+        end)
     end
 
     function TF_MVMShop:IsNearUpgradeStation(ply)
@@ -818,6 +1225,7 @@ if SERVER then
         state.spent = 0
         state.buybacks = 0
         state.upgrades = {}
+        state.pending = { active = false, deltas = {}, creditDelta = 0 }
         state.canteen.selected = "crit"
         state.canteen.cooldown = 0
         state.canteen.charges = { crit = 0, uber = 0, refill = 0, build = 0 }
@@ -834,18 +1242,79 @@ if SERVER then
         end
     end
 
-    function TF_MVMShop:BuyUpgrade(ply, id)
+    function TF_MVMShop:StageBuyUpgrade(ply, id)
+        local pending = self:GetPendingSession(ply, true)
         local can, reason = self:CanBuyUpgrade(ply, id)
         if not can then return false, reason end
         local cost = self:GetUpgradeCost(ply, id)
         if not cost then return false, "invalid_upgrade" end
-
-        local state = self:GetState(ply)
-        self:AddCredits(ply, -cost)
-        self:SetLevel(ply, id, self:GetLevel(ply, id) + 1)
-        state.spent = state.spent + cost
-        self:ApplyPlayerStats(ply)
+        pending.deltas[id] = ClampInt((pending.deltas[id] or 0) + 1)
+        pending.creditDelta = ClampInt((pending.creditDelta or 0) - cost)
         return true
+    end
+
+    function TF_MVMShop:StageSellUpgrade(ply, id)
+        local pending = self:GetPendingSession(ply, true)
+        local can, reason = self:CanSellUpgrade(ply, id)
+        if not can then return false, reason end
+        local refund = self:GetUpgradeSellRefund(ply, id)
+        if not refund then return false, "invalid_upgrade" end
+        pending.deltas[id] = ClampInt((pending.deltas[id] or 0) - 1)
+        pending.creditDelta = ClampInt((pending.creditDelta or 0) + refund)
+        return true
+    end
+
+    function TF_MVMShop:CommitPendingUpgrades(ply)
+        local pending = self:GetPendingSession(ply, false)
+        if not pending or not pending.active then return true end
+        local state = self:GetState(ply)
+        local totalSpentDelta = 0
+
+        for id, delta in pairs(pending.deltas or {}) do
+            local n = ClampInt(delta)
+            if n ~= 0 then
+                local before = self:GetLevel(ply, id)
+                local after = math.max(0, before + n)
+                self:SetLevel(ply, id, after)
+
+                if n > 0 then
+                    local upgrade = upgradesById[id]
+                    local costs = (upgrade and istable(upgrade.costs)) and upgrade.costs or {}
+                    for i = 1, n do
+                        totalSpentDelta = totalSpentDelta + (tonumber(costs[before + i] or 0) or 0)
+                    end
+                elseif n < 0 then
+                    local upgrade = upgradesById[id]
+                    local costs = (upgrade and istable(upgrade.costs)) and upgrade.costs or {}
+                    for i = 0, (-n - 1) do
+                        totalSpentDelta = totalSpentDelta - (tonumber(costs[before - i] or 0) or 0)
+                    end
+                end
+            end
+        end
+
+        self:AddCredits(ply, ClampInt(pending.creditDelta or 0))
+        state.spent = math.max(0, ClampInt(state.spent) + totalSpentDelta)
+        local didBuy = (ClampInt(pending.creditDelta or 0) < 0)
+        self:ClearPendingSession(ply)
+        self:ApplyPlayerStats(ply)
+        if didBuy then
+            ply:EmitSound("MVM.PlayerUpgraded")
+        end
+        return true
+    end
+
+    function TF_MVMShop:CancelPendingUpgrades(ply)
+        self:ClearPendingSession(ply)
+        return true
+    end
+
+    function TF_MVMShop:BuyUpgrade(ply, id)
+        return self:StageBuyUpgrade(ply, id)
+    end
+
+    function TF_MVMShop:SellUpgrade(ply, id)
+        return self:StageSellUpgrade(ply, id)
     end
 
     function TF_MVMShop:Respec(ply)
@@ -858,6 +1327,7 @@ if SERVER then
         state.upgrades = {}
         self:AddCredits(ply, refund)
         self:ApplyPlayerStats(ply)
+        ply:Spawn()
         ply:Spawn()
         return true
     end
@@ -897,8 +1367,9 @@ if SERVER then
     end
 
     local function ApplyCanteenUber(ply)
-        ply.TF_MVMUberUntil = CurTime() + 5
-        ply:SetNWFloat("TF_MVMUberUntil", ply.TF_MVMUberUntil)
+        if ply.AddCond then
+            ply:AddCond(TF_COND_INVULNERABLE, 5, ply)
+        end
     end
 
     local function ApplyCanteenRefill(ply)
@@ -1022,7 +1493,10 @@ if SERVER then
         end
 
         if IsValid(target) and target:IsPlayer() and TF_MVMShop:IsEnabledFor(target) then
-            if target.TF_MVMUberUntil and target.TF_MVMUberUntil > CurTime() then
+            if (target.InCond and target:InCond(TF_COND_INVULNERABLE))
+                or (target.InCond and target:InCond(TF_COND_INVULNERABLE_USER_BUFF))
+                or (target.InCond and target:InCond(TF_COND_INVULNERABLE_CARD_EFFECT))
+                or (target.InCond and target:InCond(TF_COND_INVULNERABLE_HIDE_UNLESS_DAMAGED)) then
                 dmginfo:ScaleDamage(0)
                 return
             end
@@ -1049,16 +1523,12 @@ if SERVER then
     end)
 
     hook.Add("PlayerDeath", "TF_MVMShop_HealOnKill", function(victim, inflictor, attacker)
+    hook.Add("PlayerDeath", "TF_MVMShop_HealOnKill", function(victim, inflictor, attacker)
         if not IsValid(attacker) or not attacker:IsPlayer() then return end
         if attacker == victim or not TF_MVMShop:IsEnabledFor(attacker) then return end
         if not attacker:Alive() then return end
 
         local healAmount = 0
-
-        local globalLevel = TF_MVMShop:GetLevel(attacker, "heal_on_kill")
-        if globalLevel > 0 then
-            healAmount = healAmount + (globalLevel * 15)
-        end
 
         local meleeLevel = TF_MVMShop:GetLevel(attacker, "lifesteal_melee")
         if meleeLevel > 0 then
@@ -1082,6 +1552,27 @@ if SERVER then
         end
     end)
 
+    hook.Add("Think", "TF_MVMShop_AutoHealRegen", function()
+        TF_MVMShop._NextAutoHealTick = TF_MVMShop._NextAutoHealTick or 0
+        if CurTime() < TF_MVMShop._NextAutoHealTick then return end
+        TF_MVMShop._NextAutoHealTick = CurTime() + 1
+
+        for _, ply in ipairs(player.GetAll()) do
+            if not TF_MVMShop:IsEnabledFor(ply) then continue end
+            if not ply:Alive() then continue end
+
+            local level = TF_MVMShop:GetLevel(ply, "autoheal")
+            if level <= 0 then continue end
+
+            local hp = ply:Health()
+            local maxHp = ply:GetMaxHealth()
+            if hp >= maxHp then continue end
+
+            local healPerSec = 2 * level
+            ply:SetHealth(math.min(maxHp, hp + healPerSec))
+        end
+    end)
+
     hook.Add("TF_MVM_MissionStarted", "TF_MVMShop_ResetMission", function(mission)
         local start = tonumber(mission and mission.StartingCurrency) or TF_MVMShop.StartingCredits
         TF_MVMShop:ResetAllPlayers(start)
@@ -1091,6 +1582,29 @@ if SERVER then
         for _, ply in ipairs(player.GetAll()) do
             if TF_MVMShop:IsEnabledFor(ply) then
                 TF_MVMShop:GetState(ply).buybacks = 0
+            end
+        end
+    end)
+
+    hook.Add("Think", "TF_MVMShop_SpectatorMirror", function()
+        TF_MVMShop._NextSpectatorMirrorTick = TF_MVMShop._NextSpectatorMirrorTick or 0
+        if CurTime() < TF_MVMShop._NextSpectatorMirrorTick then return end
+        TF_MVMShop._NextSpectatorMirrorTick = CurTime() + 0.25
+
+        for _, spec in ipairs(player.GetAll()) do
+            if not IsValid(spec) then continue end
+            if not spec.GetObserverTarget then continue end
+
+            local observed = spec:GetObserverTarget()
+            if IsValid(observed) and observed:IsPlayer() and observed.TF_MVMUpgradePanelOpen then
+                if spec.TF_MVMShopWatching ~= observed then
+                    SendPanelToViewer(observed, spec, true)
+                    spec.TF_MVMShopWatching = observed
+                end
+            elseif IsValid(spec.TF_MVMShopWatching) then
+                net.Start("TF_MVM_UpgradeClose")
+                net.Send(spec)
+                spec.TF_MVMShopWatching = nil
             end
         end
     end)
@@ -1105,7 +1619,31 @@ if SERVER then
     concommand.Add("tf_mvm_shop", function(ply)
         if not TF_MVMShop:IsEnabledFor(ply) then return end
         if not TF_MVMShop:IsNearUpgradeStation(ply) then return end
+        if not TF_MVMShop:IsNearUpgradeStation(ply) then return end
         SendPanel(ply)
+    end)
+
+    concommand.Add("tf_itempicker", function(ply, _, args)
+        if not IsValid(ply) or not ply:IsPlayer() then return end
+
+        local mode = string.lower(tostring(args and args[1] or ""))
+        if mode == "hat" then
+            ply:ConCommand("tf_hatpainter")
+            return
+        end
+
+        local droppedPickup = FindDroppedPickupInReach(ply, 130)
+        if IsValid(droppedPickup) then
+            droppedPickup:PlayerTouched(ply)
+            return
+        end
+
+        if TF_MVMShop:IsEnabledFor(ply) and TF_MVMShop:IsNearUpgradeStation(ply) then
+            SendPanel(ply, { readOnly = true })
+            return
+        end
+
+        TriggerQuickInspect(ply)
     end)
 
     concommand.Add("tf_mvm_use_canteen", function(ply)
@@ -1141,6 +1679,9 @@ if SERVER then
 
         if action == "ui_closed" then
             ply.TF_MVMUpgradePanelOpen = nil
+            ply.TF_MVMUpgradeReadOnly = nil
+            TF_MVMShop:CancelPendingUpgrades(ply)
+            SendCloseToSpectators(ply)
             return
         end
 
@@ -1150,8 +1691,11 @@ if SERVER then
 
         if not nearStation and not hasOpenContext then
             ply.TF_MVMUpgradePanelOpen = nil
+            ply.TF_MVMUpgradeReadOnly = nil
+            TF_MVMShop:CancelPendingUpgrades(ply)
             net.Start("TF_MVM_UpgradeClose")
             net.Send(ply)
+            SendCloseToSpectators(ply)
             if action == "buy_upgrade" then
                 ply:ChatPrint("[MvM] Upgrade failed: not near station")
             end
@@ -1160,6 +1704,34 @@ if SERVER then
 
         if action == "request_open" then
             SendPanel(ply)
+            return
+        elseif ply.TF_MVMUpgradeReadOnly and (
+            action == "accept"
+            or action == "cancel"
+            or action == "buy_upgrade"
+            or action == "sell_upgrade"
+            or action == "respec"
+            or action == "buy_canteen"
+            or action == "select_canteen"
+            or action == "buyback"
+        ) then
+            SendPanel(ply, { readOnly = true })
+            return
+        elseif action == "accept" then
+            TF_MVMShop:CommitPendingUpgrades(ply)
+            ply.TF_MVMUpgradePanelOpen = nil
+            ply.TF_MVMUpgradeReadOnly = nil
+            net.Start("TF_MVM_UpgradeClose")
+            net.Send(ply)
+            SendCloseToSpectators(ply)
+            return
+        elseif action == "cancel" then
+            TF_MVMShop:CancelPendingUpgrades(ply)
+            ply.TF_MVMUpgradePanelOpen = nil
+            ply.TF_MVMUpgradeReadOnly = nil
+            net.Start("TF_MVM_UpgradeClose")
+            net.Send(ply)
+            SendCloseToSpectators(ply)
             return
         elseif action == "buy_upgrade" then
             local ok, reason = TF_MVMShop:BuyUpgrade(ply, arg)
@@ -1175,12 +1747,17 @@ if SERVER then
                     tostring(TF_MVMShop:IsNearUpgradeStation(ply))
                 ))
             end
+        elseif action == "sell_upgrade" then
+            TF_MVMShop:SellUpgrade(ply, arg)
         elseif action == "respec" then
+            TF_MVMShop:CancelPendingUpgrades(ply)
             local ok, reason = TF_MVMShop:Respec(ply)
             if ok then
                 ply.TF_MVMUpgradePanelOpen = nil
+                ply.TF_MVMUpgradeReadOnly = nil
                 net.Start("TF_MVM_UpgradeClose")
                 net.Send(ply)
+                SendCloseToSpectators(ply)
                 return
             end
         elseif action == "buy_canteen" then
@@ -1194,7 +1771,11 @@ if SERVER then
         SendPanel(ply)
     end)
 else
-    include("vgui/vgui_tf2res.lua")
+    if file.Exists("gamemodes/tf/gamemode/cl_tf2_res.lua", "LUA") then
+        include("cl_tf2_res.lua")
+    else
+        include("vgui/vgui_tf2res.lua")
+    end
 
     local function IsNearUpgradeStationClient()
         local ply = LocalPlayer()
@@ -1228,7 +1809,7 @@ else
         resist_bullet = "vgui/mvm/upgradeicons/upgrade_resistance_bullet",
         resist_blast = "vgui/achievements/tf_demoman_kill_x_heavies_fullhp_onedet",
         resist_fire = "vgui/mvm/upgradeicons/upgrade_resistance_fire",
-        heal_on_kill = "vgui/achievements/tf_medic_kill_healed_spy",
+        autoheal = "vgui/achievements/tf_pyro_burn_medicpair",
         jump_height = "vgui/achievements/tf_scout_double_jumps",
         damage_primary = "vgui/achievements/tf_demoman_kill_x_with_directpipe",
         firerate_primary = "vgui/achievements/tf_scout_dodge_damage",
@@ -1261,6 +1842,7 @@ else
     local lastCloseTime = 0
     local tf2UpgradeResCache = nil
     local tf2SchemeColorCache = nil
+    local IsStillSpectatingObserved
 
     local function LocalizeToken(token, ...)
         if not isstring(token) or token == "" then return "" end
@@ -1338,7 +1920,8 @@ else
             local r, g, b, a = v:match("^(%d+)%s+(%d+)%s+(%d+)%s*(%d*)$")
             if r and g and b then
                 local alpha = tonumber(a)
-                out[string.lower(k)] = Color(tonumber(r), tonumber(g), tonumber(b), alpha and alpha > 0 and alpha or 255)
+                if alpha == nil then alpha = 255 end
+                out[string.lower(k)] = Color(tonumber(r), tonumber(g), tonumber(b), alpha)
             end
         end
 
@@ -1360,37 +1943,97 @@ else
     local function GetTF2UpgradeRes()
         if tf2UpgradeResCache then return tf2UpgradeResCache end
 
-        local hudTree = TF2Res and TF2Res.Load and TF2Res.Load("resource/ui/hudupgradepanel.res") or nil
-        local buyTree = TF2Res and TF2Res.Load and TF2Res.Load("resource/ui/upgradebuypanel.res") or nil
+        local hudTree = nil
+        local buyTree = nil
+        if TF2Res and TF2Res.Load then
+            for _, p in ipairs({
+                "resource/ui/hudupgradepanel.res",
+                "resource/ui/HudUpgradePanel.res",
+                "tf/resource/ui/hudupgradepanel.res",
+                "tf/resource/ui/HudUpgradePanel.res",
+            }) do
+                hudTree = TF2Res.Load(p)
+                if hudTree then break end
+            end
+            for _, p in ipairs({
+                "resource/ui/upgradebuypanel.res",
+                "resource/ui/UpgradeBuyPanel.res",
+                "tf/resource/ui/upgradebuypanel.res",
+                "tf/resource/ui/UpgradeBuyPanel.res",
+            }) do
+                buyTree = TF2Res.Load(p)
+                if buyTree then break end
+            end
+        end
+
+        local function FindByFieldNames(tree, ...)
+            if not TF2Res or not TF2Res.FindByFieldName then return nil end
+            for i = 1, select("#", ...) do
+                local name = select(i, ...)
+                local found = TF2Res.FindByFieldName(tree, name)
+                if found then return found end
+            end
+            return nil
+        end
 
         local selectPanel = hudTree and TF2Res.FindByFieldName(hudTree, "SelectWeaponPanel") or nil
+        local bgGrayout = FindByFieldNames(hudTree, "BGGrayoutPanel")
         local hudPanelRoot = hudTree and TF2Res.FindByKey(hudTree, "HudUpgradePanel") or nil
+        local outterPanelBG = FindByFieldNames(hudTree, "OutterPanelBG", "OuterPanelBG")
         local innerRim = hudTree and TF2Res.FindByFieldName(hudTree, "InnerPanelRim") or nil
         local innerBG = hudTree and TF2Res.FindByFieldName(hudTree, "InnerBGPanel") or nil
         local playerUpgradeButton = hudTree and TF2Res.FindByFieldName(hudTree, "PlayerUpgradeButton") or nil
         local activeTabPanel = hudTree and TF2Res.FindByFieldName(hudTree, "ActiveTabPanel") or nil
         local inactiveTabPanel = hudTree and TF2Res.FindByFieldName(hudTree, "InactiveTabPanel1") or nil
+        local inactiveSeparatorPanel = FindByFieldNames(hudTree, "InactiveSeparatorPanel")
         local hoverTabPanel = hudTree and TF2Res.FindByFieldName(hudTree, "MouseOverTabPanel") or nil
         local hoverUpgradePanel = hudTree and TF2Res.FindByFieldName(hudTree, "MouseOverUpgradePanel") or nil
         local classImagePanel = hudTree and TF2Res.FindByFieldName(hudTree, "ClassImage") or nil
         local creditsLabel = hudTree and TF2Res.FindByFieldName(hudTree, "CreditsLabel") or nil
         local creditsTextLabel = hudTree and TF2Res.FindByFieldName(hudTree, "CreditsTextLabel") or nil
+        local itemsDescBG = FindByFieldNames(hudTree, "UpgradeItemsDescriptionBG")
+        local itemsDescLabel = FindByFieldNames(hudTree, "UpgradeItemsDescriptionLabel")
         local upgradeItemsBG = hudTree and TF2Res.FindByFieldName(hudTree, "UpgradeItemsBG") or nil
         local upgradeItemsHeaderBG = hudTree and TF2Res.FindByFieldName(hudTree, "UpgradeItemsHeaderBG") or nil
         local upgradeItemsLabel = hudTree and TF2Res.FindByFieldName(hudTree, "UpgradeItemsLabel") or nil
         local itemStatsLabel = hudTree and TF2Res.FindByFieldName(hudTree, "UpgradeItemStatsLabel") or nil
         local itemNameBG = hudTree and TF2Res.FindByFieldName(hudTree, "ItemNameBG") or nil
+        local tipPanel = FindByFieldNames(hudTree, "TipPanel")
+        local tipPanelBG = FindByFieldNames(hudTree, "TipPanelBG")
+        local tipText = FindByFieldNames(hudTree, "TipText")
+        local quickEquipButton = FindByFieldNames(hudTree, "QuickEquipButton")
+        local loadoutButton = FindByFieldNames(hudTree, "LoadoutButton")
         local respecButton = hudTree and TF2Res.FindByFieldName(hudTree, "RespecButton") or nil
         local cancelButton = hudTree and TF2Res.FindByFieldName(hudTree, "CancelButton") or nil
         local closeButton = hudTree and TF2Res.FindByFieldName(hudTree, "CloseButton") or nil
 
         local upgradeCard = buyTree and TF2Res.FindByFieldName(buyTree, "UpgradeBuyPanel") or nil
         local iconBorder = buyTree and TF2Res.FindByFieldName(buyTree, "IconBorder") or nil
+        local iconPanel = buyTree and TF2Res.FindByFieldName(buyTree, "Icon") or nil
         local buySellBG = buyTree and TF2Res.FindByFieldName(buyTree, "BuySellBG") or nil
         local priceLabel = buyTree and TF2Res.FindByFieldName(buyTree, "PriceLabel") or nil
         local shortDesc = buyTree and TF2Res.FindByFieldName(buyTree, "ShortDescriptionLabel") or nil
         local incrementBtn = buyTree and TF2Res.FindByFieldName(buyTree, "IncrementButton") or nil
         local decrementBtn = buyTree and TF2Res.FindByFieldName(buyTree, "DecrementButton") or nil
+        local skillTreeKV = buyTree and TF2Res.FindByKey(buyTree, "skilltreebuttons_kv") or nil
+
+        -- Fallback when TF2Res helper isn't available yet; panel code uses defaults via `or`.
+        if not TF2Res or not TF2Res.GetNumber then
+            tf2UpgradeResCache = {}
+            return tf2UpgradeResCache
+        end
+
+        local function ResolveOverrideColor(node, key, fallback)
+            local raw = TF2Res.GetString(node, key, nil)
+            if not isstring(raw) or raw == "" then return fallback end
+            local r, g, b, a = raw:match("^(%d+)%s+(%d+)%s+(%d+)%s*(%d*)$")
+            if r and g and b then
+                local alpha = tonumber(a)
+                if alpha == nil then alpha = 255 end
+                return Color(tonumber(r), tonumber(g), tonumber(b), alpha)
+            end
+            return GetSchemeColor(raw, fallback)
+        end
 
         tf2UpgradeResCache = {
             selectW = TF2Res.GetNumber(selectPanel, "wide", 500),
@@ -1408,36 +2051,73 @@ else
             tabH = TF2Res.GetNumber(playerUpgradeButton, "tall", 50),
             tabTextInsetX = TF2Res.GetNumber(playerUpgradeButton, "textinsetx", 50),
             tabFont = TF2Res.GetString(playerUpgradeButton, "font", "HudFontSmallBold"),
+            tabTextAlignment = TF2Res.GetString(playerUpgradeButton, "textAlignment", "center"),
+            tabTextInsetY = TF2Res.GetNumber(playerUpgradeButton, "textinsety", 6),
             tabTextColor = GetSchemeColor("TanLight", Color(231, 218, 186)),
             tabStartX = TF2Res.GetNumber(activeTabPanel, "xpos", 88),
             tabStartY = TF2Res.GetNumber(playerUpgradeButton, "ypos", 10),
             tabGap = TF2Res.GetNumber(hudPanelRoot, "itempanel_xdelta", 5),
+            tabRowBottomY = TF2Res.GetNumber(inactiveSeparatorPanel, "ypos", 48),
+            tabSeparatorH = TF2Res.GetNumber(inactiveSeparatorPanel, "tall", 5),
             infoW = TF2Res.GetNumber(itemNameBG, "wide", 130),
+            infoX = TF2Res.GetNumber(upgradeItemsBG, "xpos", 25),
+            infoY = TF2Res.GetNumber(upgradeItemsBG, "ypos", 135),
+            infoH = TF2Res.GetNumber(upgradeItemsBG, "tall", 130),
+            infoDescX = TF2Res.GetNumber(itemStatsLabel, "xpos", 30),
+            infoDescY = TF2Res.GetNumber(itemStatsLabel, "ypos", 160),
+            infoDescW = TF2Res.GetNumber(itemStatsLabel, "wide", 120),
+            infoDescH = TF2Res.GetNumber(itemStatsLabel, "tall", 105),
             rowW = TF2Res.GetNumber(upgradeCard, "wide", 155),
             rowH = TF2Res.GetNumber(upgradeCard, "tall", 45),
             rowIconW = TF2Res.GetNumber(iconBorder, "wide", 30),
             rowIconH = TF2Res.GetNumber(iconBorder, "tall", 30),
+            rowIconX = TF2Res.GetNumber(iconPanel, "xpos", 4),
+            rowIconY = TF2Res.GetNumber(iconPanel, "ypos", 4),
             rowRightW = TF2Res.GetNumber(buySellBG, "wide", 20),
             priceY = TF2Res.GetNumber(priceLabel, "ypos", 32),
+            priceX = TF2Res.GetNumber(priceLabel, "xpos", 2),
+            priceW = TF2Res.GetNumber(priceLabel, "wide", 30),
+            priceH = TF2Res.GetNumber(priceLabel, "tall", 13),
             textX = TF2Res.GetNumber(shortDesc, "xpos", 37),
             textY = TF2Res.GetNumber(shortDesc, "ypos", 4),
+            textW = TF2Res.GetNumber(shortDesc, "wide", 97),
+            textH = TF2Res.GetNumber(shortDesc, "tall", 22),
             plusX = TF2Res.GetNumber(incrementBtn, "xpos", 137),
             plusY = TF2Res.GetNumber(incrementBtn, "ypos", 4),
+            plusW = TF2Res.GetNumber(incrementBtn, "wide", 16),
+            plusH = TF2Res.GetNumber(incrementBtn, "tall", 16),
             minusX = TF2Res.GetNumber(decrementBtn, "xpos", 137),
             minusY = TF2Res.GetNumber(decrementBtn, "ypos", 24),
-            buyActiveImage = TF2Res.GetString(incrementBtn, "activeimage", "pve/buy_enabled"),
-            buyInactiveImage = TF2Res.GetString(incrementBtn, "inactiveimage", "pve/buy_disabled"),
-            sellActiveImage = TF2Res.GetString(decrementBtn, "activeimage", "pve/sell_enabled"),
-            sellInactiveImage = TF2Res.GetString(decrementBtn, "inactiveimage", "pve/sell_disabled"),
+            minusW = TF2Res.GetNumber(decrementBtn, "wide", 16),
+            minusH = TF2Res.GetNumber(decrementBtn, "tall", 16),
+            -- CImageButton semantics in TF2:
+            -- inactiveimage = idle image, activeimage = hovered/pressed image.
+            buyActiveImage = TF2Res.GetString(incrementBtn, "activeimage", "vgui/pve/buy_selected"),
+            buyInactiveImage = TF2Res.GetString(incrementBtn, "inactiveimage", "vgui/pve/buy_enabled"),
+            sellActiveImage = TF2Res.GetString(decrementBtn, "activeimage", "vgui/pve/sell_selected"),
+            sellInactiveImage = TF2Res.GetString(decrementBtn, "inactiveimage", "vgui/pve/sell_enabled"),
+            plusSoundDown = TF2Res.GetString(incrementBtn, "sound_depressed", "ui/buttonclick.wav"),
+            plusSoundUp = TF2Res.GetString(incrementBtn, "sound_released", "ui/buttonclickrelease.wav"),
+            minusSoundDown = TF2Res.GetString(decrementBtn, "sound_depressed", "ui/buttonclick.wav"),
+            minusSoundUp = TF2Res.GetString(decrementBtn, "sound_released", "ui/buttonclickrelease.wav"),
+            plusDefaultBG = ResolveOverrideColor(incrementBtn, "defaultBgColor_override", Color(255, 255, 255, 0)),
+            plusArmedBG = ResolveOverrideColor(incrementBtn, "armedBgColor_override", Color(255, 255, 255, 0)),
+            plusDepressedBG = ResolveOverrideColor(incrementBtn, "depressedBgColor_override", Color(255, 255, 255, 0)),
+            minusDefaultBG = ResolveOverrideColor(decrementBtn, "defaultBgColor_override", Color(255, 255, 255, 0)),
+            minusArmedBG = ResolveOverrideColor(decrementBtn, "armedBgColor_override", Color(255, 255, 255, 0)),
+            minusDepressedBG = ResolveOverrideColor(decrementBtn, "depressedBgColor_override", Color(255, 255, 255, 0)),
             respecW = TF2Res.GetNumber(respecButton, "wide", 120),
             respecH = TF2Res.GetNumber(respecButton, "tall", 17),
             respecX = TF2Res.GetNumber(respecButton, "xpos", 50),
+            respecY = TF2Res.GetNumber(respecButton, "ypos", 285),
             cancelW = TF2Res.GetNumber(cancelButton, "wide", 75),
             cancelH = TF2Res.GetNumber(cancelButton, "tall", 17),
             cancelX = TF2Res.GetNumber(cancelButton, "xpos", 335),
+            cancelY = TF2Res.GetNumber(cancelButton, "ypos", 285),
             closeW = TF2Res.GetNumber(closeButton, "wide", 75),
             closeH = TF2Res.GetNumber(closeButton, "tall", 17),
             closeX = TF2Res.GetNumber(closeButton, "xpos", 415),
+            closeY = TF2Res.GetNumber(closeButton, "ypos", 285),
             upgradeButtonY = TF2Res.GetNumber(upgradeCard, "upgradebutton_ypos", 26),
             upgradeDelta = TF2Res.GetNumber(hudPanelRoot, "upgradebuypanel_delta", 6),
             upgradeListX = TF2Res.GetNumber(hudPanelRoot, "upgradebuypanel_xpos", 160),
@@ -1446,11 +2126,19 @@ else
             classY = TF2Res.GetNumber(classImagePanel, "ypos", 15),
             classW = TF2Res.GetNumber(classImagePanel, "wide", 40),
             classH = TF2Res.GetNumber(classImagePanel, "tall", 40),
+            cardBorderImage = TF2Res.GetString(outterPanelBG, "image", "../HUD/tournament_panel_brown"),
+            cardCornerSrcW = TF2Res.GetNumber(outterPanelBG, "src_corner_width", 23),
+            cardCornerSrcH = TF2Res.GetNumber(outterPanelBG, "src_corner_height", 23),
+            cardCornerDrawW = TF2Res.GetNumber(outterPanelBG, "draw_corner_width", 8),
+            cardCornerDrawH = TF2Res.GetNumber(outterPanelBG, "draw_corner_height", 8),
+            backdropColor = TF2Res.GetColor(bgGrayout, "bgcolor_override", Color(0, 0, 0, 210)),
             colCardBG = TF2Res.GetColor(selectPanel, "bgcolor_override", Color(63, 59, 55, 250)),
             colActiveTab = TF2Res.GetColor(activeTabPanel, "bgcolor_override", Color(142, 132, 121, 255)),
             colInactiveTab = TF2Res.GetColor(inactiveTabPanel, "bgcolor_override", Color(77, 72, 68, 255)),
             colHoverTab = TF2Res.GetColor(hoverTabPanel, "bgcolor_override", Color(239, 128, 73, 255)),
             colHoverUpgrade = TF2Res.GetColor(hoverUpgradePanel, "bgcolor_override", Color(239, 128, 73, 255)),
+            colInactiveSeparator = TF2Res.GetColor(inactiveSeparatorPanel, "bgcolor_override", Color(0, 0, 0, 128)),
+            colDescBG = TF2Res.GetColor(itemsDescBG, "bgcolor_override", Color(52, 48, 45, 255)),
             colListBG = TF2Res.GetColor(upgradeItemsBG, "bgcolor_override", Color(97, 94, 85, 255)),
             colListHeader = TF2Res.GetColor(upgradeItemsHeaderBG, "bgcolor_override", Color(72, 68, 63, 255)),
             colRowBG = TF2Res.GetColor(TF2Res.FindByFieldName(buyTree, "InnerPanelRim"), "bgcolor_override", Color(97, 94, 85, 255)),
@@ -1465,6 +2153,30 @@ else
             respecTextToken = TF2Res.GetString(respecButton, "labelText", "#TF_PVE_UpgradeRespec"),
             itemHeaderFont = TF2Res.GetString(upgradeItemsLabel, "font", "HudFontSmallBold"),
             itemStatsFont = TF2Res.GetString(itemStatsLabel, "font", "HudFontSmallest"),
+            itemDescFont = TF2Res.GetString(itemsDescLabel, "font", "ItemFontAttribLarge"),
+            rowNameFont = TF2Res.GetString(shortDesc, "font", "HudFontSmallest"),
+            rowPriceFont = TF2Res.GetString(priceLabel, "font", "HudFontSmallestBold"),
+            pipW = TF2Res.GetNumber(skillTreeKV, "wide", 16),
+            pipH = TF2Res.GetNumber(skillTreeKV, "tall", 16),
+            infoHeaderH = TF2Res.GetNumber(upgradeItemsHeaderBG, "tall", 20),
+            titleFont = TF2Res.GetString(upgradeItemsLabel, "font", "HudFontSmallBold"),
+            waveFont = TF2Res.GetString(creditsTextLabel, "font", "HudFontSmallestBold"),
+            tipX = TF2Res.GetNumber(tipPanel, "xpos", 0),
+            tipY = TF2Res.GetNumber(tipPanel, "ypos", 395),
+            tipW = TF2Res.GetNumber(tipPanel, "wide", 500),
+            tipH = TF2Res.GetNumber(tipPanel, "tall", 40),
+            tipFont = TF2Res.GetString(tipText, "font", "HudFontSmallest"),
+            tipTextToken = TF2Res.GetString(tipText, "labelText", "%tiptext%"),
+            quickEquipX = TF2Res.GetNumber(quickEquipButton, "xpos", 250),
+            quickEquipY = TF2Res.GetNumber(quickEquipButton, "ypos", 195),
+            quickEquipW = TF2Res.GetNumber(quickEquipButton, "wide", 120),
+            quickEquipH = TF2Res.GetNumber(quickEquipButton, "tall", 17),
+            quickEquipTextToken = TF2Res.GetString(quickEquipButton, "labelText", "#TF_PVE_Quick_Equip_Bottle"),
+            loadoutX = TF2Res.GetNumber(loadoutButton, "xpos", 250),
+            loadoutY = TF2Res.GetNumber(loadoutButton, "ypos", 215),
+            loadoutW = TF2Res.GetNumber(loadoutButton, "wide", 120),
+            loadoutH = TF2Res.GetNumber(loadoutButton, "tall", 17),
+            loadoutTextToken = TF2Res.GetString(loadoutButton, "labelText", "#OpenGeneralLoadout"),
             colInnerRim = TF2Res.GetColor(innerRim, "bgcolor_override", Color(142, 132, 121, 255)),
             colInnerBG = TF2Res.GetColor(innerBG, "bgcolor_override", Color(77, 72, 68, 255)),
         }
@@ -1545,8 +2257,8 @@ else
         return ""
     end
 
-    local function GetSlotItemVisual(slotName)
-        local ply = LocalPlayer()
+    local function GetSlotItemVisual(slotName, subjectPly)
+        local ply = IsValid(subjectPly) and subjectPly or LocalPlayer()
         if not IsValid(ply) then return nil, nil end
         if slotName == "player" then
             local className = string.lower(tostring(ply:GetPlayerClass() or "scout"))
@@ -1554,16 +2266,18 @@ else
         end
         if slotName == "action" then
             local icon = nil
-            local className = string.lower(tostring(ply:GetPlayerClass() or ""))
-            local cvar = GetConVar("loadout_" .. className)
-            if cvar and _G.tf_items and istable(tf_items.Items) then
-                local split = string.Split(cvar:GetString() or "", ",")
-                local actionDef = tonumber(split[7] or "-1") or -1
-                if actionDef > 0 then
-                    for _, item in pairs(tf_items.Items) do
-                        if istable(item) and tonumber(item.id or -1) == actionDef then
-                            icon = NormalizeIconPath(item.image_inventory)
-                            break
+            if ply == LocalPlayer() then
+                local className = string.lower(tostring(ply:GetPlayerClass() or ""))
+                local cvar = GetConVar("loadout_" .. className)
+                if cvar and _G.tf_items and istable(tf_items.Items) then
+                    local split = string.Split(cvar:GetString() or "", ",")
+                    local actionDef = tonumber(split[7] or "-1") or -1
+                    if actionDef > 0 then
+                        for _, item in pairs(tf_items.Items) do
+                            if istable(item) and tonumber(item.id or -1) == actionDef then
+                                icon = NormalizeIconPath(item.image_inventory)
+                                break
+                            end
                         end
                     end
                 end
@@ -1591,8 +2305,8 @@ else
         return nil, SLOT_FALLBACK_ICON[slotName]
     end
 
-    local function BuildTabsForPlayer(payload)
-        local ply = LocalPlayer()
+    local function BuildTabsForPlayer(payload, subjectPly)
+        local ply = IsValid(subjectPly) and subjectPly or LocalPlayer()
         local className = string.lower(tostring(IsValid(ply) and ply:GetPlayerClass() or ""))
 
         local tabs = {
@@ -1634,12 +2348,17 @@ else
     local function BuildPanel(payload)
         if not istable(payload) then return end
 
-        if IsValid(TF_MVMUpgradeFrame) then
-            TF_MVMUpgradeFrame:Remove()
+        if IsValid(TF_MVMUpgradeFrame) and TF_MVMUpgradeFrame.ApplyPayload then
+            local wantsReadOnly = payload.readOnly == true
+            if TF_MVMUpgradeFrame.ReadOnly ~= wantsReadOnly then
+                TF_MVMUpgradeFrame:Close()
+            else
+                TF_MVMUpgradeFrame:ApplyPayload(payload)
+                return
+            end
         end
 
         local res = GetTF2UpgradeRes()
-        local scale = math.max(0.85, ScrH() / 1080)
         local uiScale = math.Clamp(
             math.min(
                 ScrW() / ((res.selectW or 500) + 90),
@@ -1652,15 +2371,19 @@ else
         local cardW = math.floor((res.selectW or 500) * uiScale)
         local cardH = math.floor((res.selectH or 350) * uiScale)
         local pad = math.floor((res.innerX or 10) * uiScale)
-        local infoW = math.floor((res.infoW or 130) * uiScale * 0.87)
+        local infoW = math.floor((res.infoW or 130) * uiScale)
         local topBarH = math.floor((res.innerY or 50) * uiScale)
-        local bottomY = math.floor(280 * uiScale)
-        local bottomBarH = math.floor(30 * uiScale)
+        local bottomBarH = math.floor((math.max(res.cancelH or 17, res.respecH or 17) + 12) * uiScale)
+        local bottomY = math.floor(((res.innerY or 50) + (res.innerH or 230) + 5) * uiScale)
         local listTop = math.floor((res.innerBGY or 55) * uiScale)
-        local matBuyEnabled = Material(NormalizeIconPath(res.buyActiveImage) or "vgui/pve/buy_enabled")
-        local matBuyDisabled = Material(NormalizeIconPath(res.buyInactiveImage) or "vgui/pve/buy_disabled")
-        local matSellEnabled = Material(NormalizeIconPath(res.sellActiveImage) or "vgui/pve/sell_enabled")
-        local matSellDisabled = Material(NormalizeIconPath(res.sellInactiveImage) or "vgui/pve/sell_disabled")
+        -- TF2 runtime parity: c_tf_upgrades.cpp overrides button images in code
+        -- based on affordability/level, instead of trusting static .res defaults.
+        local matBuyActive = Material("vgui/pve/buy_selected")
+        local matBuyInactive = Material("vgui/pve/buy_enabled")
+        local matBuyDisabled = Material("vgui/pve/buy_disabled")
+        local matSellActive = Material("vgui/pve/sell_selected")
+        local matSellInactive = Material("vgui/pve/sell_enabled")
+        local matSellDisabled = Material("vgui/pve/sell_disabled")
         local matPipFilled = Material("vgui/pve/chalf_circle")
         local matPipEmpty = Material("vgui/pve/chalf_circle_empty")
 
@@ -1683,10 +2406,22 @@ else
         end
         local txtMaxReached = LocalizeToken("TF_PVE_UpgradeMaxed")
         local txtNotEnough = LocalizeToken("TF_Not_Enough_Resources")
-        local txtCancel = LocalizeToken(res.cancelTextToken or "#TF_PVE_UpgradeCancel")
+        local txtCancel = (payload.readOnly == true) and "CLOSE" or LocalizeToken(res.cancelTextToken or "#TF_PVE_UpgradeCancel")
         local txtAccept = LocalizeToken(res.closeTextToken or "#TF_PVE_UpgradeDone")
         local txtRespec = LocalizeToken(res.respecTextToken or "#TF_PVE_UpgradeRespec")
         local txtItemToUpgrade = LocalizeToken("TF_PVE_UpgradeTitle")
+
+        local function PlayUiRollover()
+            surface.PlaySound("ui/buttonrollover.wav")
+        end
+
+        local function PlayUiClick(soundPath)
+            if isstring(soundPath) and soundPath ~= "" then
+                surface.PlaySound(soundPath)
+                return
+            end
+            surface.PlaySound("ui/buttonclickrelease.wav")
+        end
 
         local function FormatUpgradeCost(cost)
             local fmt = txtCostFormat
@@ -1700,6 +2435,9 @@ else
         local function SkinActionButton(btn)
             btn:SetTextColor(colButtonText)
             btn:SetFont(res.buttonFont or "HudFontSmallestBold")
+            btn.OnCursorEntered = function()
+                PlayUiRollover()
+            end
             btn.Paint = function(self, w, h)
                 local bg = colButtonBG
                 local fg = colButtonText
@@ -1721,7 +2459,14 @@ else
 
         local frame = vgui.Create("DFrame")
         TF_MVMUpgradeFrame = frame
+        frame.SpectatorView = payload.spectatorView == true
+        frame.ReadOnly = payload.readOnly == true
+        frame.ObservedEntIndex = tonumber(payload.observedEntIndex or -1) or -1
+        local subjectPly = frame.SpectatorView and Entity(frame.ObservedEntIndex) or LocalPlayer()
         frame:SetTitle("")
+        frame:SetDraggable(false)
+        frame:ShowCloseButton(false)
+        frame:SetSize(ScrW(), ScrH())
         frame:SetDraggable(false)
         frame:ShowCloseButton(false)
         frame:SetSize(ScrW(), ScrH())
@@ -1730,8 +2475,13 @@ else
         frame:SetMouseInputEnabled(true)
         gui.EnableScreenClicker(true)
         frame:Center()
+        frame:SetKeyboardInputEnabled(false)
+        frame:SetMouseInputEnabled(true)
+        gui.EnableScreenClicker(true)
+        frame:Center()
         frame.Paint = function(self, w, h)
-            surface.SetDrawColor(0, 0, 0, 210)
+            local bg = res.backdropColor or Color(0, 0, 0, 210)
+            surface.SetDrawColor(bg.r, bg.g, bg.b, bg.a)
             surface.DrawRect(0, 0, w, h)
         end
         frame.OnKeyCodePressed = function(self, code)
@@ -1752,7 +2502,18 @@ else
         card:SetPos((ScrW() - cardW) * 0.5, math.floor((res.panelY or 85) * uiScale))
         card.Paint = function(self, w, h)
             if tf_draw and tf_draw.BorderPanel then
-                tf_draw.BorderPanel(surface.GetTextureID("hud/tournament_panel_brown"), 0, 0, w, h, 23, 23, 8 * uiScale, 8 * uiScale)
+                local borderImage = NormalizeIconPath(res.cardBorderImage) or "hud/tournament_panel_brown"
+                tf_draw.BorderPanel(
+                    surface.GetTextureID(borderImage),
+                    0,
+                    0,
+                    w,
+                    h,
+                    res.cardCornerSrcW or 23,
+                    res.cardCornerSrcH or 23,
+                    (res.cardCornerDrawW or 8) * uiScale,
+                    (res.cardCornerDrawH or 8) * uiScale
+                )
             else
                 surface.SetDrawColor(res.colCardBG or Color(63, 59, 55, 250))
                 surface.DrawRect(0, 0, w, h)
@@ -1763,27 +2524,28 @@ else
             surface.SetDrawColor(res.colInnerBG or Color(77, 72, 68, 255))
             surface.DrawRect(pad + 2, topBarH + 2, w - (pad * 2) - 4, h - topBarH - bottomBarH - pad - 4)
 
-            draw.SimpleText("UPGRADE STATION", "HudFontSmallBold", pad + math.floor(8 * uiScale), math.floor(6 * uiScale), colTanLight, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+            draw.SimpleText("UPGRADE STATION", res.titleFont or "HudFontSmallBold", pad + math.floor(8 * uiScale), math.floor(6 * uiScale), colTanLight, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
             local creditY = bottomY + math.floor(10 * uiScale)
             draw.SimpleText(tostring(payload.credits or 0), res.creditsFont or "HudFontMedium", w * 0.5 - math.floor(24 * uiScale), creditY, colCreditsGreen, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
             draw.SimpleText(txtCredits, res.creditsTextFont or "HudFontSmallBold", w * 0.5 - math.floor(18 * uiScale), creditY, colTanLight, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-            draw.SimpleText("WAVE " .. tostring(payload.waveCurrent or 0) .. " / " .. tostring(payload.waveTotal or 0), "HudFontSmallestBold", w - pad - math.floor(8 * uiScale), math.floor(10 * uiScale), colTanLight, TEXT_ALIGN_RIGHT, TEXT_ALIGN_TOP)
+            draw.SimpleText("WAVE " .. tostring(payload.waveCurrent or 0) .. " / " .. tostring(payload.waveTotal or 0), res.waveFont or "HudFontSmallestBold", w - pad - math.floor(8 * uiScale), math.floor(10 * uiScale), colTanLight, TEXT_ALIGN_RIGHT, TEXT_ALIGN_TOP)
+            local sepY = math.floor((res.tabRowBottomY or 48) * uiScale)
+            local sepH = math.max(1, math.floor((res.tabSeparatorH or 5) * uiScale))
+            local sepCol = res.colInactiveSeparator or Color(0, 0, 0, 128)
+            surface.SetDrawColor(sepCol.r, sepCol.g, sepCol.b, sepCol.a)
+            surface.DrawRect(pad, sepY, w - (pad * 2), sepH)
         end
 
-        local className = string.lower(tostring(LocalPlayer():GetPlayerClass() or "scout"))
-        local classIcon = vgui.Create("DImage", card)
-        classIcon:SetPos(math.floor((res.classX or 30) * uiScale), math.floor((res.classY or 15) * uiScale))
-        classIcon:SetSize(math.floor((res.classW or 40) * uiScale), math.floor((res.classH or 40) * uiScale))
-        classIcon:SetImage(ResolveClassPortraitIcon(LocalPlayer(), className))
+        local classIcon = nil
 
-        local tabs = BuildTabsForPlayer(payload)
+        local tabs = BuildTabsForPlayer(payload, subjectPly)
         local selectedTab = tabs[1] and tabs[1].key or "player"
         local tabButtons = {}
 
         local tabX = math.floor((res.tabStartX or 88) * uiScale)
-        local tabW = math.max(math.floor((res.tabW or 70) * uiScale), math.floor(96 * uiScale))
+        local tabW = math.floor((res.tabW or 70) * uiScale)
         local tabH = math.floor((res.tabH or 50) * uiScale)
-        local tabGap = math.max(1, math.floor((res.tabGap or 5) * uiScale * 0.4))
+        local tabGap = math.max(1, math.floor((res.tabGap or 5) * uiScale))
 
         for i, tab in ipairs(tabs) do
             local btn = vgui.Create("DButton", card)
@@ -1815,10 +2577,14 @@ else
                 surface.DrawRect(w - 1, 0, 1, h)
             end
             btn.DoClick = function()
+                PlayUiClick()
                 selectedTab = tab.key
                 if card.QueueUpgradeRebuild then
                     card:QueueUpgradeRebuild()
                 end
+            end
+            btn.OnCursorEntered = function()
+                PlayUiRollover()
             end
 
             local icon = vgui.Create("DImage", btn)
@@ -1827,26 +2593,50 @@ else
             icon:SetImage(tab.fallbackIcon)
 
             local label = vgui.Create("DLabel", btn)
-            local tabTextX = math.min(math.floor((res.tabTextInsetX or 50) * uiScale), math.floor(38 * uiScale))
-            label:SetPos(tabTextX, math.floor(6 * uiScale))
-            label:SetSize(math.max(1, tabW - tabTextX - math.floor(4 * uiScale)), math.floor(40 * uiScale))
+            local tabTextX = math.floor((res.tabTextInsetX or 50) * uiScale)
+            local tabPadR = math.floor(4 * uiScale)
+            local tabTextY = math.floor(6 * uiScale)
+            local tabLabelH = math.floor(40 * uiScale)
             label:SetText(tab.label)
-            label:SetFont("HudFontSmallest")
+            local tabFont = res.tabFont or "HudFontSmallest"
+            label:SetFont(tabFont)
             label:SetWrap(false)
             label:SetTextColor(res.tabTextColor or colTanLight)
             label:SetContentAlignment(4)
+            surface.SetFont(tabFont)
+            local textW = select(1, surface.GetTextSize(tab.label or ""))
+            local availW = tabW - tabTextX - tabPadR
+            if textW > availW then
+                -- Keep text in one line like TF2 by pulling the start left first.
+                local minTextX = math.floor(34 * uiScale)
+                tabTextX = math.max(minTextX, tabW - textW - tabPadR)
+                availW = tabW - tabTextX - tabPadR
+            end
+            if textW > availW then
+                -- Final fallback for GMOD font mismatch with TF2 font metrics.
+                tabFont = "HudFontSmallest"
+                label:SetFont(tabFont)
+            end
+            label:SetPos(tabTextX, tabTextY)
+            label:SetSize(math.max(1, tabW - tabTextX - tabPadR), tabLabelH)
 
             tabButtons[#tabButtons + 1] = { tab = tab, button = btn, icon = icon, label = label, iconPath = tab.fallbackIcon }
         end
 
         local infoPanel = vgui.Create("DPanel", card)
-        infoPanel:SetPos(pad, listTop)
-        infoPanel:SetSize(infoW, cardH - listTop - bottomBarH - pad)
+        local infoX = math.floor((res.infoX or (res.innerX or 10)) * uiScale)
+        local infoY = math.floor((res.infoY or (res.innerBGY or 55)) * uiScale)
+        local infoH = math.floor((res.infoH or (cardH - infoY - bottomBarH - pad)) * uiScale)
+        infoPanel:SetPos(infoX, infoY)
+        infoPanel:SetSize(infoW, infoH)
         infoPanel.Paint = function(self,w,h)
             surface.SetDrawColor(res.colListBG or Color(97, 94, 85, 255))
             surface.DrawRect(0,0,w,h)
+            local descCol = res.colDescBG or res.colListBG or Color(97, 94, 85, 255)
+            surface.SetDrawColor(descCol.r, descCol.g, descCol.b, descCol.a)
+            surface.DrawRect(0, math.floor((res.infoHeaderH or 20) * uiScale), w, math.max(0, h - math.floor((res.infoHeaderH or 20) * uiScale)))
             surface.SetDrawColor(res.colListHeader or Color(72, 68, 63, 255))
-            surface.DrawRect(0, 0, w, math.floor(20 * uiScale))
+            surface.DrawRect(0, 0, w, math.floor((res.infoHeaderH or 20) * uiScale))
         end
 
         infoPanel.name = vgui.Create("DLabel", infoPanel)
@@ -1856,24 +2646,158 @@ else
         infoPanel.name:SetTextColor(colListHeaderText)
 
         infoPanel.desc = vgui.Create("DLabel", infoPanel)
-        infoPanel.desc:SetPos(math.floor(4 * uiScale), math.floor(24 * uiScale))
-        infoPanel.desc:SetSize(infoW - math.floor(8 * uiScale), infoPanel:GetTall() - math.floor(62 * uiScale))
-        infoPanel.desc:SetFont(res.itemStatsFont or "HudFontSmallest")
+        local descX = math.floor(((res.infoDescX or 30) - (res.infoX or 25)) * uiScale)
+        local descY = math.floor(((res.infoDescY or 160) - (res.infoY or 135)) * uiScale)
+        local descW = math.floor((res.infoDescW or 120) * uiScale)
+        local descH = math.floor((res.infoDescH or 105) * uiScale)
+        infoPanel.desc:SetPos(descX, descY)
+        infoPanel.desc:SetSize(descW, descH)
+        infoPanel.desc:SetFont(res.itemStatsFont or res.itemDescFont or "HudFontSmallest")
         infoPanel.desc:SetWrap(true)
         infoPanel.desc:SetAutoStretchVertical(true)
         infoPanel.desc:SetTextColor(colAttribPositive)
 
         infoPanel.slotLabel = vgui.Create("DLabel", infoPanel)
-        infoPanel.slotLabel:SetPos(math.floor(4 * uiScale), infoPanel:GetTall() - math.floor(32 * uiScale))
-        infoPanel.slotLabel:SetSize(infoW - math.floor(8 * uiScale), math.floor(14 * uiScale))
+        local slotLabelH = math.floor(14 * uiScale)
+        local slotLabelY = infoPanel:GetTall() - slotLabelH - math.floor(8 * uiScale)
+        infoPanel.slotLabel:SetPos(math.floor(4 * uiScale), slotLabelY)
+        infoPanel.slotLabel:SetSize(infoW - math.floor(8 * uiScale), slotLabelH)
         infoPanel.slotLabel:SetFont("HudFontSmallestBold")
         infoPanel.slotLabel:SetTextColor(Color(252, 221, 118))
         infoPanel.slotLabel:SetText("")
 
+        local function BuildTabStatsText(tabKey)
+            local function FormatAccumulatedStatLine(up, lvl)
+                local id = string.lower(tostring(up.id or ""))
+                local attr = string.lower(tostring(up.attribute or ""))
+                local name = MaybeLocalize(up.name or "")
+                if not isstring(name) or name == "" then
+                    name = tostring(up.id or "Upgrade")
+                end
+                local shortNameMap = {
+                    ["Primary Damage"] = "Damage",
+                    ["Secondary Damage"] = "Damage",
+                    ["Melee Damage"] = "Damage",
+                    ["Primary Fire Rate"] = "Firing Speed",
+                    ["Secondary Fire Rate"] = "Firing Speed",
+                    ["Primary Reload"] = "Reload Speed",
+                    ["Secondary Reload"] = "Reload Speed",
+                    ["Primary Clip Size"] = "Clip Size",
+                    ["Secondary Clip Size"] = "Clip Size",
+                    ["Primary Ammo"] = "Ammo Capacity",
+                    ["Secondary Ammo"] = "Ammo Capacity",
+                }
+                name = shortNameMap[name] or name
+
+                local inc = tonumber(up.scriptIncrement)
+                if not inc then
+                    local fallbackIncById = {
+                        move_speed = 0.08,
+                        jump_height = 0.10,
+                        resist_all = -0.08,
+                        resist_bullet = -0.10,
+                        resist_blast = -0.10,
+                        resist_fire = -0.12,
+                        damage_primary = 0.12,
+                        damage_secondary = 0.12,
+                        damage_melee = 0.15,
+                        firerate_primary = -0.10,
+                        firerate_secondary = -0.10,
+                        reload_primary = -0.10,
+                        reload_secondary = -0.10,
+                        clip_primary = 0.50,
+                        clip_secondary = 0.50,
+                        ammo_primary = 0.50,
+                        ammo_secondary = 0.50,
+                        swing_melee = -0.10,
+                        max_health = 25,
+                        autoheal = 2,
+                        lifesteal_melee = 25,
+                        canteen_capacity = 1,
+                        building_health = 0.15,
+                        building_rate = 0.10,
+                    }
+                    inc = fallbackIncById[id]
+                    if not inc then
+                        local fallbackIncByAttrib = {
+                            ["melee attack rate bonus"] = -0.10,
+                            ["fire rate bonus"] = -0.10,
+                            ["faster reload rate"] = -0.10,
+                            ["damage bonus"] = 0.12,
+                            ["dmg taken from crit reduced"] = -0.08,
+                            ["dmg taken from bullets reduced"] = -0.10,
+                            ["dmg taken from blast reduced"] = -0.10,
+                            ["dmg taken from fire reduced"] = -0.12,
+                            ["move speed bonus"] = 0.08,
+                            ["increased jump height"] = 0.10,
+                            ["clip size bonus upgrade"] = 0.50,
+                            ["maxammo primary increased"] = 0.50,
+                            ["maxammo secondary increased"] = 0.50,
+                            ["health regen"] = 2,
+                            ["max health additive bonus"] = 25,
+                            ["heal on kill"] = 25,
+                            ["engy building health bonus"] = 0.15,
+                            ["engy sentry fire rate increased"] = 0.10,
+                            ["canteen specialist"] = 1,
+                        }
+                        inc = fallbackIncByAttrib[attr]
+                    end
+                end
+                if inc and inc ~= 0 then
+                    local total = inc * lvl
+                    local absTotal = math.abs(total)
+
+                    -- TF2 scripts store many bonuses as 0.xx fractions.
+                    if math.abs(inc) < 1 then
+                        local pct = math.floor((absTotal * 100) + 0.5)
+                        local sign = total >= 0 and "+" or "-"
+                        if string.find(attr, "attack rate", 1, true)
+                            or string.find(attr, "fire rate", 1, true)
+                            or string.find(attr, "reload", 1, true)
+                            or string.find(attr, "dmg taken", 1, true)
+                            or string.find(attr, "resistance", 1, true)
+                        then
+                            sign = "+"
+                        elseif string.find(attr, "damage penalty", 1, true) then
+                            sign = "-"
+                        end
+                        return string.format("%s%d%% %s", sign, pct, name)
+                    end
+
+                    local rounded = math.floor(absTotal + 0.5)
+                    local sign = total >= 0 and "+" or "-"
+                    if id == "autoheal" or string.find(attr, "regen", 1, true) then
+                        return string.format("%s%d HP/s %s", sign, rounded, name)
+                    end
+                    return string.format("%s%d %s", sign, rounded, name)
+                end
+
+                return "+ " .. name
+            end
+
+            local lines = {}
+            for _, candidate in ipairs(payload.upgrades or {}) do
+                if not UpgradeBelongsToTab(candidate, tabKey) then
+                    continue
+                end
+                local lvl = math.max(0, tonumber(candidate.level or 0) or 0)
+                if lvl <= 0 then
+                    continue
+                end
+                lines[#lines + 1] = FormatAccumulatedStatLine(candidate, lvl)
+            end
+            return table.concat(lines, "\n")
+        end
+
         local function SetInfo(up)
+            local statsText = BuildTabStatsText(selectedTab)
             if up then
                 infoPanel.name:SetText(MaybeLocalize(up.name or ""))
-                infoPanel.desc:SetText(MaybeLocalize(up.description or ""))
+                local descText = MaybeLocalize(up.description or "")
+                if statsText ~= "" then
+                    descText = (descText ~= "" and (descText .. "\n\n") or "") .. statsText
+                end
+                infoPanel.desc:SetText(descText)
                 local nextCost = tonumber(up.nextCost or 0) or 0
                 if nextCost > 0 then
                     infoPanel.slotLabel:SetText(FormatUpgradeCost(nextCost))
@@ -1897,10 +2821,14 @@ else
                 local displayName = activeTab and activeTab.label or "PLAYER"
                 local itemName = nil
                 if activeTab and activeTab.slot then
-                    itemName = select(1, GetSlotItemVisual(activeTab.slot))
+                    itemName = select(1, GetSlotItemVisual(activeTab.slot, subjectPly))
                 end
                 infoPanel.name:SetText(displayName)
-                infoPanel.desc:SetText(itemName or "")
+                local text = itemName or ""
+                if statsText ~= "" then
+                    text = (text ~= "" and (text .. "\n\n") or "") .. statsText
+                end
+                infoPanel.desc:SetText(text)
                 infoPanel.slotLabel:SetText(txtSelectUpgrade ~= "" and txtSelectUpgrade or txtItemToUpgrade)
                 infoPanel.slotLabel:SetTextColor(Color(252, 221, 118))
             end
@@ -1908,6 +2836,7 @@ else
 
         local list = vgui.Create("DScrollPanel", card)
         card.UpgradeList = list
+        card.SelectedUpgradeByTab = card.SelectedUpgradeByTab or {}
         local baseListX = res.upgradeListX or ((res.innerX or 10) + (res.infoW or 130) + (res.innerX or 10))
         local baseListY = res.upgradeListY or (res.innerBGY or 55)
         local listPosX = math.floor(baseListX * uiScale)
@@ -1918,26 +2847,23 @@ else
         list:SetSize(cardW - listPosX - pad, listH)
         list:GetCanvas():DockPadding(0, 0, 0, 0)
 
+        local rebuildRequested = false
+        local nextRebuildAt = 0
         local function QueueRebuild()
-            if not IsValid(list) or list._rebuildQueued then return end
-            list._rebuildQueued = true
-            timer.Simple(0.05, function()
-                if not IsValid(list) then return end
-                list._rebuildQueued = false
-                if list.Rebuild then
-                    list:Rebuild()
-                end
-            end)
+            if not IsValid(list) then return end
+            rebuildRequested = true
+            nextRebuildAt = CurTime() + 0.05
         end
         card.QueueUpgradeRebuild = QueueRebuild
 
-        function list:Rebuild()
+        function list:PopulateRows()
             self:Clear()
+            local selectedId = card.SelectedUpgradeByTab and card.SelectedUpgradeByTab[selectedTab]
             local cols = 2
             local spacing = math.floor((res.upgradeDelta or 6) * uiScale)
             local areaW = self:GetWide()
             local upgradeCardW = math.floor((res.rowW or 155) * uiScale)
-            local upgradeCardH = math.floor((res.rowH or 45) * uiScale * 0.9)
+            local upgradeCardH = math.floor((res.rowH or 45) * uiScale)
             if areaW < (upgradeCardW * 2 + spacing) then
                 upgradeCardW = math.floor((areaW - spacing * (cols - 1)) / cols)
             end
@@ -1957,24 +2883,30 @@ else
                 row:SetPos(x, y)
                 row:SetMouseInputEnabled(true)
                 row.hovered = false
-                row.selected = false
+                row.selected = (selectedId ~= nil and up.id == selectedId)
                 function row:OnCursorEntered()
                     self.hovered = true
+                    PlayUiRollover()
                     SetInfo(up)
                 end
                 function row:OnCursorExited()
                     self.hovered = false
-                    SetInfo(nil)
+                    if card.SelectedUpgradeByTab and card.SelectedUpgradeByTab[selectedTab] == up.id then
+                        SetInfo(up)
+                    else
+                        SetInfo(nil)
+                    end
                 end
                 row.OnMousePressed = function(self, mc)
                     if mc ~= MOUSE_LEFT then return end
                     local cx, cy = self:LocalCursorPos()
-                    local stripW = math.floor((res.rowRightW or 20) * uiScale * 0.85)
+                    local stripW = math.floor((res.rowRightW or 20) * uiScale)
                     -- Don't handle clicks on the right strip area (leave those to the buttons)
                     if (cx >= (self:GetWide() - stripW - math.floor(2 * uiScale))) then
                         return
                     end
                     self.selected = true
+                    card.SelectedUpgradeByTab[selectedTab] = up.id
                     SetInfo(up)
                     for _, child in ipairs(self:GetParent():GetChildren()) do
                         if child ~= self and child.selected ~= nil then
@@ -1987,7 +2919,7 @@ else
                     surface.DrawRect(0, 0, w, h)
                     surface.SetDrawColor(res.colRowIcon or Color(235, 226, 202, 255))
                     surface.DrawRect(math.floor(2 * uiScale), math.floor(2 * uiScale), math.floor((res.rowIconW or 30) * uiScale), math.floor((res.rowIconH or 30) * uiScale))
-                    local stripW = math.floor((res.rowRightW or 20) * uiScale * 0.85)
+                    local stripW = math.floor((res.rowRightW or 20) * uiScale)
                     surface.SetDrawColor(res.colRowRight or Color(117, 114, 103, 255))
                     surface.DrawRect(w - stripW, 0, stripW, h)
                     if self.selected then
@@ -2000,8 +2932,12 @@ else
                 end
 
                 local icon = vgui.Create("DImage", row)
-                icon:SetPos(math.floor(4 * uiScale), math.floor(4 * uiScale))
-                icon:SetSize(math.floor(26 * uiScale), math.floor(26 * uiScale))
+                local iconX = math.floor((res.rowIconX or 4) * uiScale)
+                local iconY = math.floor((res.rowIconY or 4) * uiScale)
+                local iconW = math.max(1, math.floor((res.rowIconW or 30) * uiScale) - (iconX * 2))
+                local iconH = math.max(1, math.floor((res.rowIconH or 30) * uiScale) - (iconY * 2))
+                icon:SetPos(iconX, iconY)
+                icon:SetSize(iconW, iconH)
                 icon:SetMouseInputEnabled(false)
                 local upgradeIconPath = NormalizeIconPath(up.icon)
                 if not IsValidIconPath(upgradeIconPath) then
@@ -2014,45 +2950,46 @@ else
 
                 local price = vgui.Create("DPanel", row)
                 local priceY = math.floor((res.priceY or 32) * uiScale)
-                priceY = math.min(priceY, upgradeCardH - math.floor(12 * uiScale))
-                price:SetPos(math.floor(2 * uiScale), priceY)
-                price:SetSize(math.floor(40 * uiScale), math.floor(12 * uiScale))
+                price:SetPos(math.floor((res.priceX or 2) * uiScale), priceY)
+                price:SetSize(math.floor((res.priceW or 30) * uiScale), math.floor((res.priceH or 13) * uiScale))
                 price:SetMouseInputEnabled(false)
                 local rowCost = tonumber(up.nextCost or 0) or 0
                 local rowCostText = (rowCost > 0) and tostring(rowCost) or ""
                 price.Paint = function(self, w, h)
                     if rowCostText == "" then return end
-                    draw.SimpleText(rowCostText, "HudFontSmallestBold", w * 0.5, h * 0.5, colTanLight, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+                    draw.SimpleText(rowCostText, res.rowPriceFont or "HudFontSmallestBold", w * 0.5, h * 0.5, colTanLight, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
                 end
 
                 local desc = vgui.Create("DPanel", row)
                 local rowTextX = math.floor((res.textX or 37) * uiScale)
-                rowTextX = math.min(rowTextX, math.floor(44 * uiScale))
                 local rowTextY = math.floor((res.textY or 4) * uiScale)
-                local rowTextRight = math.floor((res.plusX or 137) * uiScale) - math.floor(6 * uiScale)
-                local rowTextW = math.max(math.floor(92 * uiScale), rowTextRight - rowTextX)
+                local rowTextW = math.floor((res.textW or 97) * uiScale)
+                local rowTextH = math.floor((res.textH or 22) * uiScale)
                 desc:SetPos(rowTextX, rowTextY)
-                desc:SetSize(rowTextW, math.floor(15 * uiScale))
+                desc:SetSize(rowTextW, rowTextH)
                 desc:SetMouseInputEnabled(false)
                 local rowName = MaybeLocalize(up.name or "")
                 if not isstring(rowName) or rowName == "" then
                     rowName = TF_MVMShop.DisplayNameById[up.id] or tostring(up.id or "")
                 end
                 desc.Paint = function(self, w, h)
-                    draw.SimpleText(rowName, "HudFontSmallest", 0, h * 0.5, colTanLight, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+                    draw.SimpleText(rowName, res.rowNameFont or "HudFontSmallest", 0, h * 0.5, colTanLight, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
                 end
 
                 local plus = vgui.Create("DButton", row)
-                plus:SetPos(math.floor((res.plusX or 137) * uiScale) - math.floor(2 * uiScale), math.floor((res.plusY or 4) * uiScale))
-                plus:SetSize(math.floor(16 * uiScale), math.floor(16 * uiScale))
+                plus:SetPos(math.floor((res.plusX or 137) * uiScale), math.floor((res.plusY or 4) * uiScale))
+                plus:SetSize(math.floor((res.plusW or 16) * uiScale), math.floor((res.plusH or 16) * uiScale))
                 plus:SetText("")
                 plus:SetZPos(20)
                 plus:SetMouseInputEnabled(true)
                 plus:SetKeyboardInputEnabled(false)
                 local upCost = tonumber(up.nextCost or 0) or 0
                 local credits = tonumber(payload.credits or 0) or 0
-                local canBuy = (up.available ~= false) and up.classAllowed and (up.weaponAllowed ~= false) and upCost > 0 and credits >= upCost
-                plus:SetEnabled(true)
+                local canBuy = (not frame.SpectatorView) and (not frame.ReadOnly) and (up.available ~= false) and up.classAllowed and (up.weaponAllowed ~= false) and upCost > 0 and credits >= upCost
+                local sellWindowOpen = payload.sellWindowOpen ~= false
+                local rowSellVisible = sellWindowOpen or ((tonumber(up.pendingDelta or 0) or 0) > 0)
+                local canSell = (up.canSellNow == true) and (not frame.SpectatorView) and (not frame.ReadOnly) and (up.available ~= false) and up.classAllowed and (up.weaponAllowed ~= false) and (tonumber(up.level or 0) or 0) > 0
+                plus:SetEnabled(canBuy)
                 if upCost <= 0 then
                     plus:SetTooltip(txtMaxReached)
                 elseif credits < upCost then
@@ -2061,38 +2998,93 @@ else
                     plus:SetTooltip(FormatUpgradeCost(upCost))
                 end
                 plus.Paint = function(self, w, h)
-                    local mat = canBuy and matBuyEnabled or matBuyDisabled
+                    local mat = matBuyDisabled
+                    local bg = res.plusDefaultBG or Color(255, 255, 255, 0)
+                    if canBuy then
+                        if self:IsDown() then
+                            mat = matBuyActive
+                            bg = res.plusDepressedBG or bg
+                        elseif self:IsHovered() then
+                            mat = matBuyActive
+                            bg = res.plusArmedBG or bg
+                        else
+                            mat = matBuyInactive
+                            bg = res.plusDefaultBG or bg
+                        end
+                    end
                     surface.SetDrawColor(255, 255, 255, 255)
                     surface.SetMaterial(mat)
                     surface.DrawTexturedRect(0, 0, w, h)
+                    if bg.a > 0 then
+                        surface.SetDrawColor(bg.r, bg.g, bg.b, bg.a)
+                        surface.DrawRect(0, 0, w, h)
+                    end
+                end
+                plus.OnCursorEntered = function()
+                    PlayUiRollover()
                 end
                 plus.DoClick = function()
-                    print(string.format("[MVM DEBUG] plus.DoClick fired for upgrade=%s", tostring(up.id)))
+                    if frame.SpectatorView or not canBuy then return end
+                    if isstring(res.plusSoundDown) and res.plusSoundDown ~= "" then
+                        surface.PlaySound(res.plusSoundDown)
+                    end
+                    PlayUiClick(res.plusSoundUp)
                     SendAction("buy_upgrade", up.id)
                 end
 
                 local minus = vgui.Create("DButton", row)
-                minus:SetPos(math.floor((res.minusX or 137) * uiScale) - math.floor(2 * uiScale), math.floor((res.minusY or 24) * uiScale))
-                minus:SetSize(math.floor(16 * uiScale), math.floor(16 * uiScale))
+                minus:SetPos(math.floor((res.minusX or 137) * uiScale), math.floor((res.minusY or 24) * uiScale))
+                minus:SetSize(math.floor((res.minusW or 16) * uiScale), math.floor((res.minusH or 16) * uiScale))
                 minus:SetText("")
-                minus:SetEnabled(false)
-                minus:SetTooltip("")
+                minus:SetVisible(rowSellVisible)
+                minus:SetEnabled(canSell)
+                minus:SetTooltip(canSell and LocalizeToken("TF_PVE_UpgradeSell") or "")
                 minus.Paint = function(self, w, h)
-                    local mat = self:IsEnabled() and matSellEnabled or matSellDisabled
+                    local mat = matSellDisabled
+                    local bg = res.minusDefaultBG or Color(255, 255, 255, 0)
+                    if canSell then
+                        if self:IsDown() then
+                            mat = matSellActive
+                            bg = res.minusDepressedBG or bg
+                        elseif self:IsHovered() then
+                            mat = matSellActive
+                            bg = res.minusArmedBG or bg
+                        else
+                            mat = matSellInactive
+                            bg = res.minusDefaultBG or bg
+                        end
+                    end
                     surface.SetDrawColor(255, 255, 255, 255)
                     surface.SetMaterial(mat)
                     surface.DrawTexturedRect(0, 0, w, h)
+                    if bg.a > 0 then
+                        surface.SetDrawColor(bg.r, bg.g, bg.b, bg.a)
+                        surface.DrawRect(0, 0, w, h)
+                    end
+                end
+                minus.OnCursorEntered = function()
+                    if canSell then
+                        PlayUiRollover()
+                    end
+                end
+                minus.DoClick = function()
+                    if frame.SpectatorView or not canSell then return end
+                    if isstring(res.minusSoundDown) and res.minusSoundDown ~= "" then
+                        surface.PlaySound(res.minusSoundDown)
+                    end
+                    PlayUiClick(res.minusSoundUp)
+                    SendAction("sell_upgrade", up.id)
                 end
 
                 local pips = vgui.Create("DPanel", row)
                 pips:SetPos(math.floor((res.textX or 37) * uiScale), math.floor((res.upgradeButtonY or 26) * uiScale))
-                pips:SetSize(math.floor(95 * uiScale), math.floor(16 * uiScale))
+                pips:SetSize(math.floor((res.pipW or 16) * uiScale * 6), math.floor((res.pipH or 16) * uiScale))
                 pips:SetMouseInputEnabled(false)
                 pips.Paint = function(self, w, h)
                     local maxLevel = math.max(1, tonumber(up.maxLevel or 1) or 1)
                     local level = math.Clamp(tonumber(up.level or 0) or 0, 0, maxLevel)
-                    local step = math.floor(16 * uiScale)
-                    local radius = math.max(2, math.floor(5 * uiScale))
+                    local step = math.floor((res.pipW or 16) * uiScale)
+                    local radius = math.max(2, math.floor(((res.pipH or 16) * uiScale) * 0.3125))
                     local centerY = math.floor(h * 0.5)
                     for i = 1, maxLevel do
                         local xPos = (i - 1) * step + math.floor(1 * uiScale)
@@ -2127,7 +3119,17 @@ else
             end
 
             self:GetCanvas():SetTall(y + upgradeCardH + spacing)
-            SetInfo(nil)
+
+            local selectedUp = nil
+            if selectedId then
+                for _, up in ipairs(payload.upgrades or {}) do
+                    if up.id == selectedId and UpgradeBelongsToTab(up, selectedTab) then
+                        selectedUp = up
+                        break
+                    end
+                end
+            end
+            SetInfo(selectedUp)
 
             local vbar = self:GetVBar()
             if IsValid(vbar) then
@@ -2168,13 +3170,16 @@ else
         end
 
         local respecBtn = vgui.Create("DButton", bottom)
-        local buttonPadY = math.floor(6 * uiScale)
+        local buttonPadY = math.max(0, math.floor((res.respecY or 285) * uiScale) - bottomY)
         local bottomXOffset = (res.innerX or 10)
         respecBtn:SetPos(math.floor(((res.respecX or 50) - bottomXOffset) * uiScale), buttonPadY)
         respecBtn:SetSize(math.floor((res.respecW or 120) * uiScale), math.floor((res.respecH or 17) * uiScale))
         respecBtn:SetText(txtRespec)
         SkinActionButton(respecBtn)
+        respecBtn:SetEnabled((not frame.SpectatorView) and (not frame.ReadOnly))
         respecBtn.DoClick = function()
+            if frame.ReadOnly then return end
+            PlayUiClick()
             frame:Close()
             SendAction("respec", "")
         end
@@ -2186,24 +3191,34 @@ else
         cancelBtn:SetText(txtCancel)
         SkinActionButton(cancelBtn)
         cancelBtn.DoClick = function()
-            frame:Close()
+            PlayUiClick()
+            if frame.ReadOnly then
+                frame:Close()
+                return
+            end
+            SendAction("cancel", "")
         end
 
         local acceptBtn = vgui.Create("DButton", bottom)
         acceptBtn:SetSize(btnW, btnH)
         acceptBtn:SetText(txtAccept)
         SkinActionButton(acceptBtn)
+        acceptBtn:SetVisible(not frame.ReadOnly)
         acceptBtn.DoClick = function()
-            frame:Close()
+            if frame.ReadOnly then return end
+            PlayUiClick()
+            SendAction("accept", "")
         end
 
-        cancelBtn:SetPos(math.floor(((res.cancelX or 335) - bottomXOffset) * uiScale), buttonPadY)
-        acceptBtn:SetPos(math.floor(((res.closeX or 415) - bottomXOffset) * uiScale), buttonPadY)
+        local cancelPadY = math.max(0, math.floor((res.cancelY or 285) * uiScale) - bottomY)
+        local closePadY = math.max(0, math.floor((res.closeY or 285) * uiScale) - bottomY)
+        cancelBtn:SetPos(math.floor(((res.cancelX or 335) - bottomXOffset) * uiScale), cancelPadY)
+        acceptBtn:SetPos(math.floor(((res.closeX or 415) - bottomXOffset) * uiScale), closePadY)
 
         local function RefreshTabIcons()
             for _, entry in ipairs(tabButtons) do
                 local tab = entry.tab
-                local _, iconPath = GetSlotItemVisual(tab.slot)
+                local _, iconPath = GetSlotItemVisual(tab.slot, subjectPly)
                 if not IsValidIconPath(iconPath) then
                     iconPath = tab.fallbackIcon
                 end
@@ -2212,7 +3227,6 @@ else
                     entry.iconPath = iconPath
                 end
             end
-            SetInfo(nil)
         end
 
         RefreshTabIcons()
@@ -2228,13 +3242,46 @@ else
                 self.EscapeLatch = false
             end
 
-            if not IsNearUpgradeStationClient() then
-                self:Close()
-                return
+            if self.SpectatorView then
+                if not IsStillSpectatingObserved(self.ObservedEntIndex) then
+                    self:Close()
+                    return
+                end
+            else
+                if not IsNearUpgradeStationClient() then
+                    self:Close()
+                    return
+                end
             end
             if CurTime() < (self.NextIconRefresh or 0) then return end
             self.NextIconRefresh = CurTime() + 0.25
             RefreshTabIcons()
+
+            if rebuildRequested and CurTime() >= nextRebuildAt then
+                rebuildRequested = false
+                if IsValid(card.UpgradeList) and card.UpgradeList.PopulateRows then
+                    card.UpgradeList:PopulateRows()
+                end
+            end
+        end
+
+        function frame:ApplyPayload(newPayload)
+            if not istable(newPayload) then return end
+            payload = newPayload
+            self.SpectatorView = payload.spectatorView == true
+            self.ReadOnly = payload.readOnly == true
+            self.ObservedEntIndex = tonumber(payload.observedEntIndex or -1) or -1
+            subjectPly = self.SpectatorView and Entity(self.ObservedEntIndex) or LocalPlayer()
+            -- ClassImage panel intentionally omitted to avoid duplicate class portrait.
+
+            upgradesById = {}
+            for _, up in ipairs(payload.upgrades or {}) do
+                if up.id then upgradesById[up.id] = up end
+            end
+
+            if card.QueueUpgradeRebuild then
+                card:QueueUpgradeRebuild()
+            end
         end
     end
     -- Prompt removed; panel opens automatically on touch.
@@ -2246,6 +3293,9 @@ else
         if not IsMvMMap() or not ply:Alive() or GetConVarNumber("cl_drawhud") == 0 then
             return
         end
+        -- clear suppression once the player walks out of the station
+        if lastCloseTime and not IsNearUpgradeStationClient() then
+            lastCloseTime = nil
         -- clear suppression once the player walks out of the station
         if lastCloseTime and not IsNearUpgradeStationClient() then
             lastCloseTime = nil
@@ -2270,7 +3320,18 @@ else
         net.SendToServer()
     end)
 
-    local function ShouldAcceptOpen()
+    IsStillSpectatingObserved = function(entIndex)
+        local ply = LocalPlayer()
+        if not IsValid(ply) or not ply.GetObserverTarget then return false end
+        local observed = ply:GetObserverTarget()
+        return IsValid(observed) and observed:EntIndex() == tonumber(entIndex or -1)
+    end
+
+    local function ShouldAcceptOpen(payload)
+        if istable(payload) and payload.spectatorView then
+            return IsStillSpectatingObserved(payload.observedEntIndex)
+        end
+
         if IsNearUpgradeStationClient() then
             return true
         end
@@ -2283,22 +3344,12 @@ else
     end
 
     net.Receive("TF_MVM_UpgradeOpen", function()
-        if not ShouldAcceptOpen() then return end
         local payload = net.ReadTable() or {}
-        -- debug: print payload summary to client console
-        print("[MVM DEBUG] UpgradeOpen payload.credits=", tostring(payload.credits))
-        if payload.upgrades and payload.upgrades[1] then
-            local u = payload.upgrades[1]
-            print("[MVM DEBUG] First upgrade:", tostring(u.id), "nextCost=", tostring(u.nextCost), "classAllowed=", tostring(u.classAllowed), "weaponAllowed=", tostring(u.weaponAllowed), "available=", tostring(u.available))
-        end
+        if not ShouldAcceptOpen(payload) then return end
         -- refresh lookup so client-side helper functions remain accurate
         upgradesById = {}
         for _,up in ipairs(payload.upgrades or {}) do
             if up.id then upgradesById[up.id] = up end
-        end
-        -- debug: print TF2 res values used to position plus button (if cached)
-        if tf2UpgradeResCache then
-            print("[MVM DEBUG] res.plusX,res.plusY=", tostring(tf2UpgradeResCache.plusX), tostring(tf2UpgradeResCache.plusY))
         end
         BuildPanel(payload)
     end)

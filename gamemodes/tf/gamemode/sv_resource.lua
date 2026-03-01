@@ -5,6 +5,24 @@ resource.AddFile("resource/fonts/tf2build.ttf")
 resource.AddFile("resource/fonts/tf2professor.ttf")
 resource.AddFile("resource/fonts/tf2secondary.ttf")
 
+-- TF2 panel scheme and .res files (non-MvM)
+resource.AddFile("resource/clientscheme.res")
+
+local function AddResourceFilesRecursive(baseDir, pattern)
+	local files, dirs = file.Find(baseDir .. "/*", "GAME")
+	for _, name in ipairs(files) do
+		if string.match(string.lower(name), pattern) then
+			resource.AddFile(baseDir .. "/" .. name)
+		end
+	end
+	for _, dir in ipairs(dirs) do
+		AddResourceFilesRecursive(baseDir .. "/" .. dir, pattern)
+	end
+end
+
+-- Distribute every bundled non-MvM TF2 .res file.
+AddResourceFilesRecursive("resource/ui", "%.res$")
+
 -- Send needed materials to the client
 
 resource.AddFile("materials/HUD/d_images_hl2.vmt")

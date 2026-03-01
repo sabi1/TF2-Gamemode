@@ -19,6 +19,13 @@ RUNTIME.LastError = ""
 RUNTIME.PendingSetupDuration = nil
 RUNTIME.LastWaveStatusHash = ""
 RUNTIME.ReadyPlayers = {}
+RUNTIME.SetupInitialDuration = 0
+RUNTIME.SetupWaitingTimerDuration = nil
+RUNTIME.SetupReadyCountdownTotal = nil
+
+local READY_COUNTDOWN_START = 150
+local READY_COUNTDOWN_PARTIAL_MIN = 30
+local READY_COUNTDOWN_ALL_READY = 10
 
 local function ToArray(v)
     if v == nil then return {} end
@@ -347,13 +354,39 @@ local function MissionAppliesToWave(missionDef, waveIndex, totalWaves, isGlobal)
     return waveIndex >= begin and waveIndex <= finish
 end
 
-local function GetRoundTimer()
+local function GetRoundTimers()
+    local out = {}
     for _, ent in ipairs(ents.FindByClass("team_round_timer")) do
         if IsValid(ent) then
-            return ent
+            out[#out + 1] = ent
         end
     end
-    return nil
+    return out
+end
+
+local function EnsureRoundTimerExists()
+    local timers = GetRoundTimers()
+    if #timers > 0 then
+        return timers
+    end
+
+    local rt = ents.Create("team_round_timer")
+    if not IsValid(rt) then
+        return {}
+    end
+
+    rt.Properties = rt.Properties or {}
+    rt.Properties.start_paused = 1
+    rt.Properties.timer_length = 90
+    rt.Properties.max_length = 90
+    rt.Properties.auto_countdown = 1
+    rt.Properties.show_in_hud = 1
+
+    rt:SetPos(vector_origin)
+    rt:Spawn()
+    rt:Activate()
+
+    return GetRoundTimers()
 end
 
 function RUNTIME:IsEnabled()
@@ -417,6 +450,92 @@ function RUNTIME:StartWaveFromSetup(reason)
     return true
 end
 
+function RUNTIME:GetMinPlayersToStart()
+    local c = GetConVar("tf_mvm_min_players_to_start")
+    local n = c and c:GetInt() or 1
+    return math.max(1, n)
+end
+
+function RUNTIME:GetReadyCountdownDuration(readyCount, totalCount)
+    readyCount = math.max(0, tonumber(readyCount) or 0)
+    totalCount = math.max(0, tonumber(totalCount) or 0)
+
+    local effectiveTotal = math.max(1, tonumber(self.SetupReadyCountdownTotal) or totalCount)
+    if effectiveTotal <= 0 then
+        return nil
+    end
+
+    if readyCount <= 0 then
+        return nil
+    end
+
+    if readyCount >= effectiveTotal then
+        return READY_COUNTDOWN_ALL_READY
+    end
+
+    local span = math.max(1, effectiveTotal - 1)
+    local t = math.Clamp((readyCount - 1) / span, 0, 1)
+    local duration = math.Round(READY_COUNTDOWN_START + ((READY_COUNTDOWN_PARTIAL_MIN - READY_COUNTDOWN_START) * t))
+    return math.Clamp(duration, READY_COUNTDOWN_PARTIAL_MIN, READY_COUNTDOWN_START)
+end
+
+function RUNTIME:RecomputeSetupCountdown()
+    if not self.Active or not self.Setup then
+        return false
+    end
+
+    local readyCount, totalCount = self:GetReadyCounts()
+    local minPlayers = self:GetMinPlayersToStart()
+    local changed = false
+    local now = CurTime()
+    local currentEnd = tonumber(self.SetupEndTime) or 0
+
+    if currentEnd <= 0 then
+        if totalCount < minPlayers or readyCount <= 0 then
+            self.SetupReadyCountdownTotal = nil
+            if self.SetupEndTime and self.SetupEndTime > 0 then
+                self.SetupEndTime = 0
+                changed = true
+            end
+            local pausedDuration = math.max(0, math.floor(tonumber(self.SetupInitialDuration) or 0))
+            if self.SetupWaitingTimerDuration ~= pausedDuration then
+                self:ApplyRoundTimerSetup(pausedDuration, true)
+                self.SetupWaitingTimerDuration = pausedDuration
+            end
+            return changed
+        end
+
+        -- TF2 ready mode: once a player readies and min player gate is met, start the long countdown.
+        self.SetupReadyCountdownTotal = math.max(minPlayers, totalCount)
+        local desired = self:GetReadyCountdownDuration(readyCount, totalCount) or READY_COUNTDOWN_START
+        local desiredRemaining = math.max(0, desired)
+        self.SetupEndTime = now + desiredRemaining
+        self:ApplyRoundTimerSetup(math.max(0, math.ceil(desiredRemaining)), false)
+        self.SetupWaitingTimerDuration = nil
+        return true
+    end
+
+    self.SetupWaitingTimerDuration = nil
+    if now >= currentEnd then
+        self:StartWaveFromSetup("countdown")
+        return true
+    end
+
+    -- TF2 behavior: more players ready can only shorten the active countdown, never lengthen it.
+    local desired = self:GetReadyCountdownDuration(readyCount, totalCount)
+    if desired ~= nil then
+        local desiredRemaining = math.max(0, desired)
+        local currentRemaining = math.max(0, currentEnd - now)
+        if desiredRemaining < (currentRemaining - 0.2) then
+            self.SetupEndTime = now + desiredRemaining
+            self:ApplyRoundTimerSetup(math.max(0, math.ceil(desiredRemaining)), false)
+            changed = true
+        end
+    end
+
+    return changed
+end
+
 function RUNTIME:SetPlayerReady(ply, ready)
     if not self.Active or not self.Setup then return false, "not_in_setup" end
     if not IsReadyEligiblePlayer(ply) then return false, "not_eligible" end
@@ -433,8 +552,8 @@ function RUNTIME:SetPlayerReady(ply, ready)
     local readyCount, totalCount = self:GetReadyCounts()
     hook.Run("TF_MVM_PlayerReadyStateChanged", ply, ready, readyCount, totalCount)
 
-    if totalCount > 0 and readyCount >= totalCount then
-        self:StartWaveFromSetup("all_ready")
+    if self:RecomputeSetupCountdown() then
+        self:PushState()
     end
 
     return true
@@ -744,9 +863,18 @@ function RUNTIME:Stop(reason)
     self.WaveActive = false
     self.SetupEndTime = nil
     self.PendingSetupDuration = nil
+    self.SetupInitialDuration = 0
+    self.SetupWaitingTimerDuration = nil
+    self.SetupReadyCountdownTotal = nil
     self.WaveIndex = 0
     self.LastWaveStatusHash = ""
     self:ResetReadyPlayers()
+    for _, roundTimer in ipairs(GetRoundTimers()) do
+        if IsValid(roundTimer) then
+            roundTimer.TF_MVM_Managed = false
+            roundTimer.WaitingForPlayers = false
+        end
+    end
 
     self:ClearTimers()
     self:CleanupManagedEntities()
@@ -833,23 +961,70 @@ function RUNTIME:GetSetupDuration()
     return 30
 end
 
-function RUNTIME:ApplyRoundTimerSetup(duration)
-    local roundTimer = GetRoundTimer()
-    if not IsValid(roundTimer) then return end
+function RUNTIME:ApplyRoundTimerSetup(duration, paused)
+    duration = math.max(0, tonumber(duration) or 0)
 
-    roundTimer.IsSetupPhase = true
-    if roundTimer.SetAndResumeTimer then
-        roundTimer:SetAndResumeTimer(duration, true)
+    local timers = EnsureRoundTimerExists()
+    if #timers <= 0 then return end
+
+    for _, roundTimer in ipairs(timers) do
+        roundTimer.TF_MVM_Managed = true
+        roundTimer.IsSetupPhase = true
+        roundTimer.WaitingForPlayers = paused and true or false
+        roundTimer.Properties = roundTimer.Properties or {}
+        roundTimer.Properties.show_in_hud = 1
+        roundTimer.Properties.auto_countdown = 1
+        roundTimer.Properties.start_paused = paused and 1 or 0
+        roundTimer.Properties.timer_length = duration
+        roundTimer.Properties.max_length = math.max(duration, tonumber(roundTimer.Properties.max_length) or duration)
+
+        if roundTimer.SetShowInHUD then
+            roundTimer:SetShowInHUD(true)
+        end
+
+        if paused and roundTimer.SetAndResumeTimer2 then
+            roundTimer:SetAndResumeTimer2(duration, true)
+            if roundTimer.PauseTimer then
+                roundTimer:PauseTimer()
+            elseif roundTimer.SetAndPauseTimer then
+                roundTimer:SetAndPauseTimer(duration, true)
+            end
+        elseif paused and roundTimer.SetAndPauseTimer then
+            roundTimer:SetAndPauseTimer(duration, true)
+        elseif roundTimer.SetAndResumeTimer then
+            roundTimer:SetAndResumeTimer(duration, true)
+        elseif roundTimer.SetAndResumeTimer2 then
+            roundTimer:SetAndResumeTimer2(duration, false)
+        elseif roundTimer.SetAndPauseTimer then
+            roundTimer:SetAndPauseTimer(duration, true)
+        end
     end
 end
 
 function RUNTIME:ApplyRoundTimerWave()
-    local roundTimer = GetRoundTimer()
-    if not IsValid(roundTimer) then return end
+    local timers = EnsureRoundTimerExists()
+    if #timers <= 0 then return end
 
-    roundTimer.IsSetupPhase = false
-    if roundTimer.SetAndPauseTimer then
-        roundTimer:SetAndPauseTimer(0, true)
+    for _, roundTimer in ipairs(timers) do
+        roundTimer.TF_MVM_Managed = true
+        roundTimer.IsSetupPhase = false
+        roundTimer.WaitingForPlayers = false
+        roundTimer.Properties = roundTimer.Properties or {}
+        roundTimer.Properties.show_in_hud = 1
+        roundTimer.Properties.start_paused = 1
+
+        if roundTimer.SetShowInHUD then
+            roundTimer:SetShowInHUD(true)
+        end
+
+        if roundTimer.SetAndPauseTimer then
+            roundTimer:SetAndPauseTimer(0, true)
+        elseif roundTimer.SetAndResumeTimer2 then
+            roundTimer:SetAndResumeTimer2(0, true)
+            if roundTimer.Pause then
+                roundTimer:Pause()
+            end
+        end
     end
 end
 
@@ -859,21 +1034,32 @@ function RUNTIME:StartSetupForWave(waveIndex)
     self.Setup = true
     self.WaveActive = false
     self.WaveIndex = math.max(0, waveIndex - 1)
-    self.SetupEndTime = CurTime() + duration
+    self.SetupInitialDuration = math.max(1, math.floor(duration))
+    self.SetupWaitingTimerDuration = nil
+    self.SetupEndTime = 0
+    self.SetupReadyCountdownTotal = nil
     self:ResetReadyPlayers()
     local preview, hash = self:BuildWavePreviewStatus(waveIndex)
     self:UpdateWaveStatusState(true, preview, hash)
 
     self:PushState()
-    self:ApplyRoundTimerSetup(duration)
+    self:ApplyRoundTimerSetup(duration, true)
 
     hook.Run("TF_MVM_WaveSetupStarted", waveIndex, duration)
 
     local name = TimerName("SetupStartWave")
     AddTimerRef(self, name)
-    timer.Create(name, duration, 1, function()
-        if not self.Active then return end
-        self:StartWave(waveIndex)
+    timer.Create(name, 0.1, 0, function()
+        if not self.Active or not self.Setup then
+            RemoveTimer(name)
+            self.TimerNames[name] = nil
+            return
+        end
+
+        local changed = self:RecomputeSetupCountdown()
+        if changed then
+            self:PushState()
+        end
     end)
 end
 
@@ -1316,6 +1502,9 @@ function RUNTIME:StartWave(waveIndex)
     self.Setup = false
     self.WaveActive = true
     self.SetupEndTime = nil
+    self.SetupInitialDuration = 0
+    self.SetupWaitingTimerDuration = nil
+    self.SetupReadyCountdownTotal = nil
     self.WaveIndex = waveIndex
     self:ResetReadyPlayers()
 
@@ -1411,8 +1600,17 @@ function RUNTIME:FinishMission()
     self.WaveActive = false
     self.SetupEndTime = nil
     self.PendingSetupDuration = nil
+    self.SetupInitialDuration = 0
+    self.SetupWaitingTimerDuration = nil
+    self.SetupReadyCountdownTotal = nil
     self.LastWaveStatusHash = ""
     self:ResetReadyPlayers()
+    for _, roundTimer in ipairs(GetRoundTimers()) do
+        if IsValid(roundTimer) then
+            roundTimer.TF_MVM_Managed = false
+            roundTimer.WaitingForPlayers = false
+        end
+    end
 
     hook.Run("TF_MVM_MissionCompleted", self.Mission)
 
@@ -1436,8 +1634,17 @@ function RUNTIME:FailMission(reason)
     self.WaveActive = false
     self.SetupEndTime = nil
     self.PendingSetupDuration = nil
+    self.SetupInitialDuration = 0
+    self.SetupWaitingTimerDuration = nil
+    self.SetupReadyCountdownTotal = nil
     self.LastWaveStatusHash = ""
     self:ResetReadyPlayers()
+    for _, roundTimer in ipairs(GetRoundTimers()) do
+        if IsValid(roundTimer) then
+            roundTimer.TF_MVM_Managed = false
+            roundTimer.WaitingForPlayers = false
+        end
+    end
 
     hook.Run("TF_MVM_MissionFailed", reason or "failed")
 
@@ -1476,6 +1683,9 @@ function RUNTIME:Start()
     self.Setup = false
     self.WaveActive = false
     self.PendingSetupDuration = nil
+    self.SetupInitialDuration = 0
+    self.SetupWaitingTimerDuration = nil
+    self.SetupReadyCountdownTotal = nil
     self.WaveIndex = 0
     self.ManagedBots = {}
     self.ManagedTanks = {}
@@ -1623,6 +1833,7 @@ hook.Add("PlayerDisconnected", "TF_MVM_ManagedBotDisconnect", function(ply)
         TF_MVM.Runtime.ReadyPlayers[ply] = nil
     end
     if TF_MVM.Runtime:IsManagedActive() and TF_MVM.Runtime:IsSetupPhase() then
+        TF_MVM.Runtime:RecomputeSetupCountdown()
         TF_MVM.Runtime:PushState()
     end
 end)
@@ -1636,6 +1847,7 @@ hook.Add("PlayerChangedTeam", "TF_MVM_ReadyStateTeamChange", function(ply)
         ply:SetNWBool("TF_MVM_Ready", false)
     end
     if TF_MVM.Runtime:IsManagedActive() and TF_MVM.Runtime:IsSetupPhase() then
+        TF_MVM.Runtime:RecomputeSetupCountdown()
         TF_MVM.Runtime:PushState()
     end
 end)

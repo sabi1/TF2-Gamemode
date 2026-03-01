@@ -1,6 +1,77 @@
 ENT.Base = "base_brush"
 ENT.Type = "brush"
 
+local function IsBlueSideTeam(teamNum)
+	return teamNum == TEAM_BLU or teamNum == TF_TEAM_PVE_INVADERS
+end
+
+local function IsAllowedInVisualizer(playerTeam, visualizerTeam)
+	if visualizerTeam == TEAM_RED then
+		return playerTeam == TEAM_RED
+	end
+	if visualizerTeam == TEAM_BLU then
+		return IsBlueSideTeam(playerTeam)
+	end
+	-- Unknown team mapping should never hard-block movement.
+	return true
+end
+
+local function IsMvMMap()
+	local map = string.lower(game.GetMap() or "")
+	return string.find(map, "mvm_", 1, true) ~= nil
+end
+
+local function ShouldApplyMvMVisualizerInvuln(ent, visualizerTeam)
+	if not IsValid(ent) or not ent:IsPlayer() then return false end
+	if not IsMvMMap() then return false end
+	if not ent:IsBot() then return false end
+	if not IsBlueSideTeam(ent:Team()) then return false end
+	return IsAllowedInVisualizer(ent:Team(), visualizerTeam)
+end
+
+local function IsEntityInsideVisualizer(self, ent)
+	if not IsValid(self) or not IsValid(ent) then return false end
+	local mins, maxs = self:WorldSpaceAABB()
+	local pos = ent:WorldSpaceCenter()
+	return pos.x >= mins.x and pos.y >= mins.y and pos.z >= mins.z
+		and pos.x <= maxs.x and pos.y <= maxs.y and pos.z <= maxs.z
+end
+
+local function AddVisualizerInvuln(ent)
+	if not IsValid(ent) or not ent.AddCond then return end
+	if not TF_COND_INVULNERABLE_HIDE_UNLESS_DAMAGED then return end
+
+	ent._tfRespawnVisualizerCondRefs = (ent._tfRespawnVisualizerCondRefs or 0) + 1
+	if ent._tfRespawnVisualizerCondRefs == 1 and not ent:InCond(TF_COND_INVULNERABLE_HIDE_UNLESS_DAMAGED) then
+		ent:AddCond(TF_COND_INVULNERABLE_HIDE_UNLESS_DAMAGED, PERMANENT_CONDITION or -1, ent)
+	end
+end
+
+local function RemoveVisualizerInvuln(ent)
+	if not IsValid(ent) or not ent.RemoveCond then return end
+	if not TF_COND_INVULNERABLE_HIDE_UNLESS_DAMAGED then return end
+
+	local refs = math.max(0, (ent._tfRespawnVisualizerCondRefs or 0) - 1)
+	ent._tfRespawnVisualizerCondRefs = refs
+	if refs == 0 and ent:InCond(TF_COND_INVULNERABLE_HIDE_UNLESS_DAMAGED) then
+		ent:RemoveCond(TF_COND_INVULNERABLE_HIDE_UNLESS_DAMAGED, true)
+	end
+end
+
+local function TrackTouch(self, ent)
+	if not ShouldApplyMvMVisualizerInvuln(ent, self.TeamNum) then return end
+	if self.Players[ent] then return end
+
+	self.Players[ent] = true
+	AddVisualizerInvuln(ent)
+end
+
+local function UntrackTouch(self, ent)
+	if not self.Players[ent] then return end
+	self.Players[ent] = nil
+	RemoveVisualizerInvuln(ent)
+end
+
 
 function ENT:Initialize()
 	local pos = self:GetPos()
@@ -31,6 +102,7 @@ function ENT:KeyValue(key,value)
 end
 
 function ENT:StartTouch(ent)
+	TrackTouch(self, ent)
 	if ent:IsPlayer() then
 		if (!string.find(game.GetMap(), "mvm_")) then -- suck my dick
 			if (ent:Team() != TEAM_YELLOW and ent:Team() != TEAM_GREEN and ent:Team() != TEAM_NEUTRAL and ent:Team() != TEAM_FRIENDLY) then
@@ -43,23 +115,45 @@ function ENT:StartTouch(ent)
 		end
 	end
 end
+
+function ENT:Touch(ent)
+	TrackTouch(self, ent)
+end
+
+function ENT:EndTouch(ent)
+	UntrackTouch(self, ent)
+end
+
+function ENT:OnRemove()
+	for ply, _ in pairs(self.Players or {}) do
+		UntrackTouch(self, ply)
+	end
+end
+
+function ENT:Think()
+	if IsMvMMap() then
+		-- Prune stale tracked players (death/teleport/respawn or brush transitions missing EndTouch).
+		for ply, _ in pairs(self.Players or {}) do
+			if (not IsValid(ply))
+				or (not ShouldApplyMvMVisualizerInvuln(ply, self.TeamNum))
+				or (not IsEntityInsideVisualizer(self, ply)) then
+				UntrackTouch(self, ply)
+			end
+		end
+
+		-- Catch players that spawn inside or skip StartTouch events.
+		for _, ply in ipairs(player.GetBots()) do
+			if ShouldApplyMvMVisualizerInvuln(ply, self.TeamNum) and IsEntityInsideVisualizer(self, ply) then
+				TrackTouch(self, ply)
+			end
+		end
+	end
+
+	self:NextThink(CurTime() + 0.2)
+	return true
+end
  
 hook.Add( "ShouldCollide", "RespawnRoomVisualizerCollision", function( ent1, ent2 )
-
-	local function IsBlueSideTeam(teamNum)
-		return teamNum == TEAM_BLU or teamNum == TF_TEAM_PVE_INVADERS
-	end
-
-	local function IsAllowedInVisualizer(playerTeam, visualizerTeam)
-		if visualizerTeam == TEAM_RED then
-			return playerTeam == TEAM_RED
-		end
-		if visualizerTeam == TEAM_BLU then
-			return IsBlueSideTeam(playerTeam)
-		end
-		-- Unknown team mapping should never hard-block movement.
-		return true
-	end
 
     -- If players are about to collide with each other, then they won't collide.
     if ( ent1:GetClass() == "func_respawnroomvisualizer" and ent2:IsPlayer() ) then 

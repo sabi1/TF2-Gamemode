@@ -37,6 +37,30 @@ local tabd = 10*Scale
 
 local ColorTabSelected = Color(200, 187, 161, 255)
 local ColorTabUnselected = Color(130, 120, 104, 255)
+local HeaderAccentColor = Color(117, 107, 94, 255)
+local HeaderTitleText = "CHARACTER INFO AND SETUP"
+
+do
+	local tree = TF2Res and TF2Res.Load and TF2Res.Load("resource/ui/charinfopanel.res")
+	local root = tree and TF2Res.FindByFieldName and TF2Res.FindByFieldName(tree, "character_info")
+	local sheet = tree and TF2Res.FindByFieldName and TF2Res.FindByFieldName(tree, "Sheet")
+	if root and TF2Res.GetString then
+		local token = TF2Res.GetString(root, "title", "#CharInfoAndSetup")
+		if isstring(token) and token ~= "" and tf_lang and tf_lang.GetRaw then
+			local localized = tf_lang.GetRaw(token)
+			if isstring(localized) and localized ~= "" and (string.sub(token, 1, 1) ~= "#" or string.sub(localized, 1, 1) ~= "#") then
+				HeaderTitleText = string.upper(localized)
+			end
+		end
+		if TF2Res.GetColor then
+			HeaderAccentColor = TF2Res.GetColor(root, "titlebarfgcolor_override", HeaderAccentColor)
+		end
+	end
+	if sheet and TF2Res.GetColor then
+		ColorTabSelected = TF2Res.GetColor(sheet, "selectedcolor", ColorTabSelected)
+		ColorTabUnselected = TF2Res.GetColor(sheet, "unselectedcolor", ColorTabUnselected)
+	end
+end
 
 function PANEL:Init()
 	self:SetPaintBackgroundEnabled(true)
@@ -154,10 +178,10 @@ function PANEL:Paint()
 	}
 	
 	draw.Text{
-		text="CHARACTER INFO AND SETUP",
+		text=HeaderTitleText,
 		font="HudFontSmallestBold",
 		pos={100*Scale, 18*Scale},
-		color=Color(117, 107, 94, 255),
+		color=HeaderAccentColor,
 		xalign=TEXT_ALIGN_LEFT,
 		yalign=TEXT_ALIGN_CENTER,
 	}

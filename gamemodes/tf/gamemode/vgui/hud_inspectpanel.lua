@@ -21,6 +21,41 @@ local Scale = H/480
 local color_panel = surface.GetTextureID("hud/color_panel_browner")
 local c_boxing_gloves = surface.GetTextureID("backpack/weapons/c_models/c_boxing_gloves/c_boxing_gloves")
 
+local InspectRes = {
+	panelW = 270,
+	panelH = 180,
+	itemW = 190,
+	itemH = 100,
+	modelY = 10,
+	modelTall = 60,
+	textX = 10,
+	textY = 10,
+	textW = 170,
+	labelX = 10,
+	labelY = 3,
+}
+
+do
+	local tree = TF2Res and TF2Res.Load and TF2Res.Load("resource/ui/hudinspectpanel.res")
+	local itempanel = tree and TF2Res.FindByFieldName and TF2Res.FindByFieldName(tree, "itempanel")
+	local itemlabel = tree and TF2Res.FindByFieldName and TF2Res.FindByFieldName(tree, "ItemLabel")
+	if itempanel and TF2Res.GetNumber then
+		InspectRes.itemW = TF2Res.GetNumber(itempanel, "wide", InspectRes.itemW)
+		InspectRes.itemH = TF2Res.GetNumber(itempanel, "tall", InspectRes.itemH)
+		InspectRes.modelY = TF2Res.GetNumber(itempanel, "model_ypos", InspectRes.modelY)
+		InspectRes.modelTall = TF2Res.GetNumber(itempanel, "model_tall", InspectRes.modelTall)
+		InspectRes.textX = TF2Res.GetNumber(itempanel, "text_xpos", InspectRes.textX)
+		InspectRes.textY = TF2Res.GetNumber(itempanel, "text_ypos", InspectRes.textY)
+		InspectRes.textW = TF2Res.GetNumber(itempanel, "text_wide", InspectRes.textW)
+		InspectRes.panelW = math.max(InspectRes.panelW, InspectRes.itemW + 80)
+		InspectRes.panelH = math.max(InspectRes.panelH, InspectRes.itemH + 80)
+	end
+	if itemlabel and TF2Res.GetNumber then
+		InspectRes.labelX = TF2Res.GetNumber(itemlabel, "xpos", InspectRes.labelX)
+		InspectRes.labelY = TF2Res.GetNumber(itemlabel, "ypos", InspectRes.labelY)
+	end
+end
+
 function PANEL:Init()
 	self:SetPaintBackgroundEnabled(false)
 	self:ParentToHUD()
@@ -42,11 +77,11 @@ function PANEL:Init()
 	t:SetQuality("Unique")
 	
 	t.model_xpos = -80
-	t.model_ypos = 20
-	t.model_tall = 55
-	t.text_xpos = 100
-	t.text_wide = 150
-	t.text_ypos = 20
+	t.model_ypos = InspectRes.modelY
+	t.model_tall = InspectRes.modelTall
+	t.text_xpos = InspectRes.textX
+	t.text_wide = InspectRes.textW
+	t.text_ypos = InspectRes.textY
 	t.centertext = true
 	
 	self.Panel = t
@@ -117,7 +152,7 @@ function PANEL:Hide(dbg)
 end
 
 function PANEL:PerformLayout()
-	self:SetSize(270*Scale,180*Scale)
+	self:SetSize(InspectRes.panelW*Scale,InspectRes.panelH*Scale)
 	
 	if not self.Panel then return end
 	
@@ -139,11 +174,11 @@ function PANEL:PerformLayout()
 		height = math.max(80, 40 + tf_draw.LabelTextWrap(attr_tab, true) / Scale)
 	end
 	
-	self.Panel:SetSize(270*Scale, height*Scale)
+	self.Panel:SetSize(math.max(InspectRes.itemW, 190)*Scale, height*Scale)
 	self.Panel.model_ypos = (height*0.5)-22
 	
 	if LocalPlayer().InScreenshot then
-		self:SetPos(W-270*Scale,H-height*Scale)
+		self:SetPos(W-InspectRes.panelW*Scale,H-height*Scale)
 	else
 		self:SetPos(W/2-38*Scale,300*Scale)
 	end
@@ -176,7 +211,7 @@ function PANEL:PaintOver()
 	draw.Text{
 		text=tf_lang.GetFormatted("FreezePanel_Item"),
 		font="TFDefaultSmall",
-		pos={10*Scale, 3*Scale},
+		pos={InspectRes.labelX*Scale, InspectRes.labelY*Scale},
 		color=Color(255,255,255,255),
 		x_align=TEXT_ALIGN_LEFT,
 		y_align=TEXT_ALIGN_TOP,

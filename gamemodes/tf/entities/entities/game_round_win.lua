@@ -1,3 +1,7 @@
+if SERVER then
+	AddCSLuaFile()
+end
+
 -- Define the entity
 DEFINE_BASECLASS("base_entity")
 

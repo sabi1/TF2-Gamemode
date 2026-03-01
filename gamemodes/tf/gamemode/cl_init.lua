@@ -9,6 +9,7 @@ local name_blacklist = {["The AK47"] = true,} -- Weapons that have names of othe
 
 include("cl_scheme.lua")
 include("cl_payload.lua")
+include("cl_tf2_res.lua")
 include("cl_hud.lua")
 include("tf_lang_module.lua")
 include("shd_items.lua")
