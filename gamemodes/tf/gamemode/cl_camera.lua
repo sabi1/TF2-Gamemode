@@ -76,23 +76,30 @@ hook.Add("CreateMove", "TauntMove", function(cmd)
 	if (LocalPlayer():GetNWBool("Bonked")) then
 		cmd:RemoveKey(IN_ATTACK)
 	end
+	if LocalPlayer():GetNWBool("TauntingMoped", false) then
+		cmd:SetForwardMove(95)
+	end
 	if (LocalPlayer():GetNWBool("Taunting") or LocalPlayer():IsPlayingTaunt()) and !LocalPlayer().CameraTest then
 		if lockangle == nil then
 			lockangle = taunt_angles * 1
 		end
 		
-		if (LocalPlayer():GetPlayerClass() != "tank_l4d" and !LocalPlayer():IsPlayingTaunt() and LocalPlayer().IsThirdperson) then
+		if (not LocalPlayer():GetNWBool("TauntingMoped", false) and LocalPlayer():GetPlayerClass() != "tank_l4d" and !LocalPlayer():IsPlayingTaunt() and LocalPlayer().IsThirdperson) then
 			cmd:SetViewAngles(lockangle)
-		elseif (LocalPlayer():GetPlayerClass() != "tank_l4d" and !LocalPlayer():IsPlayingTaunt() and !LocalPlayer().IsThirdperson) then
+		elseif (not LocalPlayer():GetNWBool("TauntingMoped", false) and LocalPlayer():GetPlayerClass() != "tank_l4d" and !LocalPlayer():IsPlayingTaunt() and !LocalPlayer().IsThirdperson) then
 			cmd:SetViewAngles(LocalPlayer():EyeAngles())
 		end
-		cmd:ClearButtons()
-		cmd:ClearMovement()
+		if not LocalPlayer():GetNWBool("TauntingMoped", false) then
+			cmd:ClearButtons()
+			cmd:ClearMovement()
+		end
 		return true
 	
 	elseif (LocalPlayer():GetNWBool("Taunting") or LocalPlayer():IsPlayingTaunt()) and LocalPlayer().CameraTest then
-		cmd:ClearButtons()
-		cmd:ClearMovement()
+		if not LocalPlayer():GetNWBool("TauntingMoped", false) then
+			cmd:ClearButtons()
+			cmd:ClearMovement()
+		end
 		return true
 	end
 end)

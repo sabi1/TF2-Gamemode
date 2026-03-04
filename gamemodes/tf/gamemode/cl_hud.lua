@@ -75,6 +75,7 @@ local VGUIFiles = {
 	"hud_roundtimer";
 	"hud_menuengybuild";
 	"hud_menuengydestroy";
+	"hud_menutaunt";
 	"hud_voicemenu";
 	
 	"menu_charinfopanel";
@@ -228,9 +229,40 @@ function GM:PlayerSlotSelected(slot)
 end
 
 function GM:PlayerBindPress(pl, cmd, down)
+	local bind = string.lower(string.Trim(tostring(cmd or "")))
+
+	-- TF2 parity: +taunt opens the taunt HUD; while open, +taunt performs weapon taunt.
+	if down and (string.find(bind, "^%+taunt") or string.find(bind, "^taunt$") or string.find(bind, "^impulse%s+201$")) then
+		if IsValid(HudTauntMenu) then
+			if HudTauntMenu:IsOpen() then
+				HudTauntMenu:DoWeaponTaunt()
+			else
+				if not HudTauntMenu:Open() then
+					RunConsoleCommand("taunt")
+				end
+			end
+		else
+			RunConsoleCommand("taunt")
+		end
+		return true
+	end
+
 	if ( string.find( cmd, "gmod_undo" ) ) then return true end 
 	if pl:IsHL2() or hud_defaultweaponselect:GetBool() or hl2hudtf:GetBool() or GetConVar("hud_fastswitch"):GetBool() then return end
 	if not down then return end
+
+	if IsValid(HudTauntMenu) and HudTauntMenu:IsOpen() then
+		if string.find(bind, "^lastinv") then
+			HudTauntMenu:Close()
+			return true
+		end
+
+		local tauntSlot = tonumber(string.match(bind, "slot(%d+)"))
+		if tauntSlot and tauntSlot >= 1 and tauntSlot <= 8 then
+			HudTauntMenu:SelectSlot(tauntSlot)
+			return true
+		end
+	end
 	
 	local n = tonumber(string.match(cmd, "slot(%d+)"))
 	if n then

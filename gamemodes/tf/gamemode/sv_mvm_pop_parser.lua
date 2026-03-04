@@ -2,6 +2,7 @@ TF_MVM = TF_MVM or {}
 
 local PARSER = {}
 TF_MVM.POPParser = PARSER
+local CV_POP_STRICT = SERVER and CreateConVar("tf_mvm_pop_strict", "1", FCVAR_ARCHIVE, "Use TF2-strict MvM POP parsing (reject unknown/invalid keys).") or nil
 
 local CANON = {
     ["waveschedule"] = "WaveSchedule",
@@ -11,14 +12,21 @@ local CANON = {
     ["mission"] = "Mission",
     ["tfbot"] = "TFBot",
     ["tank"] = "Tank",
+    ["sentrygun"] = "SentryGun",
+    ["mob"] = "Mob",
     ["randomchoice"] = "RandomChoice",
     ["squad"] = "Squad",
     ["startwaveoutput"] = "StartWaveOutput",
     ["doneoutput"] = "DoneOutput",
     ["initwaveoutput"] = "InitWaveOutput",
     ["firstspawnoutput"] = "FirstSpawnOutput",
+    ["lastspawnoutput"] = "LastSpawnOutput",
     ["firstspawnoutputput"] = "FirstSpawnOutput",
     ["firstspawnoutputputt"] = "FirstSpawnOutput",
+    ["startwavewarningsound"] = "StartWaveWarningSound",
+    ["firstspawnwarningsound"] = "FirstSpawnWarningSound",
+    ["lastspawnwarningsound"] = "LastSpawnWarningSound",
+    ["donewarningsound"] = "DoneWarningSound",
     ["waitforallspawned"] = "WaitForAllSpawned",
     ["waitforalldead"] = "WaitForAllDead",
     ["waitbetweenspawns"] = "WaitBetweenSpawns",
@@ -48,7 +56,13 @@ local CANON = {
     ["attributes"] = "Attributes",
     ["extattr"] = "Attributes",
     ["item"] = "Item",
+    ["behaviormodifiers"] = "BehaviorModifiers",
+    ["maxvisionrange"] = "MaxVisionRange",
     ["template"] = "Template",
+    ["teleportwhere"] = "TeleportWhere",
+    ["autojumpmin"] = "AutoJumpMin",
+    ["autojumpmax"] = "AutoJumpMax",
+    ["scale"] = "Scale",
     ["pathtrack"] = "PathTrack",
     ["startingpathtracknode"] = "PathTrack",
     ["health"] = "Health",
@@ -60,6 +74,10 @@ local CANON = {
     ["initialcooldown"] = "InitialCooldown",
     ["count"] = "Count",
     ["checkpoint"] = "Checkpoint",
+    ["eventchangeattributes"] = "EventChangeAttributes",
+    ["itemname"] = "ItemName",
+    ["shouldpreservesquad"] = "ShouldPreserveSquad",
+    ["tags"] = "Tag",
 }
 
 local APPEND_KEYS = {
@@ -439,6 +457,179 @@ local function NormalizeWaveSpawn(spawn)
     spawn.OnSpawnOutput = NormalizeOutputs(spawn.OnSpawnOutput)
 end
 
+local STRICT_SCHEMA = {
+    WaveSchedule = {
+        StartingCurrency = true,
+        RespawnWaveTime = true,
+        CanBotsAttackWhileInSpawnRoom = true,
+        FixedRespawnWaveTime = true,
+        Advanced = true,
+        AddSentryBusterWhenDamageDealtExceeds = true,
+        AddSentryBusterWhenKillCountExceeds = true,
+        AddSentryBusterWhenKillTimeExceeds = true,
+        Templates = true,
+        Mission = true,
+        Wave = true,
+    },
+    Wave = {
+        Checkpoint = true,
+        Sound = true,
+        Description = true,
+        WaitWhenDone = true,
+        StartWaveOutput = true,
+        DoneOutput = true,
+        InitWaveOutput = true,
+        Mission = true,
+        WaveSpawn = true,
+    },
+    WaveSpawn = {
+        Name = true,
+        WaitForAllSpawned = true,
+        WaitForAllDead = true,
+        WaitBeforeStarting = true,
+        WaitBetweenSpawns = true,
+        WaitBetweenSpawnsAfterDeath = true,
+        TotalCurrency = true,
+        TotalCount = true,
+        MaxActive = true,
+        SpawnCount = true,
+        Support = true,
+        RandomSpawn = true,
+        Where = true,
+        StartWaveWarningSound = true,
+        FirstSpawnWarningSound = true,
+        LastSpawnWarningSound = true,
+        DoneWarningSound = true,
+        StartWaveOutput = true,
+        FirstSpawnOutput = true,
+        LastSpawnOutput = true,
+        DoneOutput = true,
+        FirstSpawnOutput = true,
+        TFBot = true,
+        Tank = true,
+        SentryGun = true,
+        Squad = true,
+        RandomChoice = true,
+        Mob = true,
+    },
+    Mission = {
+        Objective = true,
+        InitialCooldown = true,
+        CooldownTime = true,
+        BeginAtWave = true,
+        RunForThisManyWaves = true,
+        DesiredCount = true,
+        TFBot = true,
+    },
+    TFBot = {
+        Class = true,
+        Name = true,
+        ClassIcon = true,
+        Skill = true,
+        Health = true,
+        Scale = true,
+        WeaponRestrictions = true,
+        CharacterAttributes = true,
+        Attributes = true,
+        Item = true,
+        ItemAttributes = true,
+        EventChangeAttributes = true,
+        Action = true,
+        Tag = true,
+        BehaviorModifiers = true,
+        MaxVisionRange = true,
+        AutoJumpMin = true,
+        AutoJumpMax = true,
+        Template = true,
+        TeleportWhere = true,
+    },
+    EventChangeAttributes = {},
+    Tank = {
+        Name = true,
+        Health = true,
+        Speed = true,
+        StartingPathTrackNode = true,
+        PathTrack = true,
+        Skin = true,
+        Scale = true,
+        OnKilledOutput = true,
+        OnBombDroppedOutput = true,
+        OnSpawnOutput = true,
+    },
+}
+
+local REQUIRED_KEYS = {
+    WaveSchedule = { "Wave" },
+    WaveSpawn = { "TotalCount" },
+    Mission = { "Objective" },
+}
+
+local function StrictEnabled()
+    if not CV_POP_STRICT then return true end
+    return CV_POP_STRICT:GetBool()
+end
+
+local function ChildNodeContext(parentCtx, key)
+    if parentCtx == "WaveSchedule" and key == "Wave" then return "Wave" end
+    if parentCtx == "WaveSchedule" and key == "Mission" then return "Mission" end
+    if parentCtx == "Wave" and key == "WaveSpawn" then return "WaveSpawn" end
+    if parentCtx == "Wave" and key == "Mission" then return "Mission" end
+    if parentCtx == "WaveSpawn" and key == "TFBot" then return "TFBot" end
+    if parentCtx == "WaveSpawn" and key == "Tank" then return "Tank" end
+    if parentCtx == "TFBot" and key == "EventChangeAttributes" then return "EventChangeAttributes" end
+    if parentCtx == "EventChangeAttributes" then return "TFBot" end
+    if key == "WaveSchedule" then return "WaveSchedule" end
+    return nil
+end
+
+local function ValidateStrictNode(node, ctx, path, errors)
+    if not istable(node) then return end
+    path = path or ctx
+    local schema = STRICT_SCHEMA[ctx]
+
+    if schema ~= nil then
+        for key, value in pairs(node) do
+            if isstring(key) then
+                local isAllowed = schema[key] == true
+                if not isAllowed and CANON[string.lower(key)] ~= nil then
+                    isAllowed = true
+                end
+                if not isAllowed and ctx == "EventChangeAttributes" and istable(value) then
+                    isAllowed = true
+                end
+                if not isAllowed then
+                    errors[#errors + 1] = string.format("%s: unknown key '%s' for %s", tostring(path), tostring(key), tostring(ctx))
+                end
+            end
+        end
+    end
+
+    local required = REQUIRED_KEYS[ctx]
+    if required then
+        for _, req in ipairs(required) do
+            if node[req] == nil then
+                errors[#errors + 1] = string.format("%s: missing required key '%s' for %s", tostring(path), tostring(req), tostring(ctx))
+            end
+        end
+    end
+
+    for key, value in pairs(node) do
+        if not isstring(key) then continue end
+        local childCtx = ChildNodeContext(ctx, key)
+        if not childCtx then continue end
+        for idx, child in ipairs(ToArray(value)) do
+            ValidateStrictNode(child, childCtx, string.format("%s.%s[%d]", tostring(path), tostring(key), idx), errors)
+        end
+    end
+end
+
+local function ValidateStrictMission(mission)
+    local errors = {}
+    local schedule = mission and mission.WaveSchedule
+    ValidateStrictNode(schedule, "WaveSchedule", "WaveSchedule", errors)
+    return errors
+end
+
 function PARSER:Parse(path, scope)
     scope = scope or "GAME"
 
@@ -478,6 +669,19 @@ function PARSER:Parse(path, scope)
 
         for _, spawn in ipairs(wave.WaveSpawn) do
             NormalizeWaveSpawn(spawn)
+        end
+    end
+
+    if StrictEnabled() then
+        local strictErrors = ValidateStrictMission(mission)
+        if #strictErrors > 0 then
+            return {
+                ok = false,
+                error = "strict_validation_failed: " .. strictErrors[1],
+                warnings = warnings,
+                strictErrors = strictErrors,
+                tree = tree,
+            }
         end
     end
 

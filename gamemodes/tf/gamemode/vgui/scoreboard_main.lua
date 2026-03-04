@@ -166,6 +166,162 @@ local MvMDefenders = {
 	yalign=TEXT_ALIGN_CENTER,
 }
 
+local MvMScoreboardRes = {
+	panelX = "cs-0.5",
+	panelY = 16,
+	panelW = 600,
+	panelH = 448,
+	mainX = 1.5,
+	mainY = 8,
+	mainW = 595.5,
+	mainH = 375,
+	listX = 8,
+	listY = 86,
+	listW = 584,
+	listH = 260,
+	localStatsY = 395,
+	serverLeftX = 11,
+	serverLeftY = 18,
+	serverRightX = 585,
+	serverRightY = 18,
+	creditsX = 16,
+	creditsY = 369,
+}
+
+local function getResValue(node, key)
+	if not istable(node) then return nil end
+	local ifMvm = istable(node.if_mvm) and node.if_mvm or nil
+	if ifMvm and ifMvm[key] ~= nil then
+		return ifMvm[key]
+	end
+	return node[key]
+end
+
+local function getResNumber(node, key, default)
+	local raw = getResValue(node, key)
+	if isnumber(raw) then return raw end
+	if not isstring(raw) then return default end
+	return tonumber(raw) or default
+end
+
+local function getResString(node, key, default)
+	local raw = getResValue(node, key)
+	if isstring(raw) and raw ~= "" then
+		return raw
+	end
+	return default
+end
+
+local function resolveCoord(raw, axisSize, scale, fallback)
+	if isnumber(raw) then
+		return raw * scale
+	end
+	if not isstring(raw) then
+		return fallback
+	end
+
+	local value = string.Trim(raw)
+	local n = tonumber(value)
+	if n ~= nil then
+		return n * scale
+	end
+
+	local r = string.match(value, "^r([%+%-]?%d*%.?%d*)$")
+	if r ~= nil then
+		local offs = tonumber(r)
+		if r == "" or offs == nil then offs = 0 end
+		return axisSize - offs * scale
+	end
+
+	local c = string.match(value, "^c([%+%-]?%d*%.?%d*)$")
+	if c ~= nil then
+		local offs = tonumber(c)
+		if c == "" or offs == nil then offs = 0 end
+		return axisSize * 0.5 + offs * scale
+	end
+
+	return fallback
+end
+
+local function resolveScoreboardX(raw, axisSize, panelWide, scale, fallback)
+	if not isstring(raw) then
+		return resolveCoord(raw, axisSize, scale, fallback)
+	end
+	local value = string.Trim(raw)
+	local cs = string.match(value, "^cs([%+%-]?%d*%.?%d*)$")
+	if cs ~= nil then
+		local offs = tonumber(cs)
+		if cs == "" or offs == nil then offs = 0 end
+		return axisSize * 0.5 - panelWide * 0.5 + offs * scale
+	end
+	return resolveCoord(value, axisSize, scale, fallback)
+end
+
+local function loadMvMScoreboardRes()
+	if not (TF2Res and TF2Res.Load and TF2Res.FindByFieldName) then return end
+
+	local tree = TF2Res.Load("resource/ui/mvmscoreboard.res")
+	if not tree then
+		tree = TF2Res.Load("resource/ui/scoreboard.res")
+	end
+	if not tree then return end
+
+	local function findNode(fieldName, ...)
+		local node = TF2Res.FindByFieldName(tree, fieldName)
+		if node then return node end
+		if TF2Res.FindByKey then
+			for _, keyName in ipairs({...}) do
+				node = TF2Res.FindByKey(tree, keyName)
+				if node then return node end
+			end
+		end
+		return nil
+	end
+
+	local scoreInfo = findNode("scoreinfo", "scores", "MvMScoreboard")
+	local mainBG = findNode("MainBG", "MainBG", "Background", "BG")
+	local serverLabel = findNode("ServerLabel", "ServerLabel", "ServerLabelNew")
+	local serverTime = findNode("ServerTimeLeft", "ServerTimeLeft")
+	local localStats = findNode("LocalPlayerStatsPanel", "LocalPlayerStatsPanel")
+	local spectatorLabel = findNode("Spectators", "Spectators")
+
+	if scoreInfo then
+		MvMScoreboardRes.panelX = getResString(scoreInfo, "xpos", MvMScoreboardRes.panelX)
+		MvMScoreboardRes.panelY = getResNumber(scoreInfo, "ypos", MvMScoreboardRes.panelY)
+		MvMScoreboardRes.panelW = getResNumber(scoreInfo, "wide", MvMScoreboardRes.panelW)
+		MvMScoreboardRes.panelH = getResNumber(scoreInfo, "tall", MvMScoreboardRes.panelH)
+	end
+
+	if mainBG then
+		MvMScoreboardRes.mainX = getResNumber(mainBG, "xpos", MvMScoreboardRes.mainX)
+		MvMScoreboardRes.mainY = getResNumber(mainBG, "ypos", MvMScoreboardRes.mainY)
+		MvMScoreboardRes.mainW = getResNumber(mainBG, "wide", MvMScoreboardRes.mainW)
+		MvMScoreboardRes.mainH = getResNumber(mainBG, "tall", MvMScoreboardRes.mainH)
+	end
+
+	if serverLabel then
+		MvMScoreboardRes.serverLeftX = getResNumber(serverLabel, "xpos", MvMScoreboardRes.serverLeftX)
+		MvMScoreboardRes.serverLeftY = getResNumber(serverLabel, "ypos", MvMScoreboardRes.serverLeftY)
+	end
+
+	if serverTime then
+		MvMScoreboardRes.serverRightX = getResNumber(serverTime, "xpos", MvMScoreboardRes.serverRightX)
+		MvMScoreboardRes.serverRightY = getResNumber(serverTime, "ypos", MvMScoreboardRes.serverRightY)
+	end
+
+	if localStats then
+		MvMScoreboardRes.localStatsY = getResNumber(localStats, "ypos", MvMScoreboardRes.localStatsY)
+	end
+
+	if spectatorLabel then
+		MvMScoreboardRes.creditsX = getResNumber(spectatorLabel, "xpos", MvMScoreboardRes.creditsX)
+		MvMScoreboardRes.creditsY = getResNumber(spectatorLabel, "ypos", MvMScoreboardRes.creditsY)
+	end
+
+end
+
+loadMvMScoreboardRes()
+
 function PANEL:Init()
 	self:SetPaintBackgroundEnabled(false)
 	self:SetVisible(false)
@@ -189,14 +345,24 @@ function PANEL:Init()
 end
 
 function PANEL:PerformLayout()
+	W = ScrW()
+	H = ScrH()
+	Scale = H/480
+	WScale = W/640
+
 	if not IsValid(LocalPlayer()) then return end
-	
-	self:SetPos(W*0.5 - 300*Scale, 16*Scale)
-	self:SetSize(600*Scale, 448*Scale)
+
+	local panelW = MvMScoreboardRes.panelW * Scale
+	local panelH = MvMScoreboardRes.panelH * Scale
+	local panelX = resolveScoreboardX(MvMScoreboardRes.panelX, W, panelW, Scale, W*0.5 - 300*Scale)
+	local panelY = resolveCoord(MvMScoreboardRes.panelY, H, Scale, 16*Scale)
+
+	self:SetPos(panelX, panelY)
+	self:SetSize(panelW, panelH)
 
 	if self.IsMvM then
-		self.BluePlayerList:SetPos(8*Scale, 86*Scale)
-		self.BluePlayerList:SetSize(584*Scale, 260*Scale)
+		self.BluePlayerList:SetPos(MvMScoreboardRes.listX * Scale, MvMScoreboardRes.listY * Scale)
+		self.BluePlayerList:SetSize(MvMScoreboardRes.listW * Scale, MvMScoreboardRes.listH * Scale)
 		self.RedPlayerList:SetVisible(false)
 		self.InfectedPlayerList:SetVisible(false)
 	else
@@ -208,20 +374,26 @@ function PANEL:PerformLayout()
 		self.RedPlayerList:SetSize(290*Scale, 280*Scale)
 	end
 	
-	self.LocalStats:SetPos(0, 395*Scale)
-	self.LocalStats:SetSize(600*Scale, 448*Scale)
+	self.LocalStats:SetPos(0, MvMScoreboardRes.localStatsY * Scale)
+	self.LocalStats:SetSize(panelW, panelH)
 end
 
 function PANEL:Paint()
 	if self.IsMvM then
+		local mainX = MvMScoreboardRes.mainX * Scale
+		local mainY = MvMScoreboardRes.mainY * Scale
+		local mainW = MvMScoreboardRes.mainW * Scale
+		local mainH = MvMScoreboardRes.mainH * Scale
+		local centerX = (MvMScoreboardRes.panelW * 0.5) * Scale
+
 		local humanCount = #team.GetPlayers(TEAM_RED)
 		local credits = LocalPlayer():GetNWInt("TF_MVM_Credits", 0)
 
 		surface.SetDrawColor(255, 255, 255, 255)
-		tf_draw.BorderPanel(tournament_panel_brown, 1.5*Scale, 8*Scale, 595.5*Scale, 375*Scale, 23, 23, 8*Scale, 8*Scale)
+		tf_draw.BorderPanel(tournament_panel_brown, mainX, mainY, mainW, mainH, 23, 23, 8*Scale, 8*Scale)
 		surface.SetDrawColor(0, 0, 0, 153)
-		surface.DrawRect(9*Scale, 74*Scale, 582*Scale, 1*Scale)
-		surface.DrawRect(10*Scale, 355*Scale, 580*Scale, 1*Scale)
+		surface.DrawRect(mainX + 7.5*Scale, MvMScoreboardRes.listY * Scale - 12*Scale, mainW - 13.5*Scale, 1*Scale)
+		surface.DrawRect(mainX + 8.5*Scale, (MvMScoreboardRes.listY + MvMScoreboardRes.listH + 9) * Scale, mainW - 15.5*Scale, 1*Scale)
 
 		local missionName = TF_MVMState and TF_MVMState.Get and tostring(TF_MVMState:Get("mission_name", "")) or ""
 		local missionLower = string.lower(missionName)
@@ -234,6 +406,10 @@ function PANEL:Paint()
 			difficulty = "EXPERT"
 		end
 		MvMDifficulty.text = "DIFFICULTY: " .. difficulty
+		MvMTitle.pos = {centerX, 26*Scale}
+		MvMWave.pos = {centerX, 43*Scale}
+		MvMDifficulty.pos = {centerX, 57*Scale}
+		MvMDefenders.pos = {centerX, 79*Scale}
 
 		draw.Text(MvMTitle)
 		draw.Text(MvMDifficulty)
@@ -249,15 +425,15 @@ function PANEL:Paint()
 		draw.Text(MvMWave)
 
 		ServerName.text = tf_lang.GetFormatted("#Scoreboard_Server", GetHostName())
-		ServerName.pos = {11*Scale, 18*Scale}
+		ServerName.pos = {MvMScoreboardRes.serverLeftX * Scale, MvMScoreboardRes.serverLeftY * Scale}
 		draw.Text(ServerName)
 
 		ServerTimeLeft.text = "PLAYERS: " .. tostring(humanCount)
-		ServerTimeLeft.pos = {585*Scale, 18*Scale}
+		ServerTimeLeft.pos = {MvMScoreboardRes.serverRightX * Scale, MvMScoreboardRes.serverRightY * Scale}
 		draw.Text(ServerTimeLeft)
 
 		Spectators.text = "Credits: " .. tostring(credits)
-		Spectators.pos = {16*Scale, 369*Scale}
+		Spectators.pos = {MvMScoreboardRes.creditsX * Scale, MvMScoreboardRes.creditsY * Scale}
 		Spectators.color = Colors.TanLight
 		draw.Text(Spectators)
 		return

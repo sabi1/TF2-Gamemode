@@ -1,0 +1,11 @@
+"patch"
+{
+	"include"		"materials/WATER/WATER_2FORT_EXPENSIVE.vmt"
+	"replace"
+	{
+		"$envmap"		"maps/mvm_condemned_b4a/c-8_2176_112"
+		"Proxies"
+		{
+		}
+	}
+}

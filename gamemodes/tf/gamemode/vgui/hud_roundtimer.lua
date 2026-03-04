@@ -30,6 +30,16 @@ local TimerRes = {
 	timeY = 26.5,
 }
 
+local RoundTimerState = {
+	Reference = nil,
+	LastUpdated = nil,
+	Max = nil,
+	IsSetup = nil,
+	IsWaiting = nil,
+	Paused = nil,
+	HooksRegistered = false,
+}
+
 do
 	local tree = TF2Res and TF2Res.Load and TF2Res.Load("resource/ui/hudobjectivetimepanel.res")
 	local bg = tree and TF2Res.FindByFieldName and TF2Res.FindByFieldName(tree, "TimePanelBG")
@@ -63,7 +73,52 @@ do
 	end
 end
 local function IsMvMMap()
+	if TF_IsMvMMap then
+		return TF_IsMvMMap()
+	end
 	return string.find(string.lower(game.GetMap() or ""), "mvm_", 1, true) ~= nil
+end
+
+local function applyRoundTimerState(msg, waitingMode, pausedMode)
+	local t = msg:ReadFloat()
+	RoundTimerState.Reference = t
+	RoundTimerState.LastUpdated = CurTime()
+
+	local maxTime = msg:ReadFloat()
+	if maxTime > 0 then
+		RoundTimerState.Max = maxTime
+	end
+
+	if waitingMode then
+		RoundTimerState.IsWaiting = msg:ReadBool()
+		RoundTimerState.IsSetup = nil
+		RoundTimerState.Paused = nil
+		return
+	end
+
+	RoundTimerState.IsSetup = msg:ReadBool()
+	RoundTimerState.IsWaiting = nil
+
+	if pausedMode then
+		RoundTimerState.Paused = t
+	else
+		RoundTimerState.Paused = nil
+	end
+end
+
+if not RoundTimerState.HooksRegistered then
+	RoundTimerState.HooksRegistered = true
+	usermessage.Hook("TF_SetAndResumeTimer", function(msg)
+		applyRoundTimerState(msg, false, false)
+	end)
+
+	usermessage.Hook("TF_SetAndResumeTimerWaiting", function(msg)
+		applyRoundTimerState(msg, true, false)
+	end)
+
+	usermessage.Hook("TF_SetAndPauseTimer", function(msg)
+		applyRoundTimerState(msg, false, true)
+	end)
 end
 
 function PANEL:Init()
@@ -84,10 +139,12 @@ function PANEL:PerformLayout()
 end
 
 function PANEL:GetTime()
-	if GAMEMODE.RoundTimePaused then
-		return GAMEMODE.RoundTimePaused 
+	if RoundTimerState.Paused then
+		return RoundTimerState.Paused
 	else
-		return math.Clamp(GAMEMODE.RoundTimeReference - (CurTime() - GAMEMODE.RoundTimeLastUpdated), 0, math.huge)
+		local ref = RoundTimerState.Reference or 0
+		local updated = RoundTimerState.LastUpdated or CurTime()
+		return math.Clamp(ref - (CurTime() - updated), 0, math.huge)
 	end
 end
 
@@ -106,15 +163,10 @@ function PANEL:GetFormattedTime()
 end
 
 function PANEL:Paint()
-	if not GAMEMODE.RoundTimeReference and not GAMEMODE.RoundTimePaused then return end
-
-	-- In MvM this panel is setup/waiting-only; active wave uses the bomb/status HUD.
-	if IsMvMMap() and not GAMEMODE.RoundTimeIsSetupPhase and not GAMEMODE.RoundTimeIsWaitingForPlayers then
-		return
-	end
+	if not RoundTimerState.Reference and not RoundTimerState.Paused then return end
 	
 	surface.SetDrawColor(255,255,255,255)
-	if GAMEMODE.RoundTimeIsSetupPhase then
+	if RoundTimerState.IsSetup then
 		surface.SetTexture(objectives_timepanel_suddendeath)
 		surface.DrawTexturedRect(TimerRes.stateX*Scale, TimerRes.stateY*Scale, TimerRes.stateW*Scale, TimerRes.stateH*Scale)
 		
@@ -125,7 +177,7 @@ function PANEL:Paint()
 			xalign=TEXT_ALIGN_CENTER,
 			yalign=TEXT_ALIGN_CENTER,
 		}
-	elseif GAMEMODE.RoundTimeIsWaitingForPlayers then
+	elseif RoundTimerState.IsWaiting then
 		surface.SetTexture(objectives_timepanel_suddendeath)
 		surface.DrawTexturedRect(TimerRes.stateX*Scale, TimerRes.stateY*Scale, TimerRes.stateW*Scale, TimerRes.stateH*Scale)
 		
@@ -154,8 +206,8 @@ function PANEL:Paint()
 	}
 	
 	local progress = 1
-	if GAMEMODE.MaxRoundTime and GAMEMODE.MaxRoundTime>0 then
-		progress = math.Clamp(math.ceil(self:GetTime()) / GAMEMODE.MaxRoundTime, 0, 1)
+	if RoundTimerState.Max and RoundTimerState.Max > 0 then
+		progress = math.Clamp(math.ceil(self:GetTime()) / RoundTimerState.Max, 0, 1)
 	end
 	
 	local bgcolor = Colors.HudTimerProgressInActive

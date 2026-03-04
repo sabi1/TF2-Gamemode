@@ -31,6 +31,8 @@ SWEP.ReloadSingle = false
 SWEP.HasCustomMeleeBehaviour = true
 
 SWEP.HoldType = "ITEM1"
+SWEP.MaxCarry = 1
+SWEP.GlobalCustomHUD = {HudItemEffectMeter = function(self) return self:Ammo1() < (self.MaxCarry or 1) end}
 
 SWEP.ProjectileShootOffset = Vector(0, 0, 0)
 
@@ -38,6 +40,31 @@ SWEP.Properties = {}
 SWEP.Force = 1100
 SWEP.AddPitch = -4
 SWEP.VM_PRIMARYATTACK = ACT_ITEM3_VM_RELOAD		
+
+function SWEP:GetHUDMeterName()
+	return "#TF_Cleaver"
+end
+
+function SWEP:GetHUDMeterResFile()
+	return "resource/ui/huditemeffectmeter_cleaver.res"
+end
+
+function SWEP:GetHUDMeterValue()
+	local maxcarry = self.MaxCarry or 1
+	if self:Ammo1() >= maxcarry then
+		return 1
+	end
+
+	if IsValid(self.Owner) and self.Owner.NextGiveAmmo and self.Owner.NextGiveAmmoType == self.Primary.Ammo then
+		local recharge = self.Properties.ReloadTime or 5
+		if recharge <= 0 then return 0 end
+		local elapsed = recharge - math.max(0, self.Owner.NextGiveAmmo - CurTime())
+		return math.Clamp(elapsed / recharge, 0, 1)
+	end
+
+	return 0
+end
+
 function SWEP:PredictCriticalHit()
 end
 

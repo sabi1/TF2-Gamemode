@@ -132,7 +132,7 @@ SWEP.ReloadSingle = false
 SWEP.HasCustomMeleeBehaviour = true
 
 SWEP.HoldType = "ITEM1"
-SWEP.CustomHUD = {HudBowCharge = function(self) return self:Ammo1() < (self.MaxCarry or 1) end}
+SWEP.GlobalCustomHUD = {HudItemEffectMeter = function(self) return self:Ammo1() < (self.MaxCarry or 1) end}
 
 SWEP.ProjectileShootOffset = Vector(0, 0, 0)
 
@@ -246,21 +246,34 @@ function SWEP:ProcessRechargeTimer()
 end
 
 function SWEP:UpdateRechargeBar()
-	if not IsValid(self.Owner) or self.Owner ~= LocalPlayer() or not IsValid(HudBowCharge) then return end
-	if self.Owner:GetActiveWeapon() ~= self then return end
-	
-	if self:Ammo1() >= (self.MaxCarry or 1) then
-		return
+	-- Kept for compatibility with legacy callers; meter now uses HudItemEffectMeter.
+	return
+end
+
+function SWEP:GetHUDMeterName()
+	return "#TF_MadMilk"
+end
+
+function SWEP:GetHUDMeterResFile()
+	return "resource/ui/huditemeffectmeter_scout.res"
+end
+
+function SWEP:GetHUDMeterValue()
+	if not IsValid(self.Owner) then return 0 end
+
+	local maxcarry = self.MaxCarry or 1
+	if self:Ammo1() >= maxcarry then
+		return 1
 	end
 
-	local progress = 0
 	if self.Owner.NextGiveAmmo and self.Owner.NextGiveAmmoType == self.Primary.Ammo then
 		local recharge = self.Properties.ReloadTime or 20
+		if recharge <= 0 then return 0 end
 		local elapsed = recharge - math.max(0, self.Owner.NextGiveAmmo - CurTime())
-		progress = math.Clamp(elapsed / recharge, 0, 1)
+		return math.Clamp(elapsed / recharge, 0, 1)
 	end
-	
-	HudBowCharge:SetProgress(progress)
+
+	return 0
 end
 
 function SWEP:MeleeAttack()
@@ -355,9 +368,6 @@ end
 function SWEP:Holster()
 	if CLIENT then
 		self.DoneDeployParticle = false
-		if IsValid(HudBowCharge) then
-			HudBowCharge:SetProgress(0)
-		end
 	end
 	
 	return self:CallBaseFunction("Holster")

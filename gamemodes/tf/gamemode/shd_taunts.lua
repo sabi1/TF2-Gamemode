@@ -2028,7 +2028,295 @@ concommand.Add("tf_taunt_rockpaperscissors", function(ply)
 end)
 
 concommand.Add("tf_taunt", function(ply,cmd,args)
-	ply:TFTaunt(args[1])
+	local slot = tonumber(args and args[1])
+	if slot and slot >= 1 and slot <= 8 and ply.TryExecuteEquippedTauntSlot then
+		if ply:TryExecuteEquippedTauntSlot(slot) then
+			return
+		end
+	end
+	ply:TFTaunt(args and args[1])
+end)
+concommand.Add("tf_taunt_item", function(ply, cmd, args)
+	local itemId = tonumber(args and args[1])
+	local slot = tonumber(args and args[2])
+
+	if itemId and itemId > 0 and ply.TryExecuteTauntItemByID then
+		if ply:TryExecuteTauntItemByID(itemId, slot) then
+			return
+		end
+	end
+
+	if slot and slot >= 1 and slot <= 8 and ply.TryExecuteEquippedTauntSlot then
+		if ply:TryExecuteEquippedTauntSlot(slot) then
+			return
+		end
+	end
+
+	ply:TFTaunt(slot and tostring(slot) or nil)
+end)
+local function StartTokenTaunt(ply, rawToken)
+	if not IsValid(ply) or not ply:IsPlayer() then return false end
+	if ply:GetNWBool("Taunting") == true then return false end
+	if ply:IsHL2() then
+		ply:SendLua("RunConsoleCommand('act','laugh')")
+		return true
+	end
+	if not ply:IsOnGround() then return false end
+	if ply:WaterLevel() ~= 0 then return false end
+	if ply:GetInfoNum("tf_giantrobot", 0) == 1 then
+		ply:ChatPrint("You can't taunt as a mighty robot!")
+		return true
+	end
+
+	local token = string.lower(tostring(rawToken or ""))
+	token = string.gsub(token, "[^a-z0-9_]+", "_")
+	token = string.gsub(token, "_+", "_")
+	token = string.gsub(token, "^_+", "")
+	token = string.gsub(token, "_+$", "")
+	if token == "" then return false end
+
+	local sequenceCandidates = {
+		"taunt_" .. token,
+		token,
+		"taunt_" .. string.gsub(token, "_", ""),
+	}
+
+	local sequenceName = nil
+	local sequenceDuration = 0
+	for _, candidate in ipairs(sequenceCandidates) do
+		local idx = ply:LookupSequence(candidate)
+		if idx and idx >= 0 then
+			local dur = tonumber(ply:SequenceDuration(idx)) or 0
+			if dur > 0 then
+				sequenceName = candidate
+				sequenceDuration = dur
+				break
+			end
+		end
+	end
+	if not sequenceName then
+		return false
+	end
+
+	ply:DoTauntEvent(sequenceName, true)
+	ply:SetNWBool("Taunting", true)
+	ply:SetNWBool("NoWeapon", true)
+	net.Start("ActivateTauntCam")
+	net.Send(ply)
+
+	timer.Simple(math.max(sequenceDuration, 1), function()
+		if not IsValid(ply) or (not ply:Alive() and not ply:GetNWBool("Taunting")) then return end
+		ply:SetNWBool("Taunting", false)
+		ply:SetNWBool("NoWeapon", false)
+		net.Start("DeActivateTauntCam")
+		net.Send(ply)
+	end)
+
+	return true
+end
+
+concommand.Add("tf_taunt_token", function(ply, cmd, args)
+	local token = tostring(args and args[1] or "")
+	StartTokenTaunt(ply, token)
+end)
+local function findBestSequence(ply, candidates)
+	for _, seqName in ipairs(candidates) do
+		local idx = ply:LookupSequence(seqName)
+		if idx and idx >= 0 then
+			local dur = tonumber(ply:SequenceDuration(idx)) or 0
+			if dur > 0 then
+				return seqName, dur
+			end
+		end
+	end
+	return nil, 0
+end
+
+local function startMopedLoop(ply)
+	if not IsValid(ply) or not ply:GetNWBool("TauntingMoped") then return end
+	local entId = ply:EntIndex()
+	local loopSeq = ply.__MopedLoopSeq
+	local loopDur = tonumber(ply.__MopedLoopDur) or 0
+	timer.Remove("MopedLoop_" .. entId)
+	if not loopSeq or loopDur <= 0 then return end
+	timer.Create("MopedLoop_" .. entId, math.max(loopDur, 0.4), 0, function()
+		if not IsValid(ply) or not ply:GetNWBool("TauntingMoped") then
+			timer.Remove("MopedLoop_" .. entId)
+			return
+		end
+		ply:DoTauntEvent(loopSeq, true)
+	end)
+end
+
+local function endMopedTaunt(ply)
+	if not IsValid(ply) then return end
+	local entId = ply:EntIndex()
+	timer.Remove("MopedLoop_" .. entId)
+	timer.Remove("MopedAutoStop_" .. entId)
+	timer.Remove("MopedVoice_" .. entId)
+	ply.__MopedTurnRate = 0
+	ply.__MopedTurnInput = 0
+	ply.__MopedLoopSeq = nil
+	ply.__MopedLoopDur = 0
+
+	local endSeq, endDur = findBestSequence(ply, {
+		"layer_tuant_vehicle_moped_end",
+		"layer_taunt_vehicle_moped_end",
+		"taunt_vehicle_moped_end",
+	})
+
+	ply:SetNWBool("TauntingMoped", false)
+	for _, v in ipairs(ents.FindByName("MopedModel" .. entId)) do
+		v:Remove()
+	end
+	ply:StopSound("Taunt.MopedForward")
+	ply:EmitSound("Taunt.MopedEndEngineOff")
+	ply:EmitSound(table.Random({"Taunt.MopedEndScoutFoot1", "Taunt.MopedEndScoutFoot2"}))
+	if ply:GetPlayerClass() == "scout" then
+		ply:EmitSound("scout_taunt_flip_random_flipFinish")
+	end
+	if endSeq then
+		ply:DoTauntEvent(endSeq, true)
+	end
+
+	timer.Simple(math.max(endDur, 0.5), function()
+		if not IsValid(ply) then return end
+		ply:SetNWBool("Taunting", false)
+		ply:SetNWBool("NoWeapon", false)
+		net.Start("DeActivateTauntCam")
+		net.Send(ply)
+	end)
+end
+
+function TF_EndMopedTaunt(ply)
+	if not IsValid(ply) then return end
+	if not ply:GetNWBool("TauntingMoped") then return end
+	endMopedTaunt(ply)
+end
+
+function TF_MopedWheelie(ply)
+	if not IsValid(ply) or not ply:GetNWBool("TauntingMoped") then return end
+	local entId = ply:EntIndex()
+	local wheelieSeq, wheelieDur = findBestSequence(ply, {"taunt_vehicle_moped_wheely"})
+	if not wheelieSeq then return end
+	timer.Remove("MopedLoop_" .. entId)
+	ply:DoTauntEvent(wheelieSeq, true)
+	ply:EmitSound("Taunt.MopedWheelieEngineRev")
+	timer.Simple(math.max(wheelieDur * 0.6, 0.3), function()
+		if not IsValid(ply) or not ply:GetNWBool("TauntingMoped") then return end
+		ply:EmitSound(table.Random({"Taunt.MopedWheelieLand1", "Taunt.MopedWheelieLand2"}))
+		if ply:GetPlayerClass() == "scout" then
+			ply:EmitSound("scout_taunt_bos_exert_01")
+		end
+	end)
+	timer.Simple(math.max(wheelieDur, 0.6), function()
+		if not IsValid(ply) or not ply:GetNWBool("TauntingMoped") then return end
+		if ply.__MopedLoopSeq then
+			ply:DoTauntEvent(ply.__MopedLoopSeq, true)
+			startMopedLoop(ply)
+		end
+	end)
+end
+
+concommand.Add("tf_taunt_moped_stop", function(ply)
+	if not IsValid(ply) then return end
+	if not ply:GetNWBool("TauntingMoped") then return end
+	endMopedTaunt(ply)
+end)
+
+concommand.Add("tf_taunt_moped", function(ply)
+	if ply:GetNWBool("TauntingMoped") then
+		endMopedTaunt(ply)
+		return
+	end
+	if ply:GetNWBool("Taunting") == true then return end
+	if ply:IsHL2() then ply:SendLua("RunConsoleCommand('act','laugh')") return end
+	if not ply:IsOnGround() then return end
+	if ply:WaterLevel() ~= 0 then return end
+	if ply:GetPlayerClass() ~= "scout" then return end
+	if ply:GetInfoNum("tf_giantrobot", 0) == 1 then ply:ChatPrint("You can't taunt as a mighty robot!") return end
+
+	local startSeq, startDur = findBestSequence(ply, {
+		"taunt_vehicle_moped_start",
+		"taunt_vehicle_moped_start_layer",
+		"taunt_vehicle_moped_spawn_layer",
+		"taunt_vehicle_moped",
+	})
+	local loopSeq, loopDur = findBestSequence(ply, {
+		"a_steer_matrix_moped",
+		"taunt_vehicle_moped_wheely",
+		"taunt_vehicle_moped",
+	})
+	if not startSeq then return end
+
+	ply:DoTauntEvent(startSeq, true)
+	ply:SetNWBool("Taunting", true)
+	ply:SetNWBool("TauntingMoped", true)
+	ply:SetNWBool("NoWeapon", true)
+	ply.__MopedTurnRate = 0
+	ply.__MopedTurnInput = 0
+	ply.__MopedLoopSeq = loopSeq
+	ply.__MopedLoopDur = loopDur
+	net.Start("ActivateTauntCam")
+	net.Send(ply)
+	local entId = ply:EntIndex()
+	ply:EmitSound("Taunt.MopedStartHandleGrab")
+	ply:EmitSound("Taunt.MopedStartShake")
+	timer.Simple(0.22, function()
+		if IsValid(ply) and ply:GetNWBool("TauntingMoped") then
+			ply:EmitSound("Taunt.MopedStartLand")
+			ply:EmitSound("Taunt.MopedStartSwoosh1")
+		end
+	end)
+	timer.Simple(0.5, function()
+		if IsValid(ply) and ply:GetNWBool("TauntingMoped") then
+			ply:EmitSound("Taunt.MopedForward")
+		end
+	end)
+	if ply:GetPlayerClass() == "scout" then
+		timer.Simple(0.35, function()
+			if IsValid(ply) and ply:GetNWBool("TauntingMoped") then
+				ply:EmitSound("scout_taunt_flip_random_intro")
+			end
+		end)
+	end
+
+	local scooter = ents.Create("base_gmodentity")
+	if IsValid(scooter) then
+		scooter:SetModel("models/player/items/taunts/scooter/scooter.mdl")
+		scooter:SetAngles(ply:GetAngles())
+		scooter:SetPos(ply:GetPos())
+		scooter:Spawn()
+		scooter:Activate()
+		scooter:SetParent(ply)
+		scooter:AddEffects(EF_BONEMERGE)
+		scooter:SetName("MopedModel" .. entId)
+	end
+
+	timer.Simple(math.max(startDur, 0.2), function()
+		if not IsValid(ply) or not ply:GetNWBool("TauntingMoped") then return end
+		if ply.__MopedLoopSeq then
+			ply:DoTauntEvent(ply.__MopedLoopSeq, true)
+			startMopedLoop(ply)
+		end
+	end)
+	if ply:GetPlayerClass() == "scout" then
+		timer.Create("MopedVoice_" .. entId, 7, 0, function()
+			if not IsValid(ply) or not ply:GetNWBool("TauntingMoped") then
+				timer.Remove("MopedVoice_" .. entId)
+				return
+			end
+			if math.random(1, 100) <= 45 then
+				ply:EmitSound("scout_taunt_flip_random_waiting2")
+			end
+		end)
+	end
+
+	-- Hard safety timeout so players do not get stuck in taunt state.
+	timer.Create("MopedAutoStop_" .. entId, 30, 1, function()
+		if not IsValid(ply) or not ply:GetNWBool("TauntingMoped") then return end
+		endMopedTaunt(ply)
+	end)
 end)
 concommand.Add("tf_taunt_scary", function(ply)
 	if ply:GetNWBool("Taunting") == true then return end

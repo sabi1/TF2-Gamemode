@@ -1,6 +1,16 @@
 ENT.Base = "base_brush"
 ENT.Type = "brush"
 
+local function TriggerBombDeployOutcome(carrier, captureZone, bombEnt)
+	hook.Run("TF_MVM_BombDeployed", carrier, captureZone, bombEnt)
+	local rt = TF_MVM and TF_MVM.Runtime or nil
+	if rt and rt.IsManagedActive and rt:IsManagedActive() and rt.FailMission then
+		rt:FailMission("bomb_deployed")
+	else
+		RunConsoleCommand("tf_mvm_wins")
+	end
+end
+
 function ENT:Initialize()
 	local pos = self:GetPos()
 	local mins, maxs = self:WorldSpaceAABB() -- https://forum.facepunch.com/gmoddev/lmcw/Brush-entitys-ent-GetPos/1/#postdwfmq
@@ -104,6 +114,13 @@ function ENT:StartTouch(ply)
 		if v.Carrier ~= ply then continue end
 		if ply:Team() ~= TEAM_BLU then continue end
 		if self.TeamNum ~= TEAM_RED then continue end
+		local linked = nil
+		if v.GetCaptureZone then
+			linked = v:GetCaptureZone()
+		elseif v.CaptureZone then
+			linked = v.CaptureZone
+		end
+		if IsValid(linked) and linked ~= self then continue end
 
 		v.Deploying = true
 		local carrier = ply
@@ -183,7 +200,7 @@ function ENT:StartTouch(ply)
 				carrier:Kill()
 			end
 
-			RunConsoleCommand("tf_mvm_wins")
+			TriggerBombDeployOutcome(carrier, captureZone, v)
 			v.Deploying = false
 		end)
 		return

@@ -3,6 +3,8 @@ CreateConVar("tf_mvm_autoload", "1", { FCVAR_ARCHIVE, FCVAR_NOTIFY }, "Auto-load
 CreateConVar("tf_mvm_autostart", "1", { FCVAR_ARCHIVE, FCVAR_NOTIFY }, "Auto-start mission after autoload.")
 CreateConVar("tf_mvm_mission_override", "", { FCVAR_ARCHIVE }, "Mission override path (.pop).")
 CreateConVar("tf_mvm_external_pop_root", "C:/Program Files (x86)/Steam/steamapps/common/Team Fortress 2/tf/scripts/population", { FCVAR_ARCHIVE }, "External TF2 population root.")
+CreateConVar("tf_mvm_custom_pop_root", "C:/Program Files (x86)/Steam/steamapps/common/Team Fortress 2/tf/custom", { FCVAR_ARCHIVE }, "TF2 custom root used to scan for mission .pop files under */scripts/population.")
+CreateConVar("tf_mvm_workshop_pop_root", "C:/Program Files (x86)/Steam/steamapps/workshop/content/440", { FCVAR_ARCHIVE }, "TF2 Workshop content root used to scan for map mission .pop files.")
 CreateConVar("tf_mvm_setup_time_override", "0", { FCVAR_ARCHIVE }, "Setup duration before each wave (seconds). Set <=0 to use mission values.")
 CreateConVar("tf_mvm_min_players_to_start", "3", { FCVAR_ARCHIVE, FCVAR_NOTIFY }, "Minimum non-bot RED players required before setup countdown can start.")
 CreateConVar("tf_mvm_debug", "0", { FCVAR_ARCHIVE }, "Enable MvM runtime debug logging.")
@@ -17,6 +19,9 @@ include("sv_mvm_economy.lua")
 include("sv_mvm_runtime.lua")
 
 local function IsMvMMap()
+    if TF_IsMvMMap then
+        return TF_IsMvMMap()
+    end
     return string.find(string.lower(game.GetMap() or ""), "mvm_", 1, true) ~= nil
 end
 

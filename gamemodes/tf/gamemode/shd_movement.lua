@@ -4,6 +4,39 @@ hook.Add("Move", "TFMove", function(pl, move)
 	end
 	
 	if pl:IsHL2() then return end
+
+	if pl:GetNWBool("TauntingMoped", false) then
+		local forward = pl:GetForward()
+		forward.z = 0
+		forward:Normalize()
+
+		local driveSpeed = 95
+		local turnSpeed = 60
+		local turnAccelTime = 0.2
+		local dt = engine.TickInterval()
+		local input = math.Clamp(tonumber(pl.__MopedTurnInput) or 0, -1, 1)
+
+		local targetTurn = input * turnSpeed
+		pl.__MopedTurnRate = pl.__MopedTurnRate or 0
+		local turnDelta = (turnSpeed / math.max(turnAccelTime, 0.01)) * dt
+		pl.__MopedTurnRate = math.Approach(pl.__MopedTurnRate, targetTurn, turnDelta)
+
+		local ea = pl:EyeAngles()
+		ea.y = math.NormalizeAngle(ea.y + pl.__MopedTurnRate * dt)
+		pl:SetEyeAngles(ea)
+
+		local vel = move:GetVelocity()
+		local planar = forward * driveSpeed
+		vel.x = planar.x
+		vel.y = planar.y
+		move:SetVelocity(vel)
+		move:SetForwardSpeed(driveSpeed)
+		move:SetSideSpeed(0)
+		move:SetUpSpeed(0)
+		move:SetMaxSpeed(math.max(move:GetMaxSpeed(), driveSpeed))
+		move:SetMaxClientSpeed(math.max(move:GetMaxClientSpeed(), driveSpeed))
+		return
+	end
 	
 	-- Players run 10% slower when moving backwards
 	local fwd = move:GetForwardSpeed()

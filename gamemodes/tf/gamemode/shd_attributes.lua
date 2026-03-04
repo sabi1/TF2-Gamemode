@@ -12,6 +12,28 @@ local BOOST_MIN_GAIN = 5
 local BOOST_SPEED_AT_MAX = 0.4
 local BOOST_METER_NWKEY = "TFBoostMeter"
 
+local function DamageComesFromOwner(dmginfo, owner)
+	if not dmginfo or not IsValid(owner) then return false end
+
+	local attacker = dmginfo:GetAttacker()
+	if IsValid(attacker) then
+		if attacker == owner then return true end
+		if attacker.GetOwner and IsValid(attacker:GetOwner()) and attacker:GetOwner() == owner then
+			return true
+		end
+	end
+
+	local inflictor = dmginfo:GetInflictor()
+	if IsValid(inflictor) then
+		if inflictor == owner then return true end
+		if inflictor.GetOwner and IsValid(inflictor:GetOwner()) and inflictor:GetOwner() == owner then
+			return true
+		end
+	end
+
+	return false
+end
+
 local function SetBoostMeter(weapon, owner, value)
 	if not IsValid(weapon) then return end
 
@@ -42,19 +64,24 @@ end
 
 local function SetupBoostMeterHUD(weapon)
 	if not IsValid(weapon) then return end
-	if not weapon.CustomHUD then weapon.CustomHUD = {} end
-	if weapon.CustomHUD.HudBowCharge == nil then
-		weapon.CustomHUD.HudBowCharge = true
+	if not weapon.GlobalCustomHUD then weapon.GlobalCustomHUD = {} end
+	weapon.GlobalCustomHUD.HudItemEffectMeter = true
+
+	if not weapon.GetHUDMeterName then
+		weapon.GetHUDMeterName = function()
+			return "#TF_Rage"
+		end
 	end
-
-	if weapon.UpdateBoostHUD then return end
-	weapon.UpdateBoostHUD = function(self)
-		if not CLIENT then return end
-		if not IsValid(self.Owner) or self.Owner ~= LocalPlayer() or not IsValid(HudBowCharge) then return end
-		if self.Owner:GetActiveWeapon() ~= self then return end
-
-		local value = self:GetNWFloat(BOOST_METER_NWKEY, self.BoostMeter or 0)
-		HudBowCharge:SetProgress(math.Clamp(value / BOOST_METER_MAX, 0, 1))
+	if not weapon.GetHUDMeterValue then
+		weapon.GetHUDMeterValue = function(self)
+			local value = self:GetNWFloat(BOOST_METER_NWKEY, self.BoostMeter or 0)
+			return math.Clamp(value / BOOST_METER_MAX, 0, 1)
+		end
+	end
+	if not weapon.GetHUDMeterResFile then
+		weapon.GetHUDMeterResFile = function()
+			return "resource/ui/huditemeffectmeter.res"
+		end
 	end
 end
 
@@ -889,7 +916,8 @@ local ATTRIBUTES = {
 		local owner = GetAttributeOwner()
 		if not IsValid(weapon) or not IsValid(owner) or not owner:IsPlayer() then return end
 
-		if dmginfo:GetAttacker() ~= owner or ent == owner then return end
+		if ent == owner then return end
+		if not DamageComesFromOwner(dmginfo, owner) then return end
 
 		local damage = dmginfo:GetDamage()
 		if damage <= 0 then return end

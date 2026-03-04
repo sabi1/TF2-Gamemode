@@ -22,6 +22,106 @@ local function CarrierTimerName(flag, suffix)
 	return "MVMFlag_" .. tostring(flag:EntIndex()) .. "_" .. tostring(suffix)
 end
 
+local function RoomTeamMatchesCarrier(room, ply)
+	if not IsValid(room) or not IsValid(ply) then return false end
+	if not room.GetKeyValues then return true end
+	local kv = room:GetKeyValues() or {}
+	local rawTeam = tonumber(kv.TeamNum or kv.teamnum or kv.Team or 0) or 0
+	if rawTeam <= 0 then return true end
+	local mapped = rawTeam
+	if rawTeam == 2 then mapped = TEAM_RED end
+	if rawTeam == 3 then mapped = TEAM_BLU end
+	return mapped == ply:Team()
+end
+
+local function IsCarrierInsideRespawnRoom(ply)
+	if not IsValid(ply) then return false end
+	local p = ply:GetPos()
+	for _, room in ipairs(ents.FindByClass("func_respawnroom")) do
+		if not IsValid(room) then continue end
+		if not RoomTeamMatchesCarrier(room, ply) then continue end
+		local mins, maxs = room:WorldSpaceAABB()
+		if p.x >= (mins.x - 8) and p.x <= (maxs.x + 8) and
+			p.y >= (mins.y - 8) and p.y <= (maxs.y + 8) and
+			p.z >= (mins.z - 16) and p.z <= (maxs.z + 16) then
+			return true
+		end
+	end
+	return false
+end
+
+local function IsRedCaptureZone(zone)
+	if not IsValid(zone) then return false end
+	local t = tonumber(zone.TeamNum or zone.Team or 0)
+	if t == TEAM_RED or t == 2 then return true end
+	if zone.GetKeyValues then
+		local kv = zone:GetKeyValues() or {}
+		local raw = tonumber(kv.TeamNum or kv.teamnum or kv.Team or 0) or 0
+		if raw == 2 or raw == TEAM_RED then
+			return true
+		end
+	end
+	return false
+end
+
+local function IsNearOrigin(v)
+	if not isvector(v) then return true end
+	return math.abs(v.x) <= 1 and math.abs(v.y) <= 1 and math.abs(v.z) <= 1
+end
+
+local function GetEntGoalPos(ent, fallback)
+	if not IsValid(ent) then return fallback end
+	local pos = nil
+	if ent.WorldSpaceCenter then
+		local ok, v = pcall(ent.WorldSpaceCenter, ent)
+		if ok and isvector(v) then
+			pos = v
+		end
+	end
+	if (not isvector(pos) or IsNearOrigin(pos)) and ent.OBBCenter and ent.LocalToWorld then
+		local okCenter, center = pcall(ent.OBBCenter, ent)
+		if okCenter and isvector(center) then
+			local okWorld, world = pcall(ent.LocalToWorld, ent, center)
+			if okWorld and isvector(world) then
+				pos = world
+			end
+		end
+	end
+	if (not isvector(pos) or IsNearOrigin(pos)) and ent.GetPos then
+		local ok, v = pcall(ent.GetPos, ent)
+		if ok and isvector(v) then
+			pos = v
+		end
+	end
+	if isvector(pos) and not IsNearOrigin(pos) then
+		return pos
+	end
+	return fallback
+end
+
+local function PickPreferredMvMCaptureZone(anchorPos)
+	local best, bestDist
+	for _, zone in ipairs(ents.FindByClass("func_capturezone")) do
+		if not IsValid(zone) then continue end
+		if not IsRedCaptureZone(zone) then continue end
+		if not isvector(anchorPos) then
+			return zone
+		end
+		local zonePos = GetEntGoalPos(zone, nil)
+		if not isvector(zonePos) then continue end
+		local d = zonePos:DistToSqr(anchorPos)
+		if not bestDist or d < bestDist then
+			bestDist = d
+			best = zone
+		end
+	end
+	if IsValid(best) then return best end
+	for _, zone in ipairs(ents.FindByClass("func_capturezone")) do
+		if IsValid(zone) then return zone end
+	end
+	return nil
+end
+
 if SERVER then
 
 function ENT:SetBombUpgradeLevel(level)
@@ -40,6 +140,79 @@ function ENT:StartBombUpgradeState()
 	self.BombUpgradeStartTime = CurTime()
 	self:SetNWFloat("MVM_BombUpgradeStartedAt", self.BombUpgradeStartTime)
 	self:SetBombUpgradeLevel(0)
+end
+
+function ENT:BeginBombCarrierUpgradeTimers(ply, warn1Timer, warn2Timer, warn3Timer, warnEnd3Timer, healTimer, resistTimer)
+	if not IsValid(self) or not IsValid(ply) then return end
+	self:StartBombUpgradeState()
+	timer.Create(warn1Timer, 10, 1, function()
+		if not IsValid(self) or not IsValid(ply) or self.Carrier ~= ply then return end
+		self:SetBombUpgradeLevel(1)
+		ParticleEffectAttach( "mvm_levelup1", PATTACH_POINT_FOLLOW, ply, ply:LookupAttachment("head") )
+		ply:EmitSound("mvm/mvm_warning.wav", 0, 100)
+		if (!ply:IsMiniBoss()) then
+			ply:TFTaunt(tostring(ply:GetActiveWeapon():GetSlot() + 1))
+		end
+		timer.Create(healTimer, 5.0, 0, function()
+			--ply:SetArmor( 50 )
+		end)
+	end)
+
+	timer.Create(warn2Timer, 45, 1, function()
+		if not IsValid(self) or not IsValid(ply) or self.Carrier ~= ply then return end
+		self:SetBombUpgradeLevel(2)
+		ParticleEffectAttach( "mvm_levelup2", PATTACH_POINT_FOLLOW, ply, ply:LookupAttachment("head") )
+		ply:EmitSound("mvm/mvm_warning.wav", 0, 100)
+		if (!ply:IsMiniBoss()) then
+			ply:TFTaunt(tostring(ply:GetActiveWeapon():GetSlot() + 1))
+		end
+		timer.Create(resistTimer, 2, 0, function()
+			if not IsValid(self) or not IsValid(self.Carrier) then return end
+			GAMEMODE:HealPlayer(self.Carrier, self.Carrier, 5, true, false)
+		end)
+		for k,v in pairs(player.GetAll()) do
+			if not v:IsFriendly(ply) then
+				if v:GetPlayerClass() == "heavy" then
+					v:EmitSound("vo/heavy_mvm_bomb_upgrade0"..math.random(1,2)..".wav", 80, 100, 1, CHAN_VOICE)
+				elseif v:GetPlayerClass() == "soldier" then
+					v:EmitSound("vo/soldier_mvm_bomb_upgrade0"..math.random(1,3)..".wav", 80, 100, 1, CHAN_VOICE)
+				elseif v:GetPlayerClass() == "medic" then
+					v:EmitSound("vo/medic_mvm_bomb_upgrade0"..math.random(1,3)..".wav", 80, 100, 1, CHAN_VOICE)
+				elseif v:GetPlayerClass() == "engineer" then
+					v:EmitSound("vo/engineer_mvm_bomb_upgrade0"..math.random(1,3)..".wav", 80, 100, 1, CHAN_VOICE)
+				end
+			end
+		end
+	end)
+
+	timer.Create(warn3Timer, 65, 1, function()
+		if not IsValid(self) or not IsValid(ply) or self.Carrier ~= ply then return end
+		self:SetBombUpgradeLevel(3)
+		ParticleEffectAttach( "mvm_levelup3", PATTACH_POINT_FOLLOW, ply, ply:LookupAttachment("head") )
+		ply:EmitSound("mvm/mvm_warning.wav", 0, 100)
+		if (!ply:IsMiniBoss()) then
+			ply:TFTaunt(tostring(ply:GetActiveWeapon():GetSlot() + 1))
+		end
+		for _,pl in pairs(player.GetAll()) do
+			if not pl:IsFriendly(ply) then
+				if pl:GetPlayerClass() == "heavy" then
+					pl:EmitSound("vo/heavy_mvm_bomb_upgrade0"..math.random(1,2)..".wav", 80, 100, 1, CHAN_VOICE)
+				elseif pl:GetPlayerClass() == "soldier" then
+					pl:EmitSound("vo/soldier_mvm_bomb_upgrade0"..math.random(1,3)..".wav", 80, 100, 1, CHAN_VOICE)
+				elseif pl:GetPlayerClass() == "medic" then
+					pl:EmitSound("vo/medic_mvm_bomb_upgrade0"..math.random(1,3)..".wav", 80, 100, 1, CHAN_VOICE)
+				elseif pl:GetPlayerClass() == "engineer" then
+					pl:EmitSound("vo/engineer_mvm_bomb_upgrade0"..math.random(1,3)..".wav", 80, 100, 1, CHAN_VOICE)
+				end
+			end
+		end
+	end)
+
+	timer.Create(warnEnd3Timer, 65 + ply:SequenceDuration(ply:LookupSequence("taunt01")), 1, function()
+		if not IsValid(ply) then return end
+		ply:ConCommand("tf_firstperson")
+		ply:Freeze(false)
+	end)
 end
 
 hook.Add("DoPlayerDeath", "IntelSafeHelp2", function(ply)
@@ -258,6 +431,7 @@ function ENT:Return(nosound)
 		timer.Remove(CarrierTimerName(self, "WarningEnd3"))
 		timer.Remove(CarrierTimerName(self, "CarrierGetsHealed"))
 		timer.Remove(CarrierTimerName(self, "CarrierGetsResistance"))
+		timer.Remove(CarrierTimerName(self, "UpgradeGate"))
 		self:Drop(true)
 		self.State = 0
 		self:SetNWBool("TimerActive", false)
@@ -287,6 +461,7 @@ function ENT:Pickup(ply)
 		local warnEnd3Timer = CarrierTimerName(self, "WarningEnd3")
 		local healTimer = CarrierTimerName(self, "CarrierGetsHealed")
 		local resistTimer = CarrierTimerName(self, "CarrierGetsResistance")
+		local upgradeGateTimer = CarrierTimerName(self, "UpgradeGate")
 
 		timer.Remove(dropTimer)
 		timer.Remove(warn1Timer)
@@ -295,6 +470,7 @@ function ENT:Pickup(ply)
 		timer.Remove(warnEnd3Timer)
 		timer.Remove(healTimer)
 		timer.Remove(resistTimer)
+		timer.Remove(upgradeGateTimer)
 
 		if not self.HomePosition or not self.HomeAngles then
 			self.HomePosition = self:GetPos()
@@ -305,12 +481,13 @@ function ENT:Pickup(ply)
 		self:SetNWBool("TimerActive", false)
 		self.NextReturn = nil
 	
-		for _,capturezone in ipairs(ents.FindByClass("func_capturezone")) do
-			ply.botPos = capturezone.Pos
+		local cap = PickPreferredMvMCaptureZone(self:GetPos())
+		if IsValid(cap) then
+			ply.botPos = cap.Pos or GetEntGoalPos(cap, cap:GetPos())
 		end
 		self.State = 1
 		self.Carrier = ply
-		self:StartBombUpgradeState()
+		self:ResetBombUpgradeState()
 		self.Prop:ResetSequence(self.Prop:LookupSequence("idle"))
 		self.Prop:SetPlaybackRate(1)
 		self.Prop:SetCycle(1)
@@ -366,72 +543,16 @@ function ENT:Pickup(ply)
 				timer.Remove(dropTimer)
 			end
 		end)
-		timer.Create(warn1Timer, 10, 1, function()
-			if not IsValid(self) or not IsValid(ply) or self.Carrier ~= ply then return end
-			self:SetBombUpgradeLevel(1)
-			ParticleEffectAttach( "mvm_levelup1", PATTACH_POINT_FOLLOW, ply, ply:LookupAttachment("head") )
-			ply:EmitSound("mvm/mvm_warning.wav", 0, 100)
-			if (!ply:IsMiniBoss()) then
-				ply:TFTaunt(tostring(ply:GetActiveWeapon():GetSlot() + 1))
+		timer.Create(upgradeGateTimer, 0.1, 0, function()
+			if not IsValid(self) or not IsValid(ply) or self.Carrier ~= ply then
+				timer.Remove(upgradeGateTimer)
+				return
 			end
-			timer.Create(healTimer, 5.0, 0, function()
-				--ply:SetArmor( 50 )
-			end)
-		
-		end)
-		
-		timer.Create(warn2Timer, 45, 1, function()
-			if not IsValid(self) or not IsValid(ply) or self.Carrier ~= ply then return end
-			self:SetBombUpgradeLevel(2)
-			ParticleEffectAttach( "mvm_levelup2", PATTACH_POINT_FOLLOW, ply, ply:LookupAttachment("head") )
-			ply:EmitSound("mvm/mvm_warning.wav", 0, 100)
-			if (!ply:IsMiniBoss()) then
-				ply:TFTaunt(tostring(ply:GetActiveWeapon():GetSlot() + 1))
+			if IsCarrierInsideRespawnRoom(ply) then
+				return
 			end
-			timer.Create(resistTimer, 2, 0, function()
-				if not IsValid(self) or not IsValid(self.Carrier) then return end
-				GAMEMODE:HealPlayer(self.Carrier, self.Carrier, 5, true, false) 
-			end)
-			for k,v in pairs(player.GetAll()) do
-				if not v:IsFriendly(ply) then
-					if v:GetPlayerClass() == "heavy" then
-						v:EmitSound("vo/heavy_mvm_bomb_upgrade0"..math.random(1,2)..".wav", 80, 100, 1, CHAN_VOICE)
-					elseif v:GetPlayerClass() == "soldier" then
-						v:EmitSound("vo/soldier_mvm_bomb_upgrade0"..math.random(1,3)..".wav", 80, 100, 1, CHAN_VOICE)
-					elseif v:GetPlayerClass() == "medic" then 
-						v:EmitSound("vo/medic_mvm_bomb_upgrade0"..math.random(1,3)..".wav", 80, 100, 1, CHAN_VOICE)
-					elseif v:GetPlayerClass() == "engineer" then
-						v:EmitSound("vo/engineer_mvm_bomb_upgrade0"..math.random(1,3)..".wav", 80, 100, 1, CHAN_VOICE)
-					end
-				end
-			end
-		end)
-		timer.Create(warn3Timer, 65, 1, function()
-			if not IsValid(self) or not IsValid(ply) or self.Carrier ~= ply then return end
-			self:SetBombUpgradeLevel(3)
-			ParticleEffectAttach( "mvm_levelup3", PATTACH_POINT_FOLLOW, ply, ply:LookupAttachment("head") )
-			ply:EmitSound("mvm/mvm_warning.wav", 0, 100)
-			if (!ply:IsMiniBoss()) then
-				ply:TFTaunt(tostring(ply:GetActiveWeapon():GetSlot() + 1))
-			end
-			for _,pl in pairs(player.GetAll()) do
-				if not pl:IsFriendly(ply) then
-					if pl:GetPlayerClass() == "heavy" then
-						pl:EmitSound("vo/heavy_mvm_bomb_upgrade0"..math.random(1,2)..".wav", 80, 100, 1, CHAN_VOICE)
-					elseif pl:GetPlayerClass() == "soldier" then
-						pl:EmitSound("vo/soldier_mvm_bomb_upgrade0"..math.random(1,3)..".wav", 80, 100, 1, CHAN_VOICE)
-					elseif pl:GetPlayerClass() == "medic" then
-						pl:EmitSound("vo/medic_mvm_bomb_upgrade0"..math.random(1,3)..".wav", 80, 100, 1, CHAN_VOICE)
-					elseif pl:GetPlayerClass() == "engineer" then
-						pl:EmitSound("vo/engineer_mvm_bomb_upgrade0"..math.random(1,3)..".wav", 80, 100, 1, CHAN_VOICE)
-					end
-				end
-			end
-		end)
-		timer.Create(warnEnd3Timer, 65 + ply:SequenceDuration(ply:LookupSequence("taunt01")), 1, function() 
-			if not IsValid(ply) then return end
-			ply:ConCommand("tf_firstperson")
-			ply:Freeze(false)
+			timer.Remove(upgradeGateTimer)
+			self:BeginBombCarrierUpgradeTimers(ply, warn1Timer, warn2Timer, warn3Timer, warnEnd3Timer, healTimer, resistTimer)
 		end)
 	end
 end
@@ -445,6 +566,7 @@ function ENT:Drop(nosound)
 		timer.Remove(CarrierTimerName(self, "WarningEnd3"))
 		timer.Remove(CarrierTimerName(self, "CarrierGetsHealed"))
 		timer.Remove(CarrierTimerName(self, "CarrierGetsResistance"))
+		timer.Remove(CarrierTimerName(self, "UpgradeGate"))
 		self:SetNWBool("TimerActive", true)
 		self:SetNWFloat("TimeRemaining", FlagReturnTime)
 		self.NextReturn = CurTime() + FlagReturnTime

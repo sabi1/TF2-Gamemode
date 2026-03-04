@@ -27,7 +27,7 @@ function cond.ModifyDamage(ply, dmg)
     if ply:InCond(cond.Type) then
         -- reduce appropriate damage type
         local d = dmg:GetDamageType()
-        if cond.Type == ETFCond.TF_COND_MEDIGUN_UBER_BULLET_RESIST and d & DMG_BULLET ~= 0 then
+        if cond.Type == ETFCond.TF_COND_MEDIGUN_UBER_BULLET_RESIST and bit.band(d, DMG_BULLET) ~= 0 then
             dmg:ScaleDamage(0.2)
         end
     end

@@ -86,9 +86,11 @@ if SERVER then
 					end
 				end
 			end
-			umsg.Start("TF_PlayGlobalSound")
-				umsg.String("Announcer.MVM_Sentry_Buster_Alert")
-			umsg.End()
+			if not self.TF_MVMManaged then
+				umsg.Start("TF_PlayGlobalSound")
+					umsg.String("Announcer.MVM_Sentry_Buster_Alert")
+				umsg.End()
+			end
 			self:StopSound("MVM.SentryBusterIntro")
 			self:StopSound("MVM.SentryBusterLoop")
 			self:EmitSound("MVM.SentryBusterIntro")
@@ -108,8 +110,17 @@ if SERVER then
 			timer.Create(explodeNearTimer, 0.1, 0, function()
 				if self:GetPlayerClass() != "sentrybuster"	then timer.Remove(explodeNearTimer) return end
 				if self:GetPlayerClass() != "sentrybuster"	then return end
+				local targetSentry = nil
+				if IsValid(self.TF_MVM_SentryTarget) then
+					targetSentry = self.TF_MVM_SentryTarget
+				else
+					local netTarget = self:GetNWEntity("TF_MVM_SentryTarget")
+					if IsValid(netTarget) then
+						targetSentry = netTarget
+					end
+				end
 				for _,building in pairs(ents.FindInSphere(self:GetPos(), 44)) do
-					if (building:GetClass() == "obj_sentrygun" or building:GetClass() == "obj_dispenser" or building:GetClass() == "obj_teleporter") and not building:IsFriendly(self) then	
+					if (building:GetClass() == "obj_sentrygun") and not building:IsFriendly(self) and ((not IsValid(targetSentry)) or building == targetSentry) then	
 					self:SetNoDraw(true)
 					self:EmitSound("MVM.SentryBusterSpin")
 					self:SetNWBool("Taunting", true)

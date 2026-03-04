@@ -2239,7 +2239,7 @@ end
 hook.Add("Move", "TFCondMoveAdjust", function(pl, move)
 	if not IsValid(pl) or not pl.InCond then return end
 
-	if pl:InCond(TF_COND_FREEZE_INPUT) or pl:InCond(TF_COND_TAUNTING) then
+	if pl:InCond(TF_COND_FREEZE_INPUT) or (pl:InCond(TF_COND_TAUNTING) and not pl:GetNWBool("TauntingMoped", false)) then
 		move:SetForwardSpeed(0)
 		move:SetSideSpeed(0)
 		move:SetUpSpeed(0)
@@ -2259,12 +2259,49 @@ if SERVER then
 	hook.Add("StartCommand", "TFCondCommandAdjust", function(pl, cmd)
 		if not IsValid(pl) or not pl.InCond then return end
 
-		if pl:InCond(TF_COND_FREEZE_INPUT) or pl:InCond(TF_COND_TAUNTING) then
+		if pl:GetNWBool("TauntingMoped", false) then
+			local steer = 0
+			if cmd:KeyDown(IN_MOVERIGHT) then
+				steer = 1
+			elseif cmd:KeyDown(IN_MOVELEFT) then
+				steer = -1
+			end
+			pl.__MopedTurnInput = steer
+
+			local jumpDown = cmd:KeyDown(IN_JUMP)
+			local jumpPressed = jumpDown and not pl.__MopedJumpWasDown
+			pl.__MopedJumpWasDown = jumpDown
+			if jumpPressed then
+				if TF_EndMopedTaunt then
+					TF_EndMopedTaunt(pl)
+				else
+					pl:ConCommand("tf_taunt_moped_stop")
+				end
+			end
+
+			local attackDown = cmd:KeyDown(IN_ATTACK)
+			local attackPressed = attackDown and not pl.__MopedAttackWasDown
+			pl.__MopedAttackWasDown = attackDown
+			if attackPressed and TF_MopedWheelie then
+				TF_MopedWheelie(pl)
+			end
+
+			cmd:RemoveKey(IN_JUMP)
+			cmd:RemoveKey(IN_ATTACK)
+			cmd:RemoveKey(IN_ATTACK2)
+			cmd:RemoveKey(IN_RELOAD)
+		else
+			pl.__MopedJumpWasDown = false
+			pl.__MopedAttackWasDown = false
+			pl.__MopedTurnInput = 0
+		end
+
+		if pl:InCond(TF_COND_FREEZE_INPUT) or (pl:InCond(TF_COND_TAUNTING) and not pl:GetNWBool("TauntingMoped", false)) then
 			cmd:ClearMovement()
 			cmd:RemoveKey(IN_ATTACK)
 			cmd:RemoveKey(IN_ATTACK2)
 			cmd:RemoveKey(IN_RELOAD)
-		elseif pl:GetNWBool("NoWeapon", false) then
+		elseif pl:GetNWBool("NoWeapon", false) and not pl:GetNWBool("TauntingMoped", false) then
 			cmd:RemoveKey(IN_ATTACK)
 			cmd:RemoveKey(IN_ATTACK2)
 			cmd:RemoveKey(IN_RELOAD)

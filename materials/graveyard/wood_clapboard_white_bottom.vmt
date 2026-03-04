@@ -1,0 +1,12 @@
+"LightmappedGeneric"
+{
+	"$basetexture"	"Graveyard/Wood_Clapboard_White_Bottom"
+	"$bumpmap"	"Graveyard/Wood_Clapboard_ssbump"
+	"$ssbump"	"1"
+	"$surfaceprop"	"wood"
+	"%keywords"	"tf"
+	"$detail"		"overlays/detail001"
+	"$detailscale"	"1.9"
+	"$detailblendmode"		"0"
+	"$detailblendfactor"		".5"
+}

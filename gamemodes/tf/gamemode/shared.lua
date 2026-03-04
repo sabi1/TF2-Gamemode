@@ -94,6 +94,48 @@ if CLIENT then
 end  
 
 do
+	local mvmEntityClasses = {
+		"item_teamflag_mvm",
+		"func_upgradestation",
+		"tf_logic_mann_vs_machine",
+		"info_populator",
+		"point_populator_interface",
+	}
+
+	local mvmDetectCache = {
+		nextProbeAt = 0,
+		lastEntityResult = false,
+	}
+
+	function TF_IsMvMMap(forceRefresh)
+		local map = string.lower(game.GetMap() or "")
+		if string.StartWith(map, "mvm_") then
+			return true
+		end
+
+		local now = CurTime and CurTime() or 0
+		if not forceRefresh and mvmDetectCache.nextProbeAt > now then
+			return mvmDetectCache.lastEntityResult
+		end
+		mvmDetectCache.nextProbeAt = now + 2
+
+		local found = false
+		if ents and ents.FindByClass then
+			for _, className in ipairs(mvmEntityClasses) do
+				local list = ents.FindByClass(className)
+				if istable(list) and #list > 0 then
+					found = true
+					break
+				end
+			end
+		end
+
+		mvmDetectCache.lastEntityResult = found
+		return found
+	end
+end
+
+do
 	local PLAYER = FindMetaTable("Player")
 	if PLAYER and PLAYER.Nick and not PLAYER._TFBotDisplayNamePatched then
 		local rawNick = PLAYER.Nick

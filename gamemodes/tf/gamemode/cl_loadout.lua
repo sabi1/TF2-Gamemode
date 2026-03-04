@@ -13,6 +13,16 @@ CreateConVar("loadout_sniper", "-1,-1,-1,-1,-1,-1,-1", {FCVAR_ARCHIVE,FCVAR_USER
 CreateConVar("loadout_medic", "-1,-1,-1,-1,-1,-1,-1", {FCVAR_ARCHIVE,FCVAR_USERINFO}, "")
 CreateConVar("loadout_spy", "-1,-1,-1,-1,-1,-1,-1", {FCVAR_ARCHIVE,FCVAR_USERINFO}, "")
 
+CreateConVar("loadout_taunts_scout", "-1,-1,-1,-1,-1,-1,-1,-1", {FCVAR_ARCHIVE,FCVAR_USERINFO}, "")
+CreateConVar("loadout_taunts_soldier", "-1,-1,-1,-1,-1,-1,-1,-1", {FCVAR_ARCHIVE,FCVAR_USERINFO}, "")
+CreateConVar("loadout_taunts_pyro", "-1,-1,-1,-1,-1,-1,-1,-1", {FCVAR_ARCHIVE,FCVAR_USERINFO}, "")
+CreateConVar("loadout_taunts_demoman", "-1,-1,-1,-1,-1,-1,-1,-1", {FCVAR_ARCHIVE,FCVAR_USERINFO}, "")
+CreateConVar("loadout_taunts_heavy", "-1,-1,-1,-1,-1,-1,-1,-1", {FCVAR_ARCHIVE,FCVAR_USERINFO}, "")
+CreateConVar("loadout_taunts_engineer", "-1,-1,-1,-1,-1,-1,-1,-1", {FCVAR_ARCHIVE,FCVAR_USERINFO}, "")
+CreateConVar("loadout_taunts_sniper", "-1,-1,-1,-1,-1,-1,-1,-1", {FCVAR_ARCHIVE,FCVAR_USERINFO}, "")
+CreateConVar("loadout_taunts_medic", "-1,-1,-1,-1,-1,-1,-1,-1", {FCVAR_ARCHIVE,FCVAR_USERINFO}, "")
+CreateConVar("loadout_taunts_spy", "-1,-1,-1,-1,-1,-1,-1,-1", {FCVAR_ARCHIVE,FCVAR_USERINFO}, "")
+
 local nextLoadoutUpdate = 0
 local LOADOUT_SLOT_COUNT = 7
 

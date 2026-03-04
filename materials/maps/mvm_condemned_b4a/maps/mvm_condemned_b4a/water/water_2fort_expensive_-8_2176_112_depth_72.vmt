@@ -1,0 +1,8 @@
+"patch"
+{
+	"include"		"materials/maps/mvm_condemned_b4a/water/water_2fort_expensive_-8_2176_112.vmt"
+	"insert"
+	{
+		"$waterdepth"		"72"
+	}
+}

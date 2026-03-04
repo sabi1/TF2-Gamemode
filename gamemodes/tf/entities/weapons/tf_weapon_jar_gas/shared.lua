@@ -35,7 +35,7 @@ SWEP.HasCustomMeleeBehaviour = true
 SWEP.IsMeleeWeapon = false
 
 SWEP.HoldType = "ITEM2"
-SWEP.CustomHUD = {HudBowCharge = function(self) return self:Ammo1() < (self.MaxCarry or 1) end}
+SWEP.GlobalCustomHUD = {HudItemEffectMeter = function(self) return self:Ammo1() < (self.MaxCarry or 1) end}
 
 SWEP.ProjectileShootOffset = Vector(0, 0, 0)
 
@@ -208,22 +208,33 @@ function SWEP:ServerRechargeThink()
 end
 
 function SWEP:UpdateRechargeBar()
-	if not IsValid(self.Owner) or self.Owner ~= LocalPlayer() or not IsValid(HudBowCharge) then return end
-	if self.Owner:GetActiveWeapon() ~= self then return end
-	
-	if self:Ammo1() >= (self.MaxCarry or 1) then
-		return
+	-- Kept for compatibility with legacy callers; meter now uses HudItemEffectMeter.
+	return
+end
+
+function SWEP:GetHUDMeterName()
+	return "#TF_Gas"
+end
+
+function SWEP:GetHUDMeterResFile()
+	return "resource/ui/huditemeffectmeter_pyro.res"
+end
+
+function SWEP:GetHUDMeterValue()
+	local maxcarry = self.MaxCarry or 1
+	if self:Ammo1() >= maxcarry then
+		return 1
 	end
 
-	local progress = 0
 	local recharge_end = self:GetNWFloat("GasRechargeEnd", 0)
 	if recharge_end > 0 then
 		local recharge = self.RechargeTime or 20
+		if recharge <= 0 then return 0 end
 		local elapsed = recharge - math.max(0, recharge_end - CurTime())
-		progress = math.Clamp(elapsed / recharge, 0, 1)
+		return math.Clamp(elapsed / recharge, 0, 1)
 	end
-	
-	HudBowCharge:SetProgress(progress)
+
+	return 0
 end
 
 function SWEP:PredictCriticalHit()
@@ -343,8 +354,5 @@ if SERVER then
 end
 
 function SWEP:Holster()
-	if CLIENT and IsValid(HudBowCharge) then
-		HudBowCharge:SetProgress(0)
-	end
 	return self:CallBaseFunction("Holster")
 end

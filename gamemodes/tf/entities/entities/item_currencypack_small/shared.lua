@@ -23,7 +23,7 @@ if SERVER then
     end
 
     local function is_mvm_player(ply)
-        return IsValid(ply) and ply:IsPlayer() and ply:Team() == TEAM_RED and not ply.TFBot
+        return IsValid(ply) and ply:IsPlayer() and ply:Team() == TEAM_RED
     end
 
     function ENT:CanPickup(ply)

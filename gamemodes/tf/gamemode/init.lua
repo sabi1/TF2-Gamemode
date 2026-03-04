@@ -2,6 +2,7 @@ include("sv_clientfiles.lua")
 include("sv_resource.lua")
 include("sv_response_rules.lua")
 include("sv_ctf_bots.lua")
+include("bot_ai/init.lua")
 include("shared.lua")
 include("sv_gamelogic.lua")
 include("sv_hl2replace.lua")
@@ -12,6 +13,7 @@ include("sv_chat.lua")
 include("sv_loadout.lua")   
 include("sv_mvm.lua")   
 include("shd_taunts.lua") 
+include("sv_debug_bridge.lua")
 resource.AddWorkshop( "1932936017" )
 resource.AddWorkshop( "3323795558" )
 local LOGFILE = "tf/log_server.txt" 
@@ -238,7 +240,18 @@ concommand.Add("removecond", function(pl, cmd, args)
 	tfcc_print(pl, string.format("Removed condition %d from %s.", cond, target:Nick()))
 end)
 concommand.Add("taunt", function(pl)
-	GAMEMODE:PlayerStartTaunt(pl, ACT_DIESIMPLE, 1 )
+	if not IsValid(pl) then return end
+	if not pl.TFTaunt then return end
+
+	-- Route through shared taunt logic so +taunt, HUD taunt, and console taunt
+	-- all honor the same checks/weapon-specific behavior.
+	local slot = "1"
+	local w = pl:GetActiveWeapon()
+	if IsValid(w) and w.GetSlot then
+		slot = tostring((w:GetSlot() or 0) + 1)
+	end
+
+	pl:TFTaunt(slot)
 end)
 
 concommand.Add("select_slot", function(pl, cmd, args)
@@ -1520,6 +1533,9 @@ local function ShouldSuppressBlueBotAnnounce(ply, teamId)
 end
 
 local function IsMvMMap()
+	if TF_IsMvMMap then
+		return TF_IsMvMMap()
+	end
 	return string.find(string.lower(game.GetMap() or ""), "mvm_", 1, true) ~= nil
 end
 

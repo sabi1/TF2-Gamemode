@@ -230,6 +230,113 @@ local function BuildExternalRoots(root)
     return roots
 end
 
+local function ListAbsoluteDirectories(path)
+    local out = {}
+    if not io or not io.popen then
+        return out
+    end
+
+    local root = NormalizePath(path)
+    if root == "" then return out end
+
+    local cmd
+    if system and system.IsWindows and system.IsWindows() then
+        cmd = 'cmd /c dir /b /ad "' .. root .. '"'
+    else
+        cmd = 'find "' .. root .. '" -mindepth 1 -maxdepth 1 -type d -print'
+    end
+
+    local p = io.popen(cmd)
+    if not p then
+        return out
+    end
+
+    for line in p:lines() do
+        local normalized = NormalizePath(line)
+        if normalized ~= "" then
+            if not string.find(normalized, "/", 1, true) then
+                normalized = JoinPath(root, normalized)
+            end
+            out[#out + 1] = normalized
+        end
+    end
+    p:close()
+
+    return out
+end
+
+local function AddWorkshopCandidates(candidates, seen, searched, workshopRoot, nameVariants)
+    workshopRoot = NormalizePath(workshopRoot)
+    if workshopRoot == "" then return end
+
+    if not io or not io.open then
+        table.insert(searched, "ABS:" .. workshopRoot .. " (unavailable: io.open disabled)")
+        return
+    end
+
+    local workshopItems = ListAbsoluteDirectories(workshopRoot)
+    if #workshopItems <= 0 then
+        table.insert(searched, "ABS:" .. JoinPath(workshopRoot, "*") .. " (no item directories found)")
+        return
+    end
+
+    for _, itemRoot in ipairs(workshopItems) do
+        local folders = {
+            itemRoot,
+            JoinPath(itemRoot, "scripts/population"),
+            JoinPath(itemRoot, "tf/scripts/population"),
+        }
+
+        for _, folder in ipairs(folders) do
+            for _, name in ipairs(nameVariants) do
+                AddCandidate(candidates, seen, searched, JoinPath(folder, name .. ".pop"), "ABS", "workshop_exact", 7)
+            end
+
+            for _, name in ipairs(nameVariants) do
+                AddWildcardCandidates(candidates, seen, searched, folder, name .. "_*.pop", "ABS", "workshop_wildcard", 8)
+            end
+        end
+    end
+end
+
+local function AddFolderMissionCandidates(candidates, seen, searched, folder, nameVariants, exactReason, wildcardReason, exactPriority, wildcardPriority)
+    folder = NormalizePath(folder)
+    if folder == "" then return end
+
+    for _, name in ipairs(nameVariants) do
+        AddCandidate(candidates, seen, searched, JoinPath(folder, name .. ".pop"), "ABS", exactReason, exactPriority)
+    end
+
+    for _, name in ipairs(nameVariants) do
+        AddWildcardCandidates(candidates, seen, searched, folder, name .. "_*.pop", "ABS", wildcardReason, wildcardPriority)
+    end
+end
+
+local function AddCustomCandidates(candidates, seen, searched, customRoot, nameVariants)
+    customRoot = NormalizePath(customRoot)
+    if customRoot == "" then return end
+
+    if not io or not io.open then
+        table.insert(searched, "ABS:" .. customRoot .. " (unavailable: io.open disabled)")
+        return
+    end
+
+    -- Allow the cvar to point directly at a scripts/population folder.
+    AddFolderMissionCandidates(candidates, seen, searched, customRoot, nameVariants, "custom_exact", "custom_wildcard", 7, 8)
+
+    local packs = ListAbsoluteDirectories(customRoot)
+    if #packs <= 0 then
+        table.insert(searched, "ABS:" .. JoinPath(customRoot, "*") .. " (no custom pack directories found)")
+        return
+    end
+
+    for _, packRoot in ipairs(packs) do
+        AddFolderMissionCandidates(candidates, seen, searched, packRoot, nameVariants, "custom_pack_exact", "custom_pack_wildcard", 7, 8)
+        AddFolderMissionCandidates(candidates, seen, searched, JoinPath(packRoot, "scripts/population"), nameVariants, "custom_scripts_exact", "custom_scripts_wildcard", 7, 8)
+        AddFolderMissionCandidates(candidates, seen, searched, JoinPath(packRoot, "tf/scripts/population"), nameVariants, "custom_tf_scripts_exact", "custom_tf_scripts_wildcard", 7, 8)
+    end
+end
+
 function LOOKUP:ReadMission(path, scope)
     return ReadFile(path, scope)
 end
@@ -253,6 +360,18 @@ function LOOKUP:FindMission(opts)
     local extCvar = GetConVar("tf_mvm_external_pop_root")
     if extCvar then
         externalRoot = NormalizePath(extCvar:GetString() or "")
+    end
+
+    local customRoot = ""
+    local customCvar = GetConVar("tf_mvm_custom_pop_root")
+    if customCvar then
+        customRoot = NormalizePath(customCvar:GetString() or "")
+    end
+
+    local workshopRoot = ""
+    local workshopCvar = GetConVar("tf_mvm_workshop_pop_root")
+    if workshopCvar then
+        workshopRoot = NormalizePath(workshopCvar:GetString() or "")
     end
 
     local candidates = {}
@@ -306,6 +425,14 @@ function LOOKUP:FindMission(opts)
                 end
             end
         end
+    end
+
+    if customRoot ~= "" then
+        AddCustomCandidates(candidates, seen, searched, customRoot, nameVariants)
+    end
+
+    if workshopRoot ~= "" then
+        AddWorkshopCandidates(candidates, seen, searched, workshopRoot, nameVariants)
     end
 
     table.sort(candidates, CandidateSort)

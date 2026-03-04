@@ -3790,17 +3790,28 @@ local function MergeSteamInventory(ply)
 					sniper = {201, 203, 193, -1, -1, -1, -1},
 					spy = {210, 736, 194, -1, -1, -1, -1},
 				}
+				local tauntLoadouts = {
+					scout = {-1, -1, -1, -1, -1, -1, -1, -1},
+					soldier = {-1, -1, -1, -1, -1, -1, -1, -1},
+					pyro = {-1, -1, -1, -1, -1, -1, -1, -1},
+					demoman = {-1, -1, -1, -1, -1, -1, -1, -1},
+					heavy = {-1, -1, -1, -1, -1, -1, -1, -1},
+					engineer = {-1, -1, -1, -1, -1, -1, -1, -1},
+					medic = {-1, -1, -1, -1, -1, -1, -1, -1},
+					sniper = {-1, -1, -1, -1, -1, -1, -1, -1},
+					spy = {-1, -1, -1, -1, -1, -1, -1, -1},
+				}
 
 				local classSlots = {
-					[1] = {name = "scout", slots = {[0] = 1, [1] = 2, [2] = 3, [7] = 4, [8] = 5, [10] = 6, [11] = 7, [12] = 7}},
-					[2] = {name = "sniper", slots = {[0] = 1, [1] = 2, [2] = 3, [7] = 4, [8] = 5, [10] = 6, [11] = 7, [12] = 7}},
-					[3] = {name = "soldier", slots = {[0] = 1, [1] = 2, [2] = 3, [7] = 4, [8] = 5, [10] = 6, [11] = 7, [12] = 7}, swapPrimary = true},
-					[4] = {name = "demoman", slots = {[0] = 1, [1] = 2, [2] = 3, [7] = 4, [8] = 5, [10] = 6, [11] = 7, [12] = 7}},
-					[5] = {name = "medic", slots = {[0] = 1, [1] = 2, [2] = 3, [7] = 4, [8] = 5, [10] = 6, [11] = 7, [12] = 7}},
-					[6] = {name = "heavy", slots = {[0] = 1, [1] = 2, [2] = 3, [7] = 4, [8] = 5, [10] = 6, [11] = 7, [12] = 7}, swapPrimary = true},
-					[7] = {name = "pyro", slots = {[0] = 1, [1] = 2, [2] = 3, [7] = 4, [8] = 5, [10] = 6, [11] = 7, [12] = 7}, swapPrimary = true},
-					[8] = {name = "spy", slots = {[1] = 1, [4] = 2, [2] = 3, [7] = 4, [8] = 5, [10] = 6, [11] = 7, [12] = 7}},
-					[9] = {name = "engineer", slots = {[0] = 1, [1] = 2, [2] = 3, [7] = 4, [8] = 5, [10] = 6, [11] = 7, [12] = 7}},
+					[1] = {name = "scout", slots = {[0] = 1, [1] = 2, [2] = 3, [7] = 4, [8] = 5, [9] = 7, [10] = 6}},
+					[2] = {name = "sniper", slots = {[0] = 1, [1] = 2, [2] = 3, [7] = 4, [8] = 5, [9] = 7, [10] = 6}},
+					[3] = {name = "soldier", slots = {[0] = 1, [1] = 2, [2] = 3, [7] = 4, [8] = 5, [9] = 7, [10] = 6}, swapPrimary = true},
+					[4] = {name = "demoman", slots = {[0] = 1, [1] = 2, [2] = 3, [7] = 4, [8] = 5, [9] = 7, [10] = 6}},
+					[5] = {name = "medic", slots = {[0] = 1, [1] = 2, [2] = 3, [7] = 4, [8] = 5, [9] = 7, [10] = 6}},
+					[6] = {name = "heavy", slots = {[0] = 1, [1] = 2, [2] = 3, [7] = 4, [8] = 5, [9] = 7, [10] = 6}, swapPrimary = true},
+					[7] = {name = "pyro", slots = {[0] = 1, [1] = 2, [2] = 3, [7] = 4, [8] = 5, [9] = 7, [10] = 6}, swapPrimary = true},
+					[8] = {name = "spy", slots = {[1] = 1, [4] = 2, [2] = 3, [7] = 4, [8] = 5, [9] = 7, [10] = 6}},
+					[9] = {name = "engineer", slots = {[0] = 1, [1] = 2, [2] = 3, [7] = 4, [8] = 5, [9] = 7, [10] = 6}},
 				}
 
 				local slotZeroSecondaryDefs = {
@@ -3821,13 +3832,36 @@ local function MergeSteamInventory(ply)
 								PrintTable(equippedData)
 								local classData = classSlots[equippedData["class"]]
 								if classData then
-									local slot = equippedData["slot"]
-									local targetIndex = classData.slots[slot]
-									if targetIndex and classData.swapPrimary and slot == 0 and slotZeroSecondaryDefs[v.defindex] then
-										targetIndex = 2
+									local className = classData.name
+									local slot = tonumber(equippedData["slot"])
+									local defindex = tonumber(v.defindex)
+									local itemDef = (tf_items and tf_items.ItemsByID and defindex and tf_items.ItemsByID[defindex]) or nil
+									local itemSlotName = isstring(itemDef and itemDef.item_slot) and string.lower(itemDef.item_slot) or nil
+
+									local tauntIndex = nil
+									if slot and slot >= 11 and slot <= 18 then
+										tauntIndex = slot - 10
+									elseif itemSlotName == "taunt" and slot and slot >= 11 and slot <= 18 then
+										tauntIndex = slot - 10
 									end
-									if targetIndex then
-										loadouts[classData.name][targetIndex] = v.defindex
+									if tauntIndex and tauntIndex >= 1 and tauntIndex <= 8 then
+										tauntLoadouts[className][tauntIndex] = defindex
+									else
+										local targetIndex = classData.slots[slot]
+										if targetIndex and classData.swapPrimary and slot == 0 and slotZeroSecondaryDefs[defindex] then
+											targetIndex = 2
+										end
+										if not targetIndex and (itemSlotName == "head" or itemSlotName == "misc") then
+											for cosmeticIndex = 4, 6 do
+												if loadouts[className][cosmeticIndex] == -1 then
+													targetIndex = cosmeticIndex
+													break
+												end
+											end
+										end
+										if targetIndex then
+											loadouts[className][targetIndex] = defindex
+										end
 									end
 								end
 							end
@@ -3858,6 +3892,15 @@ local function MergeSteamInventory(ply)
 									split[i] = source[mapping[i]] or -1
 								end
 								convar:SetString(table.concat(split, ","))
+							end
+							local tauntConvar = GetConVar("loadout_taunts_" .. className)
+							if tauntConvar then
+								local tauntSplit = {-1, -1, -1, -1, -1, -1, -1, -1}
+								local tauntSource = tauntLoadouts[className] or tauntSplit
+								for i = 1, 8 do
+									tauntSplit[i] = tauntSource[i] or -1
+								end
+								tauntConvar:SetString(table.concat(tauntSplit, ","))
 							end
 						end
 

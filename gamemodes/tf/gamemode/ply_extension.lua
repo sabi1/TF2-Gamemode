@@ -149,6 +149,338 @@ end
 function meta:IsNeutral()
 	return self:Team() == TEAM_NEUTRAL and !self:IsBot()
 end
+
+local tauntItemCommandRules = {
+	{tokens = {"schadenfreude", "laugh"}, cmd = "tf_taunt_laugh"},
+	{tokens = {"conga"}, cmd = "tf_taunt_conga_start"},
+	{tokens = {"kazotsky", "russian dance", "russian rubdown"}, cmd = "tf_taunt_russian_start"},
+	{tokens = {"square dance", "dosido"}, cmd = "tf_taunt_squaredance_intro"},
+	{tokens = {"rock, paper, scissors", "rps"}, cmd = "tf_taunt_rockpaperscissors_intro"},
+	{tokens = {"flippin", "flip taunt"}, cmd = "tf_taunt_flipping_intro"},
+	{tokens = {"skullcracker"}, cmd = "tf_taunt_skullcracker"},
+	{tokens = {"high five"}, cmd = "tf_taunt_highfive_success"},
+	{tokens = {"director's vision", "director vision"}, cmd = "tf_taunt_directors_vision"},
+	{tokens = {"party trick"}, cmd = "tf_taunt_pyro_partytrick"},
+	{tokens = {"meet the medic", "heroic pose"}, cmd = "tf_taunt_heroric"},
+	{tokens = {"luxury lounge"}, cmd = "tf_taunt_chair"},
+	{tokens = {"rancho relaxo"}, cmd = "tf_taunt_chair2"},
+	{tokens = {"yeti"}, cmd = "tf_taunt_yeti"},
+	{tokens = {"brutal legend", "killer solo"}, cmd = "tf_taunt_brutallegend"},
+	{tokens = {"thriller"}, cmd = "tf_taunt_thriller"},
+	{tokens = {"introduction"}, cmd = "tf_taunt_introduction"},
+	{tokens = {"gimme 20"}, cmd = "tf_taunt_gimme20"},
+	{tokens = {"slit throat"}, cmd = "tf_taunt_slit_throat"},
+	{tokens = {"come and get me"}, cmd = "tf_taunt_come_and_get_me"},
+	{tokens = {"oblooterated", "woohoo"}, cmd = "tf_taunt_woohoo"},
+	{tokens = {"banjo"}, cmd = "tf_taunt_banjo_start"},
+}
+
+-- TF2 SDK taunt flow resolves from equipped taunt-item data first. We don't have
+-- the full scene system in Lua, so map item tokens to the closest implemented command.
+local function tokenCmd(token)
+	return "tf_taunt_token " .. token
+end
+
+local tauntCommandByToken = {
+	["schadenfreude"] = "tf_taunt_laugh",
+	["conga"] = "tf_taunt_conga_start",
+	["russian_arms_race"] = tokenCmd("russian_arms_race"),
+	["russian_rubdown"] = tokenCmd("russian_rubdown"),
+	["tuefort_tango"] = tokenCmd("tuefort_tango"),
+	["rockpaperscissors"] = "tf_taunt_rockpaperscissors_intro",
+	["skullcracker"] = "tf_taunt_skullcracker",
+	["highfive"] = "tf_taunt_highfive",
+	["the_fist_bump"] = tokenCmd("the_fist_bump"),
+	["director_s_vision"] = "tf_taunt_directors_vision",
+	["party_trick"] = "tf_taunt_pyro_partytrick",
+	["luxury_lounge"] = tokenCmd("luxury_lounge"),
+	["rancho_relaxo"] = tokenCmd("rancho_relaxo"),
+	["time_out_therapy"] = tokenCmd("time_out_therapy"),
+	["tailored_terminal"] = tokenCmd("tailored_terminal"),
+	["yeti"] = "tf_taunt_yeti",
+	["the_scaredycat"] = tokenCmd("the_scaredycat"),
+	["brutal_legend"] = "tf_taunt_brutallegend",
+	["killer_solo"] = tokenCmd("killer_solo"),
+	["dueling_banjo"] = tokenCmd("dueling_banjo"),
+	["surgeons_squeezebox"] = tokenCmd("surgeons_squeezebox"),
+	["fubar_fanfare"] = tokenCmd("fubar_fanfare"),
+	["didgeridrongo"] = tokenCmd("didgeridrongo"),
+	["thriller"] = "tf_taunt_thriller",
+	["introduction"] = "tf_taunt_introduction",
+	["gimme20"] = "tf_taunt_gimme20",
+	["slit_throat"] = "tf_taunt_slit_throat",
+	["come_and_get_me"] = "tf_taunt_come_and_get_me",
+	["oblooterated"] = "tf_taunt_woohoo",
+	["disco_fever"] = "tf_taunt_disco",
+	["runners_rhythm"] = tokenCmd("runners_rhythm"),
+	["the_boston_breakdance"] = tokenCmd("the_boston_breakdance"),
+	["the_carlton"] = tokenCmd("the_carlton"),
+	["spy_boxtrot"] = tokenCmd("spy_boxtrot"),
+	["neck_snap"] = tokenCmd("neck_snap"),
+	["foul_play"] = tokenCmd("foul_play"),
+	["unleashed_rage"] = tokenCmd("unleashed_rage"),
+	["the_headcase"] = tokenCmd("the_headcase"),
+	["the_homerunners_hobby"] = tokenCmd("the_homerunners_hobby"),
+	["the_trackmans_touchdown"] = tokenCmd("the_trackmans_touchdown"),
+	["roar_owar"] = tokenCmd("roar_owar"),
+	["scotsmans_stagger"] = tokenCmd("scotsmans_stagger"),
+	["drunk_manns_cannon"] = tokenCmd("drunk_manns_cannon"),
+	["the_pooped_deck"] = tokenCmd("the_pooped_deck"),
+	["roasty_toasty"] = tokenCmd("roasty_toasty"),
+	["scorchers_solo"] = tokenCmd("scorchers_solo"),
+	["cremators_condolences"] = tokenCmd("cremators_condolences"),
+	["head_doctor"] = tokenCmd("head_doctor"),
+	["borrowed_bones"] = tokenCmd("borrowed_bones"),
+	["the_mannbulance"] = tokenCmd("the_mannbulance"),
+	["soviet_strongarm"] = tokenCmd("soviet_strongarm"),
+	["bare_knuckle_beatdown"] = tokenCmd("bare_knuckle_beatdown"),
+	["road_rager"] = tokenCmd("road_rager"),
+	["the_hot_wheeler"] = tokenCmd("the_hot_wheeler"),
+	["starspangled_strategy"] = tokenCmd("starspangled_strategy"),
+	["straight_shooter_tutor"] = tokenCmd("straight_shooter_tutor"),
+	["most_wanted"] = tokenCmd("most_wanted"),
+	["the_crypt_creeper"] = tokenCmd("the_crypt_creeper"),
+	["the_profane_puppeteer"] = tokenCmd("the_profane_puppeteer"),
+	["mourning_mercs"] = tokenCmd("mourning_mercs"),
+	["maggots_condolence"] = tokenCmd("maggots_condolence"),
+	["shanty_shipmate"] = tokenCmd("shanty_shipmate"),
+	["shipwheel"] = tokenCmd("shipwheel"),
+	["the_travel_agent"] = tokenCmd("the_travel_agent"),
+	["the_boston_boarder"] = tokenCmd("the_boston_boarder"),
+	["rocket_jockey"] = tokenCmd("rocket_jockey"),
+	["tank"] = tokenCmd("tank"),
+	["moped"] = "tf_taunt_moped",
+	["the_scooty_scoot"] = "tf_taunt_moped",
+	["chairholder"] = tokenCmd("chairholder"),
+	["healthcarehog"] = tokenCmd("healthcarehog"),
+	["balloonibouncer"] = tokenCmd("balloonibouncer"),
+	["texas_truckin"] = tokenCmd("texas_truckin"),
+	["the_skating_scorcher"] = tokenCmd("the_skating_scorcher"),
+	["jumping_jack"] = tokenCmd("jumping_jack"),
+	["ring_king"] = tokenCmd("ring_king"),
+	["peace"] = tokenCmd("peace"),
+	["peace_out"] = tokenCmd("peace_out"),
+	["cheers"] = tokenCmd("cheers"),
+	["commending_clap"] = tokenCmd("commending_clap"),
+	["killer_joke"] = tokenCmd("killer_joke"),
+	["the_punchline"] = tokenCmd("the_punchline"),
+	["the_critical_fail"] = tokenCmd("the_critical_fail"),
+	["crushing_defeat"] = tokenCmd("crushing_defeat"),
+	["curtain_call"] = tokenCmd("curtain_call"),
+	["killer_signature"] = tokenCmd("killer_signature"),
+	["texan_trickshot"] = tokenCmd("texan_trickshot"),
+	["texas_twirl_em"] = tokenCmd("texas_twirl_em"),
+	["spintowin"] = tokenCmd("spintowin"),
+	["the_final_score"] = tokenCmd("the_final_score"),
+	["flying_colors"] = tokenCmd("flying_colors"),
+	["the_bunnyhopper"] = tokenCmd("the_bunnyhopper"),
+	["bear_hug"] = tokenCmd("bear_hug"),
+	["proletariat_showoff"] = tokenCmd("proletariat_showoff"),
+	["heartbreaker"] = tokenCmd("heartbreaker"),
+	["dead_manns_drink"] = tokenCmd("dead_manns_drink"),
+	["forehead_slice"] = tokenCmd("forehead_slice"),
+}
+
+local function normalizeTauntToken(raw)
+	local token = string.lower(tostring(raw or ""))
+	if token == "" then return nil end
+	token = string.gsub(token, "^#", "")
+	token = string.gsub(token, "^tf_", "")
+	token = string.gsub(token, "^taunt_", "")
+	token = string.gsub(token, "_desc$", "")
+	token = string.gsub(token, "_adtext$", "")
+	token = string.gsub(token, "_style%d+$", "")
+	token = string.gsub(token, "[^a-z0-9_]+", "_")
+	token = string.gsub(token, "_+", "_")
+	token = string.gsub(token, "^_+", "")
+	token = string.gsub(token, "_+$", "")
+	if token == "" then return nil end
+	return token
+end
+
+local function commandFromItemToken(item)
+	if not istable(item) then return nil end
+	local fields = {
+		item.item_name,
+		item.name,
+		item.item_type_name,
+		tf_lang and tf_lang.GetRaw and tf_lang.GetRaw(item.item_name) or nil,
+		tf_lang and tf_lang.GetRaw and tf_lang.GetRaw(item.name) or nil,
+		tf_lang and tf_lang.GetRaw and tf_lang.GetRaw(item.item_type_name) or nil,
+	}
+	for _, raw in ipairs(fields) do
+		local token = normalizeTauntToken(raw)
+		if token and tauntCommandByToken[token] then
+			return tauntCommandByToken[token]
+		end
+	end
+	return nil
+end
+
+local function isLikelyTauntItem(item)
+	if not istable(item) then return false end
+	local blob = string.lower(table.concat({
+		tostring(item.name or ""),
+		tostring(item.item_name or ""),
+		tostring(item.item_type_name or ""),
+		tostring(tf_lang and tf_lang.GetRaw and tf_lang.GetRaw(item.item_name) or ""),
+		tostring(tf_lang and tf_lang.GetRaw and tf_lang.GetRaw(item.item_type_name) or ""),
+	}, " "))
+	return string.find(blob, "taunt", 1, true) ~= nil
+end
+local tauntCommandByDefindex = nil
+
+local function getItemTextBlob(item)
+	if not istable(item) then return "" end
+	local parts = {}
+	parts[#parts + 1] = tostring(item.name or "")
+	parts[#parts + 1] = tostring(item.item_name or "")
+	parts[#parts + 1] = tostring(item.item_type_name or "")
+	if tf_lang and tf_lang.GetRaw then
+		parts[#parts + 1] = tostring(tf_lang.GetRaw(item.item_name) or "")
+		parts[#parts + 1] = tostring(tf_lang.GetRaw(item.item_type_name) or "")
+	end
+	return string.lower(table.concat(parts, " "))
+end
+
+local function resolveTauntCommandForItem(item)
+	if not istable(item) then return nil end
+	local defindex = tonumber(item.id)
+	if defindex and istable(tauntCommandByDefindex) and isstring(tauntCommandByDefindex[defindex]) then
+		return tauntCommandByDefindex[defindex]
+	end
+	local mappedCmd = commandFromItemToken(item)
+	if isstring(mappedCmd) and mappedCmd ~= "" then
+		return mappedCmd
+	end
+	if isLikelyTauntItem(item) then
+		local rawCandidates = {
+			item.item_name,
+			item.name,
+			item.item_type_name,
+			tf_lang and tf_lang.GetRaw and tf_lang.GetRaw(item.item_name) or nil,
+			tf_lang and tf_lang.GetRaw and tf_lang.GetRaw(item.name) or nil,
+			tf_lang and tf_lang.GetRaw and tf_lang.GetRaw(item.item_type_name) or nil,
+		}
+		for _, raw in ipairs(rawCandidates) do
+			local token = normalizeTauntToken(raw)
+			if token and token ~= "" then
+				return tokenCmd(token)
+			end
+		end
+	end
+	local blob = getItemTextBlob(item)
+	if blob == "" then return nil end
+	for _, rule in ipairs(tauntItemCommandRules) do
+		for _, token in ipairs(rule.tokens) do
+			if string.find(blob, string.lower(token), 1, true) then
+				return rule.cmd
+			end
+		end
+	end
+	if isLikelyTauntItem(item) then
+		return "tf_taunt_laugh"
+	end
+	return nil
+end
+
+local function rebuildTauntCommandDefindexMap()
+	local map = {}
+	if not tf_items or not tf_items.Items then
+		tauntCommandByDefindex = map
+		return
+	end
+	for _, item in pairs(tf_items.Items) do
+		if istable(item) then
+			local defindex = tonumber(item.id)
+			if defindex and not map[defindex] then
+				local cmd = resolveTauntCommandForItem(item)
+				if isstring(cmd) and cmd ~= "" then
+					map[defindex] = cmd
+				end
+			end
+		end
+	end
+	tauntCommandByDefindex = map
+end
+
+local function ensureTauntCommandDefindexMap()
+	if tauntCommandByDefindex == nil then
+		rebuildTauntCommandDefindexMap()
+	end
+end
+
+function meta:TryExecuteEquippedTauntSlot(slotIndex)
+	if not SERVER then return false end
+	local slot = tonumber(slotIndex)
+	if not slot or slot < 1 or slot > 8 then return false end
+
+	local className = tostring(self:GetPlayerClass() or "")
+	if className == "" then return false end
+
+	local loadoutRaw = self:GetInfo("loadout_taunts_" .. className)
+	if not isstring(loadoutRaw) or loadoutRaw == "" then return false end
+	local split = string.Split(loadoutRaw, ",")
+	local itemId = tonumber(split[slot])
+	if not itemId or itemId <= 0 then return false end
+
+	local item = (tf_items and tf_items.ItemsByID and tf_items.ItemsByID[itemId]) or nil
+	if not istable(item) and tf_items and tf_items.Items then
+		for _, v in pairs(tf_items.Items) do
+			if istable(v) and tonumber(v.id) == itemId then
+				item = v
+				break
+			end
+		end
+	end
+	if not istable(item) then return false end
+
+	ensureTauntCommandDefindexMap()
+	local cmd = resolveTauntCommandForItem(item)
+	if not isstring(cmd) or cmd == "" then
+		-- SDK-style slot taunt path: if a taunt item is equipped, consume the request
+		-- rather than falling back to weapon taunt.
+		if isLikelyTauntItem(item) then
+			self:ConCommand("tf_taunt_laugh")
+			return true
+		end
+		return false
+	end
+
+	self:ConCommand(cmd)
+	return true
+end
+
+function meta:TryExecuteTauntItemByID(itemId, slotIndex)
+	if not SERVER then return false end
+	local defindex = tonumber(itemId)
+	if not defindex or defindex <= 0 then return false end
+
+	local item = (tf_items and tf_items.ItemsByID and tf_items.ItemsByID[defindex]) or nil
+	if not istable(item) and tf_items and tf_items.Items then
+		for _, v in pairs(tf_items.Items) do
+			if istable(v) and tonumber(v.id) == defindex then
+				item = v
+				break
+			end
+		end
+	end
+	if not istable(item) then return false end
+
+	ensureTauntCommandDefindexMap()
+	local cmd = resolveTauntCommandForItem(item)
+	if not isstring(cmd) or cmd == "" then
+		if isLikelyTauntItem(item) then
+			cmd = "tf_taunt_laugh"
+		else
+			return false
+		end
+	end
+
+	self:ConCommand(cmd)
+	return true
+end
+
 function meta:TFTaunt(args)
 	local ply = self 
 	if SERVER then

@@ -1,6 +1,9 @@
 local PANEL = {}
 
 local function IsMvMMap()
+    if TF_IsMvMMap then
+        return TF_IsMvMMap()
+    end
     return string.find(string.lower(game.GetMap() or ""), "mvm_", 1, true) ~= nil
 end
 

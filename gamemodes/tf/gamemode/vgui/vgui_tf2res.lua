@@ -4,6 +4,9 @@ if SERVER then
 end
 
 TF2Res = TF2Res or {}
+if TF2Res.Load and TF2Res.FindByFieldName and TF2Res.GetNumber and TF2Res.GetTextureID and TF2Res.ParseCoord then
+    return
+end
 
 local function tokenizeKeyValues(text)
     local tokens = {}

@@ -964,6 +964,9 @@ function bombAvailable(bot)
 end
 
 local function IsMvMMap()
+	if TF_IsMvMMap then
+		return TF_IsMvMMap()
+	end
 	return string.find(string.lower(game.GetMap() or ""), "mvm_", 1, true) ~= nil
 end
 
@@ -2598,6 +2601,7 @@ end)
 
 hook.Remove("SetupMove", "LeadBot_Control22")
 hook.Add("Move", "LeadBot_Control22", function(bot, mv)
+	if _G.TFBOT_VALVE_AI_ACTIVE then return end
 
 	local buttons = 0
 	if bot.TFBot and bot:Alive() then
@@ -2932,6 +2936,16 @@ end)
 
 local function ComputePathCost(bot, area, fromArea, ladder, length)
 	local self = bot
+
+	-- When modular Valve AI is active, reuse its cost model so playerbot A* pathing
+	-- gets the same MvM anchor/flank bias as the modular controller.
+	if _G.TFBOT_VALVE_AI_ACTIVE and TFBotValveAI and TFBotValveAI.Pathing and TFBotValveAI.Pathing.ComputePathCost then
+		local ok, delegated = pcall(TFBotValveAI.Pathing.ComputePathCost, TFBotValveAI.Pathing, bot, area, fromArea, ladder, length)
+		if ok and isnumber(delegated) then
+			return delegated
+		end
+	end
+
     if not fromArea then
         -- First area in path, no cost
         return 0.0
@@ -2978,8 +2992,15 @@ local function ComputePathCost(bot, area, fromArea, ladder, length)
     end
 
     if self.routeType == "safest" then
-        if bot.TargetEnt:IsValid() then
-            dist = dist * 4.0 * area:GetCombatIntensity()
+        if IsValid(bot.TargetEnt) then
+            local intensity = 1.0
+            if area.GetCombatIntensity then
+                local ok, value = pcall(area.GetCombatIntensity, area)
+                if ok and isnumber(value) then
+                    intensity = math.max(value, 0.1)
+                end
+            end
+            dist = dist * 4.0 * intensity
         end
 
         local isBlueSide = (self:Team() == TEAM_BLU or self:Team() == TF_TEAM_PVE_INVADERS)
@@ -2990,7 +3011,7 @@ local function ComputePathCost(bot, area, fromArea, ladder, length)
     end
 
     if self.routeType == "mvm_bomb_carrier" then
-        if area:IsInCombat() then
+        if area.IsInCombat and area:IsInCombat() then
             dist = dist * 2.2
         end
         local isBlueSide = (self:Team() == TEAM_BLU or self:Team() == TF_TEAM_PVE_INVADERS)
@@ -3047,6 +3068,7 @@ local function ComputePathCost(bot, area, fromArea, ladder, length)
     return cost + fromArea:GetCostSoFar()
 end
 hook.Add("SetupMove", "LeadBot_Control", function(bot, mv, cmd)
+	if _G.TFBOT_VALVE_AI_ACTIVE then return end
 	local buttons = 0
 	if bot.TFBot then
 		if (GetConVar("ai_disabled"):GetBool()) then return end
@@ -3628,6 +3650,7 @@ local function RespawnBotAtTeamSpawn(bot)
 end
 
 hook.Add("StartCommand", "leadbot_control", function(bot, cmd)
+	if _G.TFBOT_VALVE_AI_ACTIVE then return end
 	--[[if (bot.ControllingPlayer) then
 		bot.ControlledButtons = cmd:GetButtons()
 		bot.ControlledImpulse = cmd:GetImpulse()
@@ -4033,6 +4056,17 @@ concommand.Add("tf_bot_takecontrol", function(ply) local bot = ply:GetObserverTa
 end)]]
 
 hook.Add( "ShouldCollide", "TFBot_CheckCollisions", function( ent1, ent2 )
+	local function isBlueBot(ent)
+		if not IsValid(ent) then return false end
+		local isManagedBot = (ent.TFBot == true) or (ent.IsTFBotValveBase == true)
+		if not isManagedBot then return false end
+		local teamNum = (ent.Team and ent:Team()) or nil
+		return teamNum == TEAM_BLU or teamNum == TF_TEAM_PVE_INVADERS
+	end
+
+	if isBlueBot(ent1) and isBlueBot(ent2) then
+		return false
+	end
 end )
 
 
@@ -4200,6 +4234,12 @@ local function ShouldForceJumpAtObstacle(ply, targetAng)
 end
 
 hook.Add( "StartCommand", "TFBot_Movement", function( ply, cmd )
+	if _G.TFBOT_VALVE_AI_ACTIVE then
+		local compatLegacyPath = GetConVar("tf_bot_valve_ai_compat_legacy_path")
+		if not (compatLegacyPath and compatLegacyPath:GetBool()) then
+			return
+		end
+	end
 
 	// Only run this code on bots, and only if bot_mimic is set to 0
 	if ( !ply.TFBot || ply.botPos == nil ) then return end
@@ -4412,8 +4452,14 @@ hook.Add( "StartCommand", "TFBot_Movement", function( ply, cmd )
 		ply._stuckSince = nil
 	end
 
-	if (ply:GetNWBool("Taunting",false) == true) then 
-		cmd:SetForwardMove( 0 )
+	if (ply:GetNWBool("Taunting",false) == true) then
+		cmd:SetForwardMove(0)
+		cmd:SetSideMove(0)
+		cmd:SetUpMove(0)
+		cmd:RemoveKey(IN_JUMP)
+		cmd:RemoveKey(IN_DUCK)
+		cmd:RemoveKey(IN_ATTACK)
+		cmd:RemoveKey(IN_ATTACK2)
 	else
 		cmd:SetForwardMove( 1000 )
 		cmd:SetViewAngles( targetang )
@@ -4523,6 +4569,81 @@ local function ProcessBreakablesTouchByBots()
 	end
 end
 
+local tf_bot_trigger_touch_interval = CreateConVar("tf_bot_trigger_touch_interval", "0.10", {FCVAR_ARCHIVE, FCVAR_NOTIFY}, "Interval for playerbot trigger touch emulation.")
+local triggerTouchCache = { nextRefresh = 0, ents = {} }
+
+local function IsTriggerLikeEntity(ent)
+	if not IsValid(ent) then return false end
+	local class = string.lower(tostring(ent:GetClass() or ""))
+	if string.StartWith(class, "trigger_") then return true end
+	return class == "func_capturezone" or class == "func_flagdetectionzone"
+end
+
+local function RefreshTriggerTouchCache(now)
+	if now < (triggerTouchCache.nextRefresh or 0) then
+		return triggerTouchCache.ents
+	end
+	triggerTouchCache.nextRefresh = now + 1.0
+	local out = {}
+	for _, ent in ipairs(ents.GetAll()) do
+		if IsTriggerLikeEntity(ent) then
+			out[#out + 1] = ent
+		end
+	end
+	triggerTouchCache.ents = out
+	return out
+end
+
+local function IsPointInsideEntityOBB(ent, point)
+	if not IsValid(ent) or not isvector(point) then return false end
+	local mins, maxs = ent:OBBMins(), ent:OBBMaxs()
+	local lp = ent:WorldToLocal(point)
+	return lp.x >= mins.x and lp.x <= maxs.x
+		and lp.y >= mins.y and lp.y <= maxs.y
+		and lp.z >= mins.z and lp.z <= maxs.z
+end
+
+local function ProcessTriggerTouchByPlayerBots()
+	local now = CurTime()
+	local triggerEnts = RefreshTriggerTouchCache(now)
+
+	for _, ply in ipairs(player.GetBots()) do
+		if not IsValid(ply) or not ply.TFBot or not ply:Alive() then continue end
+		ply._tfbotTriggerTouches = ply._tfbotTriggerTouches or {}
+		local active = ply._tfbotTriggerTouches
+		local insideNow = {}
+		local pos = ply:GetPos()
+
+		for _, trg in ipairs(triggerEnts) do
+			if not IsValid(trg) then continue end
+			if not IsPointInsideEntityOBB(trg, pos) then continue end
+			local idx = trg:EntIndex()
+			insideNow[idx] = trg
+			if not active[idx] and trg.StartTouch then
+				pcall(trg.StartTouch, trg, ply)
+			end
+			if trg.Touch then
+				pcall(trg.Touch, trg, ply)
+			end
+		end
+
+		for idx, trg in pairs(active) do
+			if not IsValid(trg) then
+				active[idx] = nil
+			elseif not insideNow[idx] then
+				if trg.EndTouch then
+					pcall(trg.EndTouch, trg, ply)
+				end
+				active[idx] = nil
+			end
+		end
+
+		for idx, trg in pairs(insideNow) do
+			active[idx] = trg
+		end
+	end
+end
+
 hook.Remove("Think", "BreakablesTouchByBotPlayers")
 timer.Create("BreakablesTouchByBotPlayersTimer", 0.2, 0, function()
 	local interval = 0.2
@@ -4533,4 +4654,12 @@ timer.Create("BreakablesTouchByBotPlayersTimer", 0.2, 0, function()
 		timer.Adjust("BreakablesTouchByBotPlayersTimer", interval, 0)
 	end
 	ProcessBreakablesTouchByBots()
+end)
+
+timer.Create("TFBot_TriggerTouchTimer", 0.10, 0, function()
+	local interval = math.max(CVFloat(tf_bot_trigger_touch_interval, 0.10), 0.03)
+	if timer.Exists("TFBot_TriggerTouchTimer") then
+		timer.Adjust("TFBot_TriggerTouchTimer", interval, 0)
+	end
+	ProcessTriggerTouchByPlayerBots()
 end)

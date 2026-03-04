@@ -110,7 +110,7 @@ SWEP.AirblastRadius = 80
 SWEP.BulletSpread = 0.06
 SWEP.CriticalChance = 0
 SWEP.NoAirblast = true
-SWEP.CustomHUD = {HudBowCharge = true}
+SWEP.GlobalCustomHUD = {HudItemEffectMeter = true}
 
 SWEP.MmmphMax = 300
 SWEP.MmmphBuffTime = 10
@@ -177,10 +177,19 @@ function SWEP:IsMmmphFull()
 end
 
 function SWEP:UpdateMmmphHUD()
-	if not CLIENT then return end
-	if not IsValid(self.Owner) or self.Owner ~= LocalPlayer() or not IsValid(HudBowCharge) then return end
-	if self.Owner:GetActiveWeapon() ~= self then return end
-	HudBowCharge:SetProgress(self:GetMmmphFraction())
+	-- Legacy compatibility no-op; MMMPH meter now uses HudItemEffectMeter.
+end
+
+function SWEP:GetHUDMeterName()
+	return "#TF_PyroRage"
+end
+
+function SWEP:GetHUDMeterResFile()
+	return "resource/ui/huditemeffectmeter_pyro.res"
+end
+
+function SWEP:GetHUDMeterValue()
+	return self:GetMmmphFraction()
 end
 
 function SWEP:StopMmmphReadyEffect()
@@ -489,9 +498,6 @@ end
 
 function SWEP:Holster()
 	self:StopMmmphReadyEffect()
-	if CLIENT and IsValid(HudBowCharge) then
-		HudBowCharge:SetProgress(0)
-	end
 	if self.SoundsCreated then
 		self.SpinUpSound:Stop()
 		self.SpinDownSound:Stop()

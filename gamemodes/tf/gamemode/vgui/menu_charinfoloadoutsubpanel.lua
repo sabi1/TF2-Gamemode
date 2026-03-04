@@ -54,8 +54,92 @@ local ATT4 = {
 }
 
 local LOADOUT_SLOT_COUNT = 7
+local TAUNT_SLOT_COUNT = 8
+local TAUNT_FORCED_SLOT_BASE = 100
+local ActiveTauntLoadoutPanel
+
+local function normalizeTauntLoadoutSplit(split)
+	local out = {}
+	for i = 1, TAUNT_SLOT_COUNT do
+		out[i] = tostring(tonumber(split and split[i]) or -1)
+	end
+	return out
+end
+
+local function getTauntLoadoutConVarName(className)
+	return "loadout_taunts_" .. tostring(className or "scout")
+end
+
+local function getTauntLoadout(className)
+	local convar = GetConVar(getTauntLoadoutConVarName(className))
+	if not convar then
+		return normalizeTauntLoadoutSplit(nil)
+	end
+	return normalizeTauntLoadoutSplit(string.Split(convar:GetString() or "", ","))
+end
+
+local function updateTauntLoadout(slot, id, className)
+	local convar = GetConVar(getTauntLoadoutConVarName(className))
+	local index = tonumber(slot)
+	if not convar or not index or index < 1 or index > TAUNT_SLOT_COUNT then return end
+	local split = normalizeTauntLoadoutSplit(string.Split(convar:GetString() or "", ","))
+	split[index] = tostring(tonumber(id) or -1)
+	convar:SetString(table.concat(split, ","))
+end
+
+local function isTauntItem(item)
+	if not istable(item) then return false end
+	if item.item_slot == "taunt" then return true end
+	if isstring(item.item_class) and string.find(string.lower(item.item_class), "taunt", 1, true) then return true end
+
+	local itemType = string.lower(tostring(tf_lang.GetRaw(item.item_type_name) or item.item_type_name or ""))
+	if itemType ~= "" and string.find(itemType, "taunt", 1, true) then
+		return true
+	end
+
+	local itemName = string.lower(tostring(tf_lang.GetRaw(item.item_name) or item.item_name or item.name or ""))
+	return itemName ~= "" and string.find(itemName, "taunt", 1, true) ~= nil
+end
+
+local isActionSlotItem
+
+local function itemUsableByClass(item, className)
+	if not istable(item) or not isstring(className) or className == "" then return false end
+	if isActionSlotItem(item) then return true end
+	if isTauntItem(item) then
+		if not istable(item.used_by_classes) then return true end
+	end
+	if not istable(item.used_by_classes) then return false end
+	if item.used_by_classes[className] == true or item.used_by_classes[className] == 1 then
+		return true
+	end
+	if item.used_by_classes.all_class == true or item.used_by_classes.all_class == 1 then
+		return true
+	end
+	if item.used_by_classes.all_classes == true or item.used_by_classes.all_classes == 1 then
+		return true
+	end
+	return false
+end
+
+local function tauntSlotToForcedSlot(slotIndex)
+	local i = math.Clamp(tonumber(slotIndex) or 1, 1, TAUNT_SLOT_COUNT)
+	return TAUNT_FORCED_SLOT_BASE + i
+end
+
+local function forcedSlotToTauntSlot(forcedSlot)
+	local f = tonumber(forcedSlot)
+	if not f then return nil end
+	if f >= (TAUNT_FORCED_SLOT_BASE + 1) and f <= (TAUNT_FORCED_SLOT_BASE + TAUNT_SLOT_COUNT) then
+		return f - TAUNT_FORCED_SLOT_BASE
+	end
+	return nil
+end
 
 local function forceCloseLoadoutPanels()
+	if IsValid(ActiveTauntLoadoutPanel) then
+		ActiveTauntLoadoutPanel:Remove()
+	end
 	if IsValid(FullLoadoutPanel) then
 		FullLoadoutPanel:Remove()
 	end
@@ -67,6 +151,141 @@ local function forceCloseLoadoutPanels()
 	end
 	gui.EnableScreenClicker(false)
 	RunConsoleCommand("hud_showloadout", "0")
+end
+
+local function closeTauntLoadoutPanel()
+	if IsValid(ActiveTauntLoadoutPanel) then
+		ActiveTauntLoadoutPanel:Remove()
+	end
+	ActiveTauntLoadoutPanel = nil
+end
+
+local function openTauntLoadoutPanel(parent)
+	closeTauntLoadoutPanel()
+
+	local classIndex = GetConVar("tf_hud_loadout_class") and GetConVar("tf_hud_loadout_class"):GetInt() or 1
+	local classMap = {
+		[1] = "scout",
+		[2] = "soldier",
+		[3] = "pyro",
+		[4] = "demoman",
+		[5] = "heavy",
+		[6] = "engineer",
+		[7] = "medic",
+		[8] = "sniper",
+		[9] = "spy",
+	}
+	local className = classMap[classIndex] or "scout"
+
+	local itemsById = {}
+	for _, item in pairs(tf_items.Items or {}) do
+		if istable(item) and isnumber(item.id) then
+			itemsById[tonumber(item.id)] = item
+		end
+	end
+
+	local panelParent = IsValid(parent) and parent or (IsValid(CharInfoPanel) and CharInfoPanel or nil)
+	local panel = vgui.Create("EditablePanel", panelParent)
+	panel:SetSize(math.floor(ScrW() * 0.58), math.floor(ScrH() * 0.46))
+	panel:Center()
+	panel:MakePopup()
+	panel:SetKeyboardInputEnabled(true)
+	panel:SetMouseInputEnabled(true)
+	panel:SetZPos(10000)
+	ActiveTauntLoadoutPanel = panel
+
+	function panel:Paint(w, h)
+		surface.SetDrawColor(18, 17, 16, 245)
+		surface.DrawRect(0, 0, w, h)
+		surface.SetDrawColor(90, 83, 72, 255)
+		surface.DrawOutlinedRect(0, 0, w, h, 2)
+
+		draw.Text{
+			text = "TAUNTS",
+			font = "HudFontMediumBold",
+			pos = {20, 12},
+			color = Color(235, 226, 202, 255),
+			xalign = TEXT_ALIGN_LEFT,
+			yalign = TEXT_ALIGN_TOP,
+		}
+	end
+
+	local closeBtn = vgui.Create("TFButton", panel)
+	closeBtn:SetSize(100 * Scale, 25 * Scale)
+	closeBtn:SetPos(panel:GetWide() - 120 * Scale, 12 * Scale)
+	closeBtn.labelText = "CLOSE"
+	closeBtn.font = "HudFontSmallBold"
+	function closeBtn:DoClick()
+		closeTauntLoadoutPanel()
+	end
+
+	local info = vgui.Create("DLabel", panel)
+	info:SetPos(18 * Scale, 42 * Scale)
+	info:SetSize(panel:GetWide() - 36 * Scale, 20 * Scale)
+	info:SetText("Class: " .. string.upper(className) .. "  |  Equip taunts from your synced backpack")
+	info:SetTextColor(Color(214, 202, 178, 255))
+	info:SetFont("HudFontSmall")
+
+	local scroll = vgui.Create("DScrollPanel", panel)
+	scroll:SetPos(18 * Scale, 64 * Scale)
+	scroll:SetSize(panel:GetWide() - 36 * Scale, panel:GetTall() - 82 * Scale)
+
+	local grid = vgui.Create("DIconLayout", scroll)
+	grid:Dock(FILL)
+	grid:SetSpaceX(8)
+	grid:SetSpaceY(8)
+
+	local function buildSlotCards()
+		for _, child in ipairs(grid:GetChildren()) do
+			child:Remove()
+		end
+
+		local tauntLoadout = getTauntLoadout(className)
+		for i = 1, TAUNT_SLOT_COUNT do
+			local itemId = tonumber(tauntLoadout[i])
+			local item = itemId and itemsById[itemId] or nil
+			local displayName = item and (tf_lang.GetRaw(item.item_name) or item.name) or (tf_lang.GetRaw("Hud_Menu_Taunt_NoItem") or "No Item")
+			local imagePath = item and item.image_inventory or nil
+
+			local itemTex = surface.GetTextureID(imagePath or "")
+			if not imagePath or imagePath == "" then
+				itemTex = surface.GetTextureID("vgui/avatar_default")
+			end
+
+			local btn = vgui.Create("DButton", grid)
+			btn:SetSize(math.floor(172 * Scale), math.floor(122 * Scale))
+			btn:SetText("")
+			btn:SetTooltip("Taunt Slot " .. tostring(i))
+			btn.Paint = function(self, w, h)
+				draw.RoundedBox(4, 0, 0, w, h, Color(50, 44, 39, 245))
+				surface.SetDrawColor(110, 102, 92, 255)
+				surface.DrawOutlinedRect(0, 0, w, h, 1)
+				draw.SimpleText("Slot " .. tostring(i), "HudFontSmallBold", 8, 8, Color(238, 131, 84, 255), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+				draw.SimpleText(displayName or "No Item", "HudFontSmall", 8, h - 8, Color(235, 226, 202, 255), TEXT_ALIGN_LEFT, TEXT_ALIGN_BOTTOM)
+				surface.SetDrawColor(255, 255, 255, 255)
+				surface.SetTexture(itemTex)
+				surface.DrawTexturedRect(8, 28, w - 16, h - 56)
+			end
+			btn.DoClick = function()
+				TF_OpenStandaloneBackpack(className, classIndex, tauntSlotToForcedSlot(i))
+				closeTauntLoadoutPanel()
+			end
+			btn.DoRightClick = function()
+				updateTauntLoadout(i, -1, className)
+				surface.PlaySound("ui/buttonclickrelease.wav")
+				buildSlotCards()
+			end
+			grid:Add(btn)
+		end
+	end
+
+	buildSlotCards()
+
+	panel.OnRemove = function()
+		if ActiveTauntLoadoutPanel == panel then
+			ActiveTauntLoadoutPanel = nil
+		end
+	end
 end
 
 local attributeDefsByClass
@@ -242,7 +461,7 @@ local function normalizeLoadoutSplit(split)
 	return out
 end
 
-local function isActionSlotItem(item)
+isActionSlotItem = function(item)
 	if not istable(item) then return false end
 	if item.item_slot == "action" then return true end
 	if item.item_class == "tf_powerup_bottle" then return true end
@@ -296,7 +515,7 @@ local function buildLoadoutItemStatsLines(className, loadoutSplit)
 	end
 
 	local function getSlotLabel(slot)
-		local swapped = className == "demoman" or className == "spy"
+		local swapped = className == "spy"
 		if slot == 1 then return swapped and "Secondary" or "Primary" end
 		if slot == 2 then return swapped and "Primary" or "Secondary" end
 		if slot == 3 then return "Melee" end
@@ -431,7 +650,7 @@ function PANEL:PerformLayout()
 	local weapons = {{}, {}, {}, {}, {}}
 
 	for id, item in pairs(tf_items.Items) do
-		if istable(item) and item.used_by_classes and item.used_by_classes[oldclass] then
+		if istable(item) and itemUsableByClass(item, oldclass) then
 			if GetConVar("tf_hud_loadout_class"):GetInt() != 4 && GetConVar("tf_hud_loadout_class"):GetInt() != 9 then
 				if item.item_slot == "primary" then
 					weapons[1][id] = item -- table.insert(weapons[1], ) --id) -- weapon1:AddChoice(item.name, item.id)
@@ -550,7 +769,7 @@ function PANEL:PerformLayout()
 		end
 	end
 
-	local useSwappedLoadoutSlots = GetConVar("tf_hud_loadout_class"):GetInt() == 4 || GetConVar("tf_hud_loadout_class"):GetInt() == 9
+	local useSwappedLoadoutSlots = GetConVar("tf_hud_loadout_class"):GetInt() == 9
 
 	for k, v in ipairs(Items) do
 		local t = self.ItemPanels[k]
@@ -644,6 +863,20 @@ function PANEL:PerformLayout()
 	self.CloseLoadoutButton:SetSize(100 * Scale, 25 * Scale)
 	self.CloseLoadoutButton:SetPos(W/2 + 200*Scale, math.floor(H - self.CloseLoadoutButton:GetTall() - (H * 0.03)))
 	self.CloseLoadoutButton:MoveToFront()
+
+	if not self.TauntLoadoutButton then
+		self.TauntLoadoutButton = vgui.Create("DImageButton")
+		self.TauntLoadoutButton:SetParent(self)
+		self.TauntLoadoutButton:SetImage("hud/ico_reel")
+		self.TauntLoadoutButton:SetTooltip("Taunt Loadout")
+		function self.TauntLoadoutButton:DoClick()
+			openTauntLoadoutPanel(CharInfoPanel)
+		end
+	end
+	local tauntBtnSize = math.floor(25 * Scale)
+	self.TauntLoadoutButton:SetSize(tauntBtnSize, tauntBtnSize)
+	self.TauntLoadoutButton:SetPos(math.floor(W * 0.5 + 2 * Scale), math.floor(H * 0.5 + 90 * Scale))
+	self.TauntLoadoutButton:MoveToFront()
 	local t
 	-- The class panel, shows the current class selected holding the last weapon equipped
 	if not self.ClassPanel then
@@ -819,7 +1052,7 @@ function PANEL:PerformLayout()
 
 				end
 				local oldclass2 = oldclass
-				if (oldclass == "spy" or oldclass == "demoman") then
+				if (oldclass == "spy") then
 					if wep.id == tonumber(loadout[2]) then
 
 						t:AddModel(2,wep.model_world or wep.model_player,{
@@ -1020,6 +1253,37 @@ function PANEL:Paint()
 		"TanLight",
 		"HudFontSmallestBold",
 		"south-west"
+	)
+
+	tf_draw.LabelText(
+		W/2-150*Scale,
+		20*Scale,
+		20*Scale,
+		15*Scale,
+		">>",
+		Color(200, 80, 60, 255),
+		"HudFontSmallestBold",
+		"west"
+	)
+	tf_draw.LabelText(
+		W/2-130*Scale,
+		15*Scale,
+		120*Scale,
+		25*Scale,
+		tf_lang.GetRaw("TF_Taunt") or "TAUNTS",
+		"TanLight",
+		"HudFontMediumBold",
+		"west"
+	)
+	tf_draw.LabelText(
+		W/2+90*Scale,
+		20*Scale,
+		250*Scale,
+		25*Scale,
+		tf_lang.GetRaw("TF_ClassLoadoutTauntInputHint") or "Hit your taunt key for the in-game taunt HUD",
+		Color(214, 202, 178, 220),
+		"HudFontSmall",
+		"east"
 	)
 end
 local OLDPANEL = PANEL
@@ -1308,9 +1572,7 @@ CharInfoLoadoutSubPanel = vgui.CreateFromTable(vgui.RegisterTable(PANEL, "DPanel
 local BackpackPickerPanel
 
 local function classCanUseItem(item, className)
-	if not istable(item) or not isstring(className) then return false end
-	if not istable(item.used_by_classes) then return false end
-	return item.used_by_classes[className] == true or item.used_by_classes[className] == 1
+	return itemUsableByClass(item, className)
 end
 
 local function createBackpackPicker(title, oldclass, canEquipFn, onEquipFn)
@@ -1439,7 +1701,7 @@ local function createBackpackPicker(title, oldclass, canEquipFn, onEquipFn)
 end
 
 local function getTargetWeaponSlot(type, className)
-	local swapped = className == "demoman" or className == "spy"
+	local swapped = className == "spy"
 	if type == 1 then
 		return swapped and "secondary" or "primary"
 	elseif type == 2 then
@@ -1453,6 +1715,10 @@ end
 local function mapItemToLoadoutSlot(item, className)
 	if not istable(item) then return nil end
 
+	if isTauntItem(item) then
+		return tauntSlotToForcedSlot(1)
+	end
+
 	if isActionSlotItem(item) then
 		return 7
 	end
@@ -1465,7 +1731,7 @@ local function mapItemToLoadoutSlot(item, className)
 		return 3
 	end
 
-	local swapped = className == "demoman" or className == "spy"
+	local swapped = className == "spy"
 	if item.item_slot == "primary" then
 		return swapped and 2 or 1
 	elseif item.item_slot == "secondary" then
@@ -2123,9 +2389,13 @@ function TF_OpenStandaloneBackpack(initialClassName, initialClassIndex, forcedLo
 		head = 4,
 		misc = 4,
 		action = 5,
+		taunt = 6,
 	}
 
 	local function sortSlotName(item)
+		if isTauntItem(item) then
+			return "taunt"
+		end
 		if isActionSlotItem(item) then
 			return "action"
 		end
@@ -2207,7 +2477,7 @@ function TF_OpenStandaloneBackpack(initialClassName, initialClassIndex, forcedLo
 		for _, item in pairs(tf_items.Items or {}) do
 			local defindex = istable(item) and tonumber(item.id) or nil
 			if istable(item) and defindex then
-				if item.item_slot == "primary" or item.item_slot == "secondary" or item.item_slot == "melee" or item.item_slot == "head" or item.item_slot == "misc" or item.item_slot == "action" or isActionSlotItem(item) then
+				if item.item_slot == "primary" or item.item_slot == "secondary" or item.item_slot == "melee" or item.item_slot == "head" or item.item_slot == "misc" or item.item_slot == "action" or item.item_slot == "taunt" or isActionSlotItem(item) or isTauntItem(item) then
 					local owned = steamSet and steamSet[defindex]
 					if owned or (showStockItems and isStockItem(item)) then
 						rawCandidates[#rawCandidates + 1] = item
@@ -2340,13 +2610,21 @@ function TF_OpenStandaloneBackpack(initialClassName, initialClassIndex, forcedLo
 		local forcedSlot = panel.ForcedLoadoutSlot
 		local slotText = ""
 		if forcedSlot then
-			slotText = "  |  Slot: " .. tostring(forcedSlot)
+			local tauntSlot = forcedSlotToTauntSlot(forcedSlot)
+			if tauntSlot then
+				slotText = "  |  Taunt Slot: " .. tostring(tauntSlot)
+			else
+				slotText = "  |  Slot: " .. tostring(forcedSlot)
+			end
 		end
 		if forcedSlot then
 			local slotFiltered = {}
 			for _, item in ipairs(sourceItems) do
 				local slotCompatible = true
-				if forcedSlot >= 4 and forcedSlot <= 6 then
+				local tauntSlot = forcedSlotToTauntSlot(forcedSlot)
+				if tauntSlot then
+					slotCompatible = isTauntItem(item)
+				elseif forcedSlot >= 4 and forcedSlot <= 6 then
 					slotCompatible = item.item_class == "tf_wearable_item" and (item.item_slot == "head" or item.item_slot == "misc")
 				elseif forcedSlot == 7 then
 					slotCompatible = mapItemToLoadoutSlot(item, activeClass) == 7
@@ -2429,6 +2707,7 @@ function TF_OpenStandaloneBackpack(initialClassName, initialClassIndex, forcedLo
 		if convar then
 			split = string.Split(convar:GetString(), ",")
 		end
+		local tauntSplit = getTauntLoadout(activeClass)
 
 		local spaceX, spaceY = itemicons:GetSpaceX(), itemicons:GetSpaceY()
 		local gridW, gridH = gridPanel:GetWide() - (gridPadding * 2), gridPanel:GetTall() - (gridPadding * 2)
@@ -2482,7 +2761,10 @@ function TF_OpenStandaloneBackpack(initialClassName, initialClassIndex, forcedLo
 			local compatible = classCanUseItem(item, activeClass)
 			local slotCompatible = forcedSlot == nil or forcedSlot == false
 			if forcedSlot then
-				if forcedSlot >= 4 and forcedSlot <= 6 then
+				local tauntSlot = forcedSlotToTauntSlot(forcedSlot)
+				if tauntSlot then
+					slotCompatible = isTauntItem(item)
+				elseif forcedSlot >= 4 and forcedSlot <= 6 then
 					slotCompatible = item.item_class == "tf_wearable_item" and (item.item_slot == "head" or item.item_slot == "misc")
 				elseif forcedSlot == 7 then
 					slotCompatible = mapItemToLoadoutSlot(item, activeClass) == 7
@@ -2505,7 +2787,10 @@ function TF_OpenStandaloneBackpack(initialClassName, initialClassIndex, forcedLo
 			local equipped = false
 			local itemId = tonumber(item.id)
 			if itemId and #split >= 6 then
-				if forcedSlot then
+				local tauntSlot = forcedSlotToTauntSlot(forcedSlot)
+				if tauntSlot then
+					equipped = tonumber(tauntSplit[tauntSlot]) == itemId
+				elseif forcedSlot then
 					equipped = tonumber(split[forcedSlot]) == itemId
 				else
 					for s = 1, 6 do
@@ -2537,24 +2822,30 @@ function TF_OpenStandaloneBackpack(initialClassName, initialClassIndex, forcedLo
 				if not compatible then return end
 
 				local slot = mapItemToLoadoutSlot(item, activeClass)
+				local tauntForcedSlot = forcedSlotToTauntSlot(forcedSlot)
 				if forcedSlot then
 					slot = forcedSlot
 				end
 				if item.item_class == "tf_wearable_item" then
 					slot = forcedSlot or getWearableTargetSlot(activeClass, item.id)
 				end
-				if not slot then return end
+				if not slot and not tauntForcedSlot then return end
 
-				updateLoadout(slot, item.id, true, activeClass)
+				if tauntForcedSlot then
+					updateTauntLoadout(tauntForcedSlot, item.id, activeClass)
+				else
+					updateLoadout(slot, item.id, true, activeClass)
+				end
 				surface.PlaySound(item.mouse_pressed_sound or "ui/item_hat_pickup.wav")
 				refreshLoadoutViewNow()
 				if panel.LoadoutMode and IsValid(panel) then
 					panel:Remove()
 				end
+				closeTauntLoadoutPanel()
 				if TFDebugBridge and TFDebugBridge.Emit then
 					TFDebugBridge.Emit("backpack_select_item", {
 						class = activeClass,
-						slot = slot,
+						slot = tauntForcedSlot or slot,
 						item_id = tonumber(item.id),
 						item_name = getItemDisplayName(item),
 						page = currentPage,

@@ -93,9 +93,15 @@ local DIFF_ALIAS = {
 local OBJECTIVE_CLASS = {
     spy = "spy",
     sniper = "sniper",
-    destroysentries = "demoman",
-    sentrybuster = "demoman",
+    destroysentries = "sentrybuster",
+    sentrybuster = "sentrybuster",
 }
+
+local function IsPopStrictEnabled()
+    local cv = GetConVar("tf_mvm_pop_strict")
+    if not cv then return true end
+    return cv:GetBool()
+end
 
 local function NormalizeClass(name)
     local lower = string.lower(tostring(ScalarValue(name) or "scout"))
@@ -118,7 +124,7 @@ local function NormalizeDifficulty(name)
 end
 
 local function ResolveMissionClass(missionDef, rawBot)
-    local explicitClass = NormalizeClass(ScalarValue(missionDef.Class) or "")
+    local explicitClass = NormalizeClass(ScalarValue(missionDef.Class or missionDef.class) or "")
     if explicitClass ~= "" then
         return explicitClass
     end
@@ -130,7 +136,7 @@ local function ResolveMissionClass(missionDef, rawBot)
         end
     end
 
-    local objective = string.lower(tostring(ScalarValue(missionDef.Objective) or ""))
+    local objective = string.lower(tostring(ScalarValue(missionDef.Objective or missionDef.objective) or ""))
     return OBJECTIVE_CLASS[objective]
 end
 
@@ -184,6 +190,70 @@ local function GetNamedSpawns(name)
     return list
 end
 
+local function BuildFallbackSpawnNames(whereName)
+    local out = {}
+    local seen = {}
+
+    local function add(name)
+        name = string.lower(string.Trim(tostring(name or "")))
+        if name == "" then return end
+        if seen[name] then return end
+        seen[name] = true
+        out[#out + 1] = name
+    end
+
+    local lower = string.lower(tostring(whereName or ""))
+    if lower == "" then return out end
+
+    local hasFront = string.find(lower, "front", 1, true) ~= nil
+    local hasBack = string.find(lower, "back", 1, true) ~= nil
+    local hasLeft = string.find(lower, "left", 1, true) ~= nil
+    local hasRight = string.find(lower, "right", 1, true) ~= nil
+
+    local hasMission = string.find(lower, "mission", 1, true) ~= nil
+    local isSpy = string.find(lower, "spy", 1, true) ~= nil
+    local isSniper = string.find(lower, "sniper", 1, true) ~= nil
+    local isBuster = string.find(lower, "buster", 1, true) ~= nil or string.find(lower, "sentry", 1, true) ~= nil
+
+    local function addDirectional(prefix)
+        if hasFront and hasLeft then add(prefix .. "_front_left") end
+        if hasFront and hasRight then add(prefix .. "_front_right") end
+        if hasBack and hasLeft then add(prefix .. "_back_left") end
+        if hasBack and hasRight then add(prefix .. "_back_right") end
+        if hasFront then add(prefix .. "_front") end
+        if hasBack then add(prefix .. "_back") end
+        if hasLeft then add(prefix .. "_left") end
+        if hasRight then add(prefix .. "_right") end
+    end
+
+    -- Mission specialists first.
+    if hasMission then
+        if isSpy then
+            addDirectional("spawnbot_mission_spy")
+            add("spawnbot_mission_spy")
+        end
+        if isSniper then
+            addDirectional("spawnbot_mission_sniper")
+            add("spawnbot_mission_sniper")
+        end
+        if isBuster then
+            addDirectional("spawnbot_mission_buster")
+            add("spawnbot_mission_buster")
+            addDirectional("spawnbot_mission_sentrybuster")
+            add("spawnbot_mission_sentrybuster")
+        end
+        addDirectional("spawnbot_mission")
+        add("spawnbot_mission")
+    end
+
+    -- Generic spawn aliases.
+    addDirectional("spawnbot")
+    add("spawnbot_invasion")
+    add("spawnbot")
+
+    return out
+end
+
 local function GetDefaultSpawns()
     local out = {}
 
@@ -215,6 +285,92 @@ local function GetDefaultSpawns()
     return out
 end
 
+local function ResolveSafeSpawnPos(spawnEnt)
+    local pos = IsValid(spawnEnt) and spawnEnt:GetPos() or Vector(0, 0, 32)
+
+    -- Prefer nav area anchors to mirror bot-grounded spawn behavior.
+    if navmesh and navmesh.IsLoaded and navmesh.IsLoaded() and navmesh.GetNearestNavArea then
+        local area = navmesh.GetNearestNavArea(pos, true, 1500, true, true)
+        if IsValid(area) then
+            local center = area:GetCenter()
+            pos = Vector(center.x, center.y, center.z + 8)
+        end
+    end
+
+    -- Fallback/validation: project to floor.
+    local tr = util.TraceLine({
+        start = pos + Vector(0, 0, 128),
+        endpos = pos - Vector(0, 0, 4096),
+        mask = MASK_PLAYERSOLID,
+        filter = spawnEnt,
+    })
+    if tr.Hit then
+        pos = tr.HitPos + Vector(0, 0, 8)
+    else
+        pos = pos + Vector(0, 0, 16)
+    end
+
+    local function hullOpen(at)
+        local chk = util.TraceHull({
+            start = at,
+            endpos = at,
+            mins = Vector(-16, -16, 0),
+            maxs = Vector(16, 16, 72),
+            mask = MASK_PLAYERSOLID,
+            filter = spawnEnt,
+        })
+        if chk.StartSolid then return false end
+        for _, other in ipairs(ents.FindInSphere(at, 40)) do
+            if not IsValid(other) then continue end
+            if other == spawnEnt then continue end
+            if (other:IsPlayer() or other.IsTFBotValveBase == true or other.TFBot == true) and other:GetPos():DistToSqr(at) < (36 * 36) then
+                return false
+            end
+        end
+        return true
+    end
+
+    if not hullOpen(pos) then
+        -- Spread candidates around spawn so wave bots don't stack into vertical towers.
+        local base = pos
+        local found = nil
+        for ring = 1, 4 do
+            local r = ring * 28
+            for step = 1, 10 do
+                local a = math.rad((step - 1) * (360 / 10) + math.random(-8, 8))
+                local tryPos = base + Vector(math.cos(a) * r, math.sin(a) * r, 0)
+                local floor = util.TraceLine({
+                    start = tryPos + Vector(0, 0, 96),
+                    endpos = tryPos - Vector(0, 0, 1024),
+                    mask = MASK_PLAYERSOLID,
+                    filter = spawnEnt,
+                })
+                if floor.Hit then
+                    tryPos = floor.HitPos + Vector(0, 0, 8)
+                end
+                if hullOpen(tryPos) then
+                    found = tryPos
+                    break
+                end
+            end
+            if found then break end
+        end
+        if found then
+            pos = found
+        else
+            for i = 1, 12 do
+                local tryPos = pos + Vector(0, 0, i * 12)
+                if hullOpen(tryPos) then
+                    pos = tryPos
+                    break
+                end
+            end
+        end
+    end
+
+    return pos
+end
+
 function SPAWNER:ResolveSpawnEntities(whereField, classHint)
     local candidates = {}
     local seen = {}
@@ -230,6 +386,15 @@ function SPAWNER:ResolveSpawnEntities(whereField, classHint)
     for _, whereName in ipairs(ToArray(whereField)) do
         if not isstring(whereName) then continue end
         local list = GetNamedSpawns(whereName)
+        if #list == 0 then
+            for _, aliasName in ipairs(BuildFallbackSpawnNames(whereName)) do
+                local aliasList = GetNamedSpawns(aliasName)
+                if #aliasList > 0 then
+                    list = aliasList
+                    break
+                end
+            end
+        end
         for _, ent in ipairs(list) do
             AddCandidate(ent)
         end
@@ -268,7 +433,19 @@ function SPAWNER:PickSpawnEntity(whereField, classHint, selectorState, randomSpa
         return nil
     end
 
-    return table.Random(candidates)
+    if randomSpawn then
+        return table.Random(candidates)
+    end
+
+    if not istable(selectorState) then
+        return candidates[1]
+    end
+
+    selectorState.index = (tonumber(selectorState.index) or 0) + 1
+    if selectorState.index > #candidates then
+        selectorState.index = 1
+    end
+    return candidates[selectorState.index]
 end
 
 function SPAWNER:ResolveSpawnEntity(whereField, classHint)
@@ -279,26 +456,94 @@ function SPAWNER:ResolveSpawnEntity(whereField, classHint)
     return table.Random(candidates)
 end
 
+local function TrimLower(v)
+    return string.lower(string.Trim(tostring(ScalarValue(v) or "")))
+end
+
+local function NormalizeAttrToken(token)
+    token = TrimLower(token)
+    token = string.gsub(token, "[%s_%-]", "")
+    return token
+end
+
+local function ApplyBehaviorModifiers(bot, value)
+    for _, mod in ipairs(ToArray(value)) do
+        local t = NormalizeAttrToken(mod)
+        if t == "mobber" or t == "push" then
+            bot.Aggressive = true
+            bot.TF_MVM_Aggressive = true
+        end
+    end
+end
+
 local function ApplyBotAttributes(bot, attrs)
     for _, attr in ipairs(ToArray(attrs)) do
-        local lower = string.lower(tostring(attr))
+        local token = NormalizeAttrToken(attr)
 
-        if lower == "alwayscrit" then
+        if token == "alwayscrit" then
             bot.AlwaysCrit = true
-        elseif lower == "disablejump" then
-            bot:SetJumpPower(0)
-        elseif lower == "holdfireuntilclose" then
+            bot.TF_MVM_AlwaysCrit = true
+        elseif token == "disablejump" then
+            if bot.SetJumpPower then
+                bot:SetJumpPower(0)
+            end
+            bot.TF_MVM_DisableJump = true
+        elseif token == "holdfireuntilclose" or token == "holdfireuntilfullreload" then
             bot.HoldFireUntilClose = true
-        elseif lower == "aggressive" then
+            bot.TF_MVM_HoldFireUntilFullReload = true
+        elseif token == "aggressive" then
             bot.Aggressive = true
-        elseif lower == "noattack" then
+            bot.TF_MVM_Aggressive = true
+        elseif token == "noattack" or token == "suppressfire" then
             bot.NoAttack = true
-        elseif lower == "spawnwithfullcharge" then
+            bot.TF_MVM_SuppressFire = true
+        elseif token == "spawnwithfullcharge" then
             bot:SetNWInt("Ubercharge", 100)
-        elseif lower == "mini-boss" or lower == "miniboss" then
+            bot.TF_MVM_SpawnWithFullCharge = true
+        elseif token == "mini-boss" or token == "miniboss" then
             bot:SetModelScale(1.75)
             bot.IsBoss = true
             bot:SetNWBool("IsBoss", true)
+            bot.TF_MVM_MiniBoss = true
+        elseif token == "removeondeath" then
+            bot.TF_MVM_RemoveOnDeath = true
+        elseif token == "disabledodge" then
+            bot.TF_MVM_DisableDodge = true
+        elseif token == "becomespectatorondeath" then
+            bot.TF_MVM_BecomeSpectatorOnDeath = true
+        elseif token == "retainbuildings" then
+            bot.TF_MVM_RetainBuildings = true
+        elseif token == "ignoreenemies" then
+            bot.TF_MVM_IgnoreEnemies = true
+            bot.TF_MVM_IgnoreCombat = true
+        elseif token == "alwaysfireweapon" then
+            bot.TF_MVM_AlwaysFireWeapon = true
+        elseif token == "teleporttohint" then
+            bot.TF_MVM_TeleportToHint = true
+        elseif token == "usebosshealthbar" then
+            bot.TF_MVM_UseBossHealthBar = true
+        elseif token == "ignoreflag" then
+            bot.TF_MVM_IgnoreFlag = true
+        elseif token == "autojump" then
+            bot.TF_MVM_AutoJump = true
+        elseif token == "airchargeonly" then
+            bot.TF_MVM_AirChargeOnly = true
+        elseif token == "vaccinatorbullets" then
+            bot.TF_MVM_PreferVaccinator = "bullets"
+        elseif token == "vaccinatorblast" then
+            bot.TF_MVM_PreferVaccinator = "blast"
+        elseif token == "vaccinatorfire" then
+            bot.TF_MVM_PreferVaccinator = "fire"
+        elseif token == "bulletimmune" then
+            bot.TF_MVM_BulletImmune = true
+        elseif token == "blastimmune" then
+            bot.TF_MVM_BlastImmune = true
+        elseif token == "fireimmune" then
+            bot.TF_MVM_FireImmune = true
+        elseif token == "parachute" then
+            bot.TF_MVM_Parachute = true
+        elseif token == "projectileshield" then
+            bot.TF_MVM_ProjectileShield = true
         end
     end
 end
@@ -398,7 +643,67 @@ local function NormalizeWeaponRestriction(def)
     if lower == "meleeonly" or lower == "melee_only" or lower == "melee only" then
         return "meleeonly"
     end
+    if lower == "primaryonly" or lower == "primary_only" or lower == "primary only" then
+        return "primaryonly"
+    end
+    if lower == "secondaryonly" or lower == "secondary_only" or lower == "secondary only" then
+        return "secondaryonly"
+    end
     return nil
+end
+
+local function GetBotClassBaseSpeed(bot)
+    if not IsValid(bot) then return 300 end
+    local classTable = bot.GetPlayerClassTable and bot:GetPlayerClassTable() or nil
+    local speed = tonumber(classTable and classTable.Speed) or 0
+    if speed <= 0 then
+        speed = tonumber(bot.GetRunSpeed and bot:GetRunSpeed() or 0)
+    end
+    return math.max(1, speed > 0 and speed or 300)
+end
+
+local function GetBotClassBaseJump(bot)
+    if not IsValid(bot) then return 200 end
+    local classTable = bot.GetPlayerClassTable and bot:GetPlayerClassTable() or nil
+    local jump = tonumber(classTable and classTable.JumpPower) or 0
+    if jump <= 0 then
+        jump = tonumber(bot.PlayerJumpPower) or tonumber(bot.GetJumpPower and bot:GetJumpPower() or 0)
+    end
+    return math.max(100, jump > 0 and jump or 200)
+end
+
+local function ClampDemoMvMMovement(bot)
+    if not IsValid(bot) then return end
+    local cls = string.lower(tostring((bot.GetPlayerClass and bot:GetPlayerClass()) or bot.playerclass or ""))
+    if cls ~= "demoman" then return end
+
+    local baseSpeed = GetBotClassBaseSpeed(bot)
+    local maxSpeed = baseSpeed * 1.15
+    local runSpeed = tonumber(bot.GetRunSpeed and bot:GetRunSpeed() or 0)
+    if runSpeed > maxSpeed then
+        if isfunction(bot.SetClassSpeed) then
+            bot:SetClassSpeed(maxSpeed)
+        end
+        if isfunction(bot.SetWalkSpeed) then
+            bot:SetWalkSpeed(maxSpeed)
+        end
+        if isfunction(bot.SetRunSpeed) then
+            bot:SetRunSpeed(maxSpeed)
+        end
+        if isfunction(bot.SetMaxSpeed) then
+            bot:SetMaxSpeed(maxSpeed)
+        end
+    end
+
+    local baseJump = tonumber(bot.TF_MVM_BaseJumpPower) or GetBotClassBaseJump(bot)
+    local maxJump = baseJump * 1.15
+    local jump = tonumber(bot.GetJumpPower and bot:GetJumpPower() or 0)
+    if jump > maxJump then
+        bot.PlayerJumpPower = maxJump
+        if isfunction(bot.SetJumpPower) then
+            bot:SetJumpPower(maxJump)
+        end
+    end
 end
 
 local function ForceSelectMelee(bot)
@@ -585,9 +890,66 @@ local function ApplyBotItems(bot, items)
             if not string.StartWith(weaponClass, "tf_weapon_") then
                 weaponClass = "tf_weapon_" .. string.lower(weaponClass)
             end
-            bot:Give(weaponClass)
+            if bot.Give then
+                bot:Give(weaponClass)
+            end
         end
     end
+end
+
+local function ForceSelectWeaponSlot(bot, slot)
+    if not IsValid(bot) then return end
+    local wanted = tonumber(slot)
+    if not wanted then return end
+
+    for _, wep in ipairs(bot:GetWeapons()) do
+        if not IsValid(wep) then continue end
+        local wepSlot = tonumber(wep.Slot)
+        if wepSlot == nil and wep.GetSlot then
+            wepSlot = tonumber(wep:GetSlot())
+        end
+        if wepSlot == wanted then
+            bot:SelectWeapon(wep:GetClass())
+            return
+        end
+    end
+end
+
+local function ParseEventChangeAttributes(raw)
+    local out = {}
+    if not istable(raw) then return out end
+
+    local function mergeEvent(name, block)
+        name = TrimLower(name)
+        if name == "" then return end
+        if not istable(block) then
+            if IsPopStrictEnabled() then
+                print(string.format("[TF_MVM][POP] strict: EventChangeAttributes '%s' ignored because block is not a table", tostring(name)))
+            end
+            return
+        end
+        out[name] = Merge(out[name] or {}, block)
+    end
+
+    for k, v in pairs(raw) do
+        if isstring(k) then
+            if IsArray(v) then
+                for _, entry in ipairs(ToArray(v)) do
+                    mergeEvent(k, entry)
+                end
+            else
+                mergeEvent(k, v)
+            end
+        elseif istable(v) then
+            for eventName, eventBlock in pairs(v) do
+                if isstring(eventName) then
+                    mergeEvent(eventName, eventBlock)
+                end
+            end
+        end
+    end
+
+    return out
 end
 
 local function HasDefinedItems(items)
@@ -609,7 +971,7 @@ local NAME_CLASS_HINTS = {
     medic = "medic",
     sniper = "sniper",
     spy = "spy",
-    sentrybuster = "demoman",
+    sentrybuster = "sentrybuster",
 }
 
 local function GuessClassFromName(botName, fallbackClass)
@@ -660,8 +1022,139 @@ local function IsGateBotDef(def)
     return false
 end
 
-function SPAWNER:SpawnTFBot(runtime, rawDef, spawnState, whereOverride, missionId, fixedSpawnEnt)
+local function BuildTagSet(tags)
+    local set = {}
+    local list = {}
+    for _, tag in ipairs(ToArray(tags)) do
+        local key = TrimLower(tag)
+        if key ~= "" and not set[key] then
+            set[key] = true
+            list[#list + 1] = key
+        end
+    end
+    return set, list
+end
+
+local function ApplyHealthAndScale(bot, def)
+    if not IsValid(bot) or not istable(def) then return end
+
+    local health = tonumber(ScalarValue(def.Health))
+    if health and health > 0 then
+        health = math.floor(health)
+        if bot.SetMaxHealth then
+            bot:SetMaxHealth(health)
+        end
+        if bot.SetHealth then
+            bot:SetHealth(math.max(1, health))
+        end
+    end
+
+    local scale = tonumber(ScalarValue(def.Scale))
+    if scale and scale > 0 and bot.SetModelScale then
+        bot:SetModelScale(scale)
+    end
+end
+
+local function ApplyViewAndMovementHints(bot, def)
+    if not IsValid(bot) or not istable(def) then return end
+
+    local maxVisionRange = tonumber(ScalarValue(def.MaxVisionRange))
+    if maxVisionRange and maxVisionRange > 0 then
+        bot.TF_MVM_MaxVisionRange = maxVisionRange
+    end
+
+    local autoJumpMin = tonumber(ScalarValue(def.AutoJumpMin))
+    local autoJumpMax = tonumber(ScalarValue(def.AutoJumpMax))
+    if autoJumpMin or autoJumpMax then
+        bot.TF_MVM_AutoJumpMin = autoJumpMin
+        bot.TF_MVM_AutoJumpMax = autoJumpMax
+    end
+
+    local teleportWhere = ToArray(def.TeleportWhere)
+    if #teleportWhere > 0 then
+        bot.TF_MVM_TeleportWhere = teleportWhere
+    end
+end
+
+local function ApplyTeleportToHintIfRequested(bot)
+    if not IsValid(bot) then return end
+    if not bot.TF_MVM_TeleportToHint then return end
+    if not istable(bot.TF_MVM_TeleportWhere) then return end
+
+    local candidates = {}
+    for _, hintName in ipairs(bot.TF_MVM_TeleportWhere) do
+        if not isstring(hintName) then continue end
+        for _, ent in ipairs(ents.FindByName(hintName)) do
+            if IsValid(ent) then
+                candidates[#candidates + 1] = ent
+            end
+        end
+    end
+    if #candidates <= 0 then return end
+
+    local pick = table.Random(candidates)
+    if not IsValid(pick) then return end
+    bot:SetPos(pick:GetPos())
+    bot:SetAngles(pick:GetAngles())
+end
+
+local function ApplyClassIcon(bot, def)
+    if not IsValid(bot) or not istable(def) then return end
+    local icon = string.Trim(tostring(ScalarValue(def.ClassIcon) or ""))
+    if icon == "" then
+        icon = string.Trim(tostring(ScalarValue(def.Icon) or ""))
+    end
+    if icon ~= "" then
+        bot:SetNWString("TF_MVM_ClassIcon", icon)
+        bot.TF_MVM_ClassIcon = icon
+    end
+end
+
+local function ApplyWeaponRestrictionSelection(bot, restriction)
+    if not IsValid(bot) then return end
+    if restriction == "meleeonly" then
+        ForceSelectMelee(bot)
+        return
+    end
+    if restriction == "primaryonly" then
+        ForceSelectWeaponSlot(bot, 0)
+        return
+    end
+    if restriction == "secondaryonly" then
+        ForceSelectWeaponSlot(bot, 1)
+    end
+end
+
+local function BuildAppliedDef(baseDef, defaultEventDef)
+    if istable(defaultEventDef) then
+        return defaultEventDef
+    end
+    return baseDef
+end
+
+local function GetValveAIBackend()
+    local cv = GetConVar("tf_bot_valve_ai_backend")
+    if not cv then return "player" end
+    local v = string.lower(tostring(cv:GetString() or "player"))
+    if v ~= "player" and v ~= "nextbot" and v ~= "hybrid" then
+        v = "player"
+    end
+    return v
+end
+
+local function ShouldUseNextBotSpawner()
+    local enabled = GetConVar("tf_bot_valve_ai_enable")
+    if enabled and not enabled:GetBool() then
+        return false
+    end
+    local backend = GetValveAIBackend()
+    return backend == "nextbot" or backend == "hybrid"
+end
+
+function SPAWNER:SpawnTFBot(runtime, rawDef, spawnState, whereOverride, missionId, fixedSpawnEnt, selectorState, randomSpawn)
     local def = self:BuildBotDef(runtime, rawDef)
+    local eventDefs = ParseEventChangeAttributes(def.EventChangeAttributes or def.eventchangeattributes)
+    local appliedDef = BuildAppliedDef(def, eventDefs["default"])
 
     local botClass = NormalizeClass(def.Class or "scout")
     local displayName = NormalizeDisplayBotName(def.Name or def.Class or "MvM Bot")
@@ -670,15 +1163,34 @@ function SPAWNER:SpawnTFBot(runtime, rawDef, spawnState, whereOverride, missionI
     local spawnClassHint = def.SpawnClassHint and tostring(def.SpawnClassHint) or botClass
     local spawnEnt = fixedSpawnEnt
     if not IsValid(spawnEnt) then
-        spawnEnt = self:PickSpawnEntity(whereOverride or def.Where, spawnClassHint, nil, true)
+        local useRandom = randomSpawn
+        if useRandom == nil then
+            useRandom = true
+        end
+        spawnEnt = self:PickSpawnEntity(whereOverride or def.Where, spawnClassHint, selectorState, useRandom)
     end
     if not IsValid(spawnEnt) then
         return nil, "no_spawnpoint"
     end
+    local spawnPos = ResolveSafeSpawnPos(spawnEnt)
+    local spawnAng = spawnEnt:GetAngles()
 
-    local bot = player.CreateNextBot(botName)
-    if not IsValid(bot) then
-        return nil, "player_limit"
+    local useNextBotBase = ShouldUseNextBotSpawner()
+    local bot
+    if useNextBotBase then
+        bot = ents.Create("tf_bot_base_nextbot")
+        if not IsValid(bot) then
+            return nil, "failed_create_nextbot_base"
+        end
+        bot:SetPos(spawnPos)
+        bot:SetAngles(spawnAng)
+        bot:Spawn()
+        bot:Activate()
+    else
+        bot = player.CreateNextBot(botName)
+        if not IsValid(bot) then
+            return nil, "player_limit"
+        end
     end
 
     bot.TFBot = true
@@ -686,48 +1198,82 @@ function SPAWNER:SpawnTFBot(runtime, rawDef, spawnState, whereOverride, missionI
     bot.IsMVMRobot = true
     -- Keep runtime team valid for all GMod systems.
     bot:SetTeam(TEAM_BLU)
-    bot:SetSkin(1)
-    bot:SetPos(spawnEnt:GetPos())
-    bot:SetAngles(spawnEnt:GetAngles())
+    if bot.SetSkin then
+        bot:SetSkin(1)
+    end
+    bot:SetPos(spawnPos)
+    bot:SetAngles(spawnAng)
     bot:SetPlayerClass(botClass)
-    bot.Difficulty = NormalizeDifficulty(def.Skill)
+    bot.Difficulty = NormalizeDifficulty(appliedDef.Skill or def.Skill)
     bot.TF_MVM_IsGateBot = IsGateBotDef(def)
     bot:SetNWBool("TF_MVM_GateBot", bot.TF_MVM_IsGateBot and true or false)
-    bot.TF_MVM_WeaponRestriction = NormalizeWeaponRestriction(def)
+    bot.TF_MVM_WeaponRestriction = NormalizeWeaponRestriction(appliedDef or def)
+    bot.TF_MVM_Objective = TrimLower(def.Objective or "")
+    bot.TF_MVM_MissionId = missionId
+    bot:SetNWString("TF_MVM_Objective", bot.TF_MVM_Objective or "")
     bot:SetNWString("TF_BotDisplayName", displayName)
-    bot.ControllerBot = ents.Create("ctf_bot_navigator")
-    if IsValid(bot.ControllerBot) then
-        bot.ControllerBot:Spawn()
-        bot.ControllerBot:SetOwner(bot)
+    bot.TF_MVM_EventChangeDefs = eventDefs
+    bot.TF_MVM_DefaultDynamicDef = eventDefs["default"]
+    bot.TF_MVM_ApplyEventChangeAttributes = function(ent, eventName)
+        return SPAWNER:ApplyBotEventChange(ent, eventName)
+    end
+
+    local tagSet, tagList = BuildTagSet(appliedDef.Tag or appliedDef.Tags or def.Tag or def.Tags)
+    bot.TF_MVM_Tags = tagSet
+    bot.TF_MVM_TagList = tagList
+
+    ApplyClassIcon(bot, appliedDef)
+    ApplyHealthAndScale(bot, appliedDef)
+    ApplyViewAndMovementHints(bot, appliedDef)
+
+    if not useNextBotBase then
+        bot.ControllerBot = ents.Create("ctf_bot_navigator")
+        if IsValid(bot.ControllerBot) then
+            bot.ControllerBot:Spawn()
+            bot.ControllerBot:SetOwner(bot)
+        end
     end
 
     timer.Simple(0.15, function()
         if not IsValid(bot) then return end
         bot:SetPlayerClass(botClass)
-        ApplyBotAttributes(bot, def.Attributes)
-        if IsMiniBossAttrList(def.Attributes) then
+        bot.Difficulty = NormalizeDifficulty(appliedDef.Skill or def.Skill)
+        bot.TF_MVM_WeaponRestriction = NormalizeWeaponRestriction(appliedDef or def)
+        ApplyBehaviorModifiers(bot, appliedDef.BehaviorModifiers)
+        ApplyBotAttributes(bot, appliedDef.Attributes)
+        if IsMiniBossAttrList(appliedDef.Attributes) then
             local bossModel = BOSS_MODEL_BY_CLASS[botClass]
             if bossModel then
                 bot:SetModel(bossModel)
             end
         end
-        ApplyMiniBossSpeedFromAttrs(bot, def.Attributes)
-        if HasDefinedItems(def.Item) then
-            ApplyBotItems(bot, def.Item)
+        ApplyMiniBossSpeedFromAttrs(bot, appliedDef.Attributes)
+        if HasDefinedItems(appliedDef.Item) then
+            ApplyBotItems(bot, appliedDef.Item)
+            if bot.IsTFBotValveBase and bot.ApplyItemLoadout then
+                bot:ApplyItemLoadout(ToArray(appliedDef.Item))
+            end
         else
             ApplyDefaultWeaponsFromName(bot, botClass, displayName)
+            if bot.IsTFBotValveBase and bot.BuildDefaultClassLoadout then
+                bot:BuildDefaultClassLoadout()
+                bot:RefreshWeaponAttachment()
+            end
         end
+        ApplyWeaponRestrictionSelection(bot, bot.TF_MVM_WeaponRestriction)
+        ApplyTeleportToHintIfRequested(bot)
         -- POP support: apply CharacterAttributes and ItemAttributes to spawned bot weapons.
-        ApplyCharacterAndItemAttributes(bot, def)
+        ApplyCharacterAndItemAttributes(bot, appliedDef)
         timer.Simple(0, function()
             if IsValid(bot) then
-                ApplyCharacterAndItemAttributes(bot, def)
+                ApplyCharacterAndItemAttributes(bot, appliedDef)
+                ApplyWeaponRestrictionSelection(bot, bot.TF_MVM_WeaponRestriction)
+                ClampDemoMvMMovement(bot)
             end
         end)
-        if bot.TF_MVM_WeaponRestriction == "meleeonly" then
-            ForceSelectMelee(bot)
+        if bot.SetMaxSpeed then
+            bot:SetMaxSpeed(GetBotClassBaseSpeed(bot))
         end
-        bot:SetMaxSpeed(520)
     end)
 
     if runtime and runtime.RegisterManagedBot then
@@ -737,12 +1283,68 @@ function SPAWNER:SpawnTFBot(runtime, rawDef, spawnState, whereOverride, missionI
     return bot
 end
 
-function SPAWNER:SpawnTank(runtime, rawDef, spawnState, fixedSpawnEnt)
+function SPAWNER:ApplyBotEventChange(bot, eventName)
+    if not IsValid(bot) then return false, "invalid_bot" end
+    local defs = bot.TF_MVM_EventChangeDefs
+    if not istable(defs) then return false, "no_event_defs" end
+
+    local key = TrimLower(eventName)
+    if key == "" then return false, "empty_event" end
+
+    local eventDef = defs[key]
+    if not istable(eventDef) then
+        return false, "unknown_event"
+    end
+
+    if eventDef.Skill ~= nil then
+        bot.Difficulty = NormalizeDifficulty(eventDef.Skill)
+    elseif bot.Difficulty == nil then
+        bot.Difficulty = NormalizeDifficulty("normal")
+    end
+    bot.TF_MVM_WeaponRestriction = NormalizeWeaponRestriction(eventDef) or bot.TF_MVM_WeaponRestriction
+
+    ApplyBehaviorModifiers(bot, eventDef.BehaviorModifiers)
+    ApplyBotAttributes(bot, eventDef.Attributes)
+    ApplyHealthAndScale(bot, eventDef)
+    ApplyViewAndMovementHints(bot, eventDef)
+    ApplyClassIcon(bot, eventDef)
+
+    local tagSet, tagList = BuildTagSet(eventDef.Tag or eventDef.Tags)
+    if next(tagSet) ~= nil then
+        bot.TF_MVM_Tags = tagSet
+        bot.TF_MVM_TagList = tagList
+    end
+
+    if HasDefinedItems(eventDef.Item) then
+        ApplyBotItems(bot, eventDef.Item)
+        if bot.IsTFBotValveBase and bot.ApplyItemLoadout then
+            bot:ApplyItemLoadout(ToArray(eventDef.Item))
+        end
+    end
+
+    ApplyWeaponRestrictionSelection(bot, bot.TF_MVM_WeaponRestriction)
+    ApplyCharacterAndItemAttributes(bot, eventDef)
+    timer.Simple(0, function()
+        if not IsValid(bot) then return end
+        ApplyCharacterAndItemAttributes(bot, eventDef)
+        ApplyWeaponRestrictionSelection(bot, bot.TF_MVM_WeaponRestriction)
+        ApplyTeleportToHintIfRequested(bot)
+        ClampDemoMvMMovement(bot)
+    end)
+
+    return true
+end
+
+function SPAWNER:SpawnTank(runtime, rawDef, spawnState, fixedSpawnEnt, selectorState, randomSpawn)
     local def = self:BuildBotDef(runtime, rawDef)
 
     local spawnEnt = fixedSpawnEnt
     if not IsValid(spawnEnt) then
-        spawnEnt = self:ResolveSpawnEntity(def.Where, "tank")
+        local useRandom = randomSpawn
+        if useRandom == nil then
+            useRandom = true
+        end
+        spawnEnt = self:PickSpawnEntity(def.Where, "tank", selectorState, useRandom)
     end
     local tank = ents.Create("tank_boss")
     if not IsValid(tank) then
@@ -784,6 +1386,52 @@ function SPAWNER:SpawnTank(runtime, rawDef, spawnState, fixedSpawnEnt)
     return tank
 end
 
+function SPAWNER:SpawnSentryGun(runtime, rawDef, spawnState, fixedSpawnEnt, selectorState, randomSpawn)
+    local def = self:BuildBotDef(runtime, rawDef)
+
+    local spawnEnt = fixedSpawnEnt
+    if not IsValid(spawnEnt) then
+        local useRandom = randomSpawn
+        if useRandom == nil then
+            useRandom = true
+        end
+        spawnEnt = self:PickSpawnEntity(def.Where, "sentrygun", selectorState, useRandom)
+    end
+    if not IsValid(spawnEnt) then
+        return nil, "no_spawnpoint"
+    end
+
+    local pos = ResolveSafeSpawnPos(spawnEnt)
+    local ang = spawnEnt:GetAngles()
+    local sentry = ents.Create("obj_sentrygun")
+    if not IsValid(sentry) then
+        return nil, "failed_create_sentry"
+    end
+
+    sentry:SetPos(pos)
+    sentry:SetAngles(ang)
+    sentry:Spawn()
+    if sentry.ChangeTeam then
+        sentry:ChangeTeam(TEAM_RED)
+    elseif sentry.SetTeam then
+        sentry:SetTeam(TEAM_RED)
+    end
+
+    local level = math.max(0, math.floor(NumValue(def.Level, 0) or 0))
+    if sentry.m_nDefaultUpgradeLevel ~= nil then
+        sentry.m_nDefaultUpgradeLevel = level + 1
+    end
+    if sentry.InitializeMapPlacedObject then
+        sentry:InitializeMapPlacedObject()
+    end
+
+    if runtime and runtime.RegisterManagedEntity then
+        runtime:RegisterManagedEntity(sentry, spawnState, def, "sentrygun")
+    end
+
+    return sentry
+end
+
 function SPAWNER:SpawnMissionBot(runtime, missionDef, missionId)
     missionDef = missionDef or {}
 
@@ -794,24 +1442,38 @@ function SPAWNER:SpawnMissionBot(runtime, missionDef, missionId)
 
     local className = ResolveMissionClass(missionDef, rawBot)
     if not isstring(className) or className == "" then
-        className = NormalizeClass(rawBot.Class or missionDef.Class or "scout")
+        className = NormalizeClass(rawBot.Class or rawBot.class or missionDef.Class or missionDef.class or "scout")
     end
     local botDef = Merge(rawBot, {
-        Name = missionDef.Name or missionDef.Class or className or rawBot.Class or "MvM Bot",
+        Name = missionDef.Name or missionDef.name or missionDef.Class or missionDef.class or className or rawBot.Class or rawBot.class or "MvM Bot",
         Skill = missionDef.Skill or rawBot.Skill or "expert",
-        Attributes = missionDef.Attributes,
+        Objective = missionDef.Objective or missionDef.objective,
+        Attributes = missionDef.Attributes or missionDef.attributes,
+        BehaviorModifiers = missionDef.BehaviorModifiers,
         CharacterAttributes = missionDef.CharacterAttributes or missionDef.characterattributes,
         ItemAttributes = missionDef.ItemAttributes or missionDef.itemattributes,
+        EventChangeAttributes = missionDef.EventChangeAttributes or missionDef.eventchangeattributes,
         WeaponRestrictions = missionDef.WeaponRestrictions,
+        MaxVisionRange = missionDef.MaxVisionRange,
+        TeleportWhere = missionDef.TeleportWhere,
+        AutoJumpMin = missionDef.AutoJumpMin,
+        AutoJumpMax = missionDef.AutoJumpMax,
+        Scale = missionDef.Scale,
+        Health = missionDef.Health,
+        ClassIcon = missionDef.ClassIcon or missionDef.classicon or missionDef.Icon or missionDef.icon,
+        Tag = missionDef.Tag or missionDef.Tags,
         Item = missionDef.Item,
         Where = missionDef.Where,
     })
     if className and className ~= "" then
         botDef.Class = className
     end
-    local objective = string.lower(tostring(ScalarValue(missionDef.Objective) or ""))
+    local objective = string.lower(tostring(ScalarValue(missionDef.Objective or missionDef.objective) or ""))
     if objective == "destroysentries" or objective == "sentrybuster" then
-        return
+        botDef.Class = "sentrybuster"
+        botDef.Name = botDef.Name or "Sentry Buster"
+        botDef.Objective = "DestroySentries"
+        botDef.BehaviorModifiers = Merge(botDef.BehaviorModifiers or {}, {"Mobber"})
     end
 
     return self:SpawnTFBot(runtime, botDef, nil, missionDef.Where, missionId)

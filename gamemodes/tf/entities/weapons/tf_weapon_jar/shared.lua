@@ -34,6 +34,7 @@ SWEP.HasCustomMeleeBehaviour = true
 
 SWEP.HoldType = "ITEM1"
 SWEP.HoldTypeHL2 = "grenade"
+SWEP.GlobalCustomHUD = {HudItemEffectMeter = function(self) return self:Ammo1() < 1 end}
 
 SWEP.ProjectileShootOffset = Vector(0, 0, 0)
 
@@ -44,6 +45,30 @@ SWEP.AddPitch = -4
 SWEP.VM_DRAW = ACT_ITEM1_VM_DRAW
 SWEP.VM_IDLE = ACT_ITEM1_VM_IDLE
 SWEP.VM_PRIMARYATTACK = ACT_ITEM1_VM_RELOAD
+
+function SWEP:GetHUDMeterName()
+	return "#TF_SecondaryMeter"
+end
+
+function SWEP:GetHUDMeterResFile()
+	return "resource/ui/huditemeffectmeter_sniper.res"
+end
+
+function SWEP:GetHUDMeterValue()
+	if not IsValid(self.Owner) then return 0 end
+	if self:Ammo1() >= 1 then
+		return 1
+	end
+
+	if self.Owner.NextGiveAmmo and self.Owner.NextGiveAmmoType == self.Primary.Ammo then
+		local recharge = self.Properties.ReloadTime or 20
+		if recharge <= 0 then return 0 end
+		local elapsed = recharge - math.max(0, self.Owner.NextGiveAmmo - CurTime())
+		return math.Clamp(elapsed / recharge, 0, 1)
+	end
+
+	return 0
+end
 
 function SWEP:InspectAnimCheck()
 	if self:GetItemData().model_player == "models/weapons/c_models/c_breadmonster/c_breadmonster.mdl" then

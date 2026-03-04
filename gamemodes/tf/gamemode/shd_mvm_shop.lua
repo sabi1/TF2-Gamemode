@@ -1,7 +1,6 @@
-if SERVER then
+﻿if SERVER then
     AddCSLuaFile()
     util.AddNetworkString("TF_MVM_UpgradeOpen")
-    util.AddNetworkString("TF_MVM_UpgradeClose")
     util.AddNetworkString("TF_MVM_UpgradeClose")
     util.AddNetworkString("TF_MVM_UpgradeAction")
     util.AddNetworkString("TF_MVM_CanteenUse")
@@ -21,8 +20,6 @@ TF_MVMShop.CanteenTypes = {
 
 TF_MVMShop.DefaultUpgrades = {
     { id = "max_health", name = "Max Health", category = "Player", target = "player", description = "+25 max health", costs = { 150, 250, 350, 450 }, requiresScript = true },
-TF_MVMShop.DefaultUpgrades = {
-    { id = "max_health", name = "Max Health", category = "Player", target = "player", description = "+25 max health", costs = { 150, 250, 350, 450 }, requiresScript = true },
     { id = "move_speed", name = "Move Speed", category = "Player", target = "player", description = "+8% movement speed", costs = { 200, 300, 425 } },
     { id = "resist_all", name = "Damage Resistance", category = "Player", target = "player", description = "-8% incoming damage", costs = { 200, 325, 450, 600 } },
     { id = "resist_bullet", name = "Bullet Resistance", category = "Player", target = "player", description = "-10% bullet damage", costs = { 150, 250, 350 } },
@@ -36,17 +33,20 @@ TF_MVMShop.DefaultUpgrades = {
     { id = "reload_primary", name = "Primary Reload", category = "Primary", target = "primary", description = "+10% reload speed", costs = { 125, 225, 325 } },
     { id = "clip_primary", name = "Primary Clip Size", category = "Primary", target = "primary", description = "+20% clip size", costs = { 100, 175, 250 } },
     { id = "ammo_primary", name = "Primary Ammo", category = "Primary", target = "primary", description = "+25% max ammo", costs = { 100, 200, 300 } },
+    { id = "effectbar_primary", name = "Recharge Rate", category = "Primary", target = "primary", description = "+25% faster recharge rate", costs = { 100, 150, 200, 250 }, requiresScript = true },
 
     { id = "damage_secondary", name = "Secondary Damage", category = "Secondary", target = "secondary", description = "+12% damage", costs = { 150, 250, 350, 475 } },
     { id = "firerate_secondary", name = "Secondary Fire Rate", category = "Secondary", target = "secondary", description = "+8% fire speed", costs = { 150, 250, 350, 500 } },
     { id = "reload_secondary", name = "Secondary Reload", category = "Secondary", target = "secondary", description = "+10% reload speed", costs = { 125, 225, 325 } },
     { id = "clip_secondary", name = "Secondary Clip Size", category = "Secondary", target = "secondary", description = "+20% clip size", costs = { 100, 175, 250 } },
     { id = "ammo_secondary", name = "Secondary Ammo", category = "Secondary", target = "secondary", description = "+25% max ammo", costs = { 100, 200, 300 } },
+    { id = "effectbar_secondary", name = "Recharge Rate", category = "Secondary", target = "secondary", description = "+25% faster recharge rate", costs = { 100, 150, 200, 250 }, requiresScript = false },
+    { id = "buff_duration_secondary", name = "Buff Duration", category = "Secondary", target = "secondary", description = "+25% buff duration", costs = { 250, 250 }, requiresScript = false },
 
     { id = "damage_melee", name = "Melee Damage", category = "Melee", target = "melee", description = "+15% melee damage", costs = { 125, 225, 325, 425 } },
     { id = "swing_melee", name = "Melee Swing Speed", category = "Melee", target = "melee", description = "+10% swing speed", costs = { 125, 225, 325 } },
     { id = "lifesteal_melee", name = "Melee Heal On Kill", category = "Melee", target = "melee", description = "+25 health on melee kill", costs = { 150, 275, 400 } },
-    { id = "lifesteal_melee", name = "Melee Heal On Kill", category = "Melee", target = "melee", description = "+25 health on melee kill", costs = { 150, 275, 400 } },
+    { id = "effectbar_melee", name = "Recharge Rate", category = "Melee", target = "melee", description = "+25% faster recharge rate", costs = { 100, 150, 200, 250 }, requiresScript = true },
 
     { id = "building_health", name = "Building Health", category = "Engineer", target = "player", classes = { "engineer" }, description = "+15% building health", costs = { 150, 250, 350 } },
     { id = "building_rate", name = "Building Fire Rate", category = "Engineer", target = "player", classes = { "engineer" }, description = "+10% sentry fire rate", costs = { 200, 300, 450 } },
@@ -65,6 +65,7 @@ local function NormalizeUpgradeCostsFlat(list)
 end
 
 NormalizeUpgradeCostsFlat(TF_MVMShop.DefaultUpgrades)
+TF_MVMShop.BaseDefaultUpgrades = TF_MVMShop.BaseDefaultUpgrades or table.Copy(TF_MVMShop.DefaultUpgrades)
 
 TF_MVMShop.Upgrades = table.Copy(TF_MVMShop.DefaultUpgrades)
 TF_MVMShop.CustomUpgradeAttributeMap = {
@@ -82,16 +83,20 @@ TF_MVMShop.CustomUpgradeAttributeMap = {
     reload_primary = "faster reload rate",
     clip_primary = "clip size bonus upgrade",
     ammo_primary = "maxammo primary increased",
+    effectbar_primary = { "effect bar recharge rate increased", "charge recharge rate increased" },
 
     damage_secondary = "damage bonus",
     firerate_secondary = "fire rate bonus",
     reload_secondary = "faster reload rate",
     clip_secondary = "clip size bonus upgrade",
     ammo_secondary = "maxammo secondary increased",
+    effectbar_secondary = { "effect bar recharge rate increased", "charge recharge rate increased" },
+    buff_duration_secondary = "increase buff duration",
 
     damage_melee = "damage bonus",
     swing_melee = "melee attack rate bonus",
     lifesteal_melee = "heal on kill",
+    effectbar_melee = { "effect bar recharge rate increased", "charge recharge rate increased" },
 
     building_health = "engy building health bonus",
     building_rate = "engy sentry fire rate increased",
@@ -111,30 +116,36 @@ TF_MVMShop.DisplayNameById = {
     resist_fire = "Fire Resistance",
     autoheal = "Auto-Heal",
     jump_height = "+20% Jump Height",
-    damage_primary = "+20% Damage",
+    damage_primary = "+25% Damage",
     firerate_primary = "+10% Firing Speed",
     reload_primary = "+20% Reload Speed",
     clip_primary = "+50% Clip Size",
     ammo_primary = "+50% Ammo Capacity",
-    damage_secondary = "+20% Damage",
+    effectbar_primary = "+25% Recharge Rate",
+    damage_secondary = "+25% Damage",
     firerate_secondary = "+10% Firing Speed",
     reload_secondary = "+20% Reload Speed",
     clip_secondary = "+50% Clip Size",
     ammo_secondary = "+50% Ammo Capacity",
+    effectbar_secondary = "+25% Recharge Rate",
+    buff_duration_secondary = "+25% Buff Duration",
     damage_melee = "+25% Damage",
     swing_melee = "+10% Attack Speed",
     lifesteal_melee = "+25 Health On Kill",
+    effectbar_melee = "+25% Recharge Rate",
     building_health = "+100% Building Health",
     building_rate = "+10% Sentry Fire Speed",
     canteen_capacity = "+1 Canteen Capacity",
 }
 TF_MVMShop.AttributeDisplayNameMap = {
-    ["damage bonus"] = "+20% Damage",
+    ["damage bonus"] = "+25% Damage",
     ["fire rate bonus"] = "+10% Firing Speed",
     ["faster reload rate"] = "+20% Reload Speed",
     ["clip size bonus upgrade"] = "+50% Clip Size",
     ["maxammo primary increased"] = "+50% Ammo Capacity",
     ["maxammo secondary increased"] = "+50% Ammo Capacity",
+    ["effect bar recharge rate increased"] = "+25% Recharge Rate",
+    ["increase buff duration"] = "+25% Buff Duration",
     ["melee attack rate bonus"] = "+10% Attack Speed",
     ["move speed bonus"] = "+10% Movement Speed",
     ["increased jump height"] = "+20% Jump Height",
@@ -148,6 +159,7 @@ TF_MVMShop.AttributeDisplayNameMap = {
     ["engy sentry fire rate increased"] = "+10% Sentry Fire Speed",
     ["canteen specialist"] = "+1 Canteen Capacity",
 }
+TF_MVMShop.ScriptDescriptionById = TF_MVMShop.ScriptDescriptionById or {}
 
 local function PrettifyAttributeName(attr)
     local pretty = string.gsub(string.lower(tostring(attr or "")), "_", " ")
@@ -288,7 +300,113 @@ local function ParseUpgradeScriptLookupFromText(txt)
     return byAttrib
 end
 
-local function DeriveTierCountFromScript(increment, cap, fallback)
+local function ExtractNamedKVBlock(txt, groupName)
+    if not isstring(txt) or txt == "" then return nil end
+    local marker = "\"" .. tostring(groupName or "") .. "\""
+    if marker == "\"\"" then return nil end
+    local s = string.find(txt, marker, 1, true)
+    if not s then return nil end
+    local open = string.find(txt, "{", s, true)
+    if not open then return nil end
+    local depth = 0
+    local i = open
+    while i <= #txt do
+        local ch = string.sub(txt, i, i)
+        if ch == "{" then
+            depth = depth + 1
+        elseif ch == "}" then
+            depth = depth - 1
+            if depth == 0 then
+                return string.sub(txt, open + 1, i - 1)
+            end
+        end
+        i = i + 1
+    end
+    return nil
+end
+
+local function GuessUpgradeTargetFromAttribute(attributeName, isPlayerUpgrade)
+    if isPlayerUpgrade then return "player" end
+    local attr = string.lower(tostring(attributeName or ""))
+    if attr == "" then return "primary" end
+    if string.find(attr, "melee", 1, true) then return "melee" end
+    if string.find(attr, "secondary", 1, true) then return "secondary" end
+    if string.find(attr, "buff", 1, true)
+        or string.find(attr, "jar", 1, true)
+        or string.find(attr, "canteen", 1, true)
+        or string.find(attr, "effect bar", 1, true)
+        or string.find(attr, "charge recharge", 1, true) then
+        return "secondary"
+    end
+    return "primary"
+end
+
+local DeriveTierCountFromScript
+
+local function ParseUpgradeEntriesFromText(txt)
+    local out = {
+        item = {},
+        player = {},
+        all = {},
+    }
+    if not isstring(txt) or txt == "" then
+        return out
+    end
+
+    local clean = string.gsub(txt, "//[^\r\n]*", "")
+
+    local function parseGroup(groupName, isPlayerUpgrade)
+        local body = ExtractNamedKVBlock(clean, groupName)
+        if not isstring(body) or body == "" then return end
+        for numericId, block in string.gmatch(body, "\"([%w%._%-]+)\"%s*(%b{})") do
+            local attrib = block:match("\"attribute\"%s*\"([^\"]+)\"")
+            local icon = block:match("\"icon\"%s*\"([^\"]+)\"")
+            local increment = tonumber(block:match("\"increment\"%s*\"([^\"]+)\""))
+            local cap = tonumber(block:match("\"cap\"%s*\"([^\"]+)\""))
+            local cost = tonumber(block:match("\"cost\"%s*\"([^\"]+)\""))
+            local quality = tonumber(block:match("\"quality\"%s*\"([^\"]+)\"")) or 2
+            local uiGroup = tonumber(block:match("\"ui_group\"%s*\"([^\"]+)\"")) or 0
+            if not attrib or not increment or not cap or not cost then
+                continue
+            end
+
+            local entry = {
+                id = tostring(numericId),
+                name = PrettifyAttributeName(attrib),
+                target = GuessUpgradeTargetFromAttribute(attrib, isPlayerUpgrade),
+                category = isPlayerUpgrade and "Player" or "Weapon",
+                description = "",
+                icon = tostring(icon or ""),
+                scriptAttribute = tostring(attrib),
+                scriptQuality = quality,
+                scriptUiGroup = uiGroup,
+                scriptIncrement = increment,
+                scriptCap = cap,
+                costs = {},
+            }
+            local tiers = DeriveTierCountFromScript(increment, cap, 1)
+            for i = 1, tiers do
+                entry.costs[i] = cost
+            end
+            if #entry.costs == 0 then
+                entry.costs[1] = cost
+            end
+
+            out.all[#out.all + 1] = entry
+            if isPlayerUpgrade then
+                out.player[#out.player + 1] = entry
+            else
+                out.item[#out.item + 1] = entry
+            end
+        end
+    end
+
+    parseGroup("ItemUpgrades", false)
+    parseGroup("PlayerUpgrades", true)
+    return out
+end
+
+DeriveTierCountFromScript = function(increment, cap, fallback)
     local inc = tonumber(increment) or 0
     local maxCap = tonumber(cap) or 0
     if inc == 0 or maxCap == 0 then return fallback end
@@ -321,15 +439,46 @@ local function ApplyCustomUpgradeScriptData(dataByAttrib)
         end
         local attr = TF_MVMShop.CustomUpgradeAttributeMap[up.id]
         if attr then
-            local byQuality = dataByAttrib[string.lower(attr)]
+            local byQuality = nil
+            local resolvedAttr = nil
+
+            local function tryResolveAttr(attrName)
+                if not isstring(attrName) or attrName == "" then return false end
+                local key = string.lower(attrName)
+                local candidate = dataByAttrib[key]
+                if istable(candidate) then
+                    byQuality = candidate
+                    resolvedAttr = attrName
+                    return true
+                end
+                return false
+            end
+
+            if isstring(attr) then
+                tryResolveAttr(attr)
+            elseif istable(attr) then
+                for _, name in ipairs(attr) do
+                    if tryResolveAttr(name) then break end
+                end
+            end
+
             local preferQuality = tonumber(TF_MVMShop.CustomUpgradeQualityById[up.id]) or 2
             local scriptData = byQuality and (byQuality[preferQuality] or byQuality[2] or byQuality[1] or byQuality[3]) or nil
             if scriptData then
                 if up.requiresScript then
                     up.scriptAvailable = true
                 end
+                up.scriptAttribute = string.lower(tostring(scriptData.attribute or resolvedAttr or ""))
+                up.scriptQuality = tonumber(scriptData.quality) or nil
+                up.scriptUiGroup = tonumber(scriptData.uiGroup) or nil
+                up.scriptIncrement = tonumber(scriptData.increment) or nil
+                up.scriptCap = tonumber(scriptData.cap) or nil
                 if scriptData.icon and scriptData.icon ~= "" then
                     up.icon = scriptData.icon
+                end
+                if scriptData.description and scriptData.description ~= "" then
+                    up.description = scriptData.description
+                    TF_MVMShop.ScriptDescriptionById[up.id] = scriptData.description
                 end
 
                 local tierCount = DeriveTierCountFromScript(scriptData.increment, scriptData.cap, #up.costs)
@@ -341,7 +490,7 @@ local function ApplyCustomUpgradeScriptData(dataByAttrib)
                     end
                 end
 
-                local attrLower = string.lower(tostring(scriptData.attribute or attr))
+                local attrLower = string.lower(tostring(scriptData.attribute or resolvedAttr or (isstring(attr) and attr or "") ))
                 up.name = TF_MVMShop.AttributeDisplayNameMap[attrLower]
                     or TF_MVMShop.DisplayNameById[up.id]
                     or PrettifyAttributeName(attrLower)
@@ -350,143 +499,150 @@ local function ApplyCustomUpgradeScriptData(dataByAttrib)
     end
 end
 
-local function GetPreferredScriptEntryForUpgrade(up, dataByAttrib)
-    if not istable(up) or not istable(dataByAttrib) then return nil end
-    local attr = tostring(up.attribute or TF_MVMShop.CustomUpgradeAttributeMap[up.id] or "")
-    if attr == "" then return nil end
-    local byQuality = dataByAttrib[string.lower(attr)]
-    if not byQuality then return nil end
-    local preferQuality = tonumber(TF_MVMShop.CustomUpgradeQualityById[up.id]) or 2
-    return byQuality[preferQuality] or byQuality[2] or byQuality[1] or byQuality[3]
-end
-
-local function ApplyScriptDataToUpgradeList(list, dataByAttrib)
-    if not istable(list) then return end
-    for _, up in ipairs(list) do
-        if up.requiresScript then
-            up.scriptAvailable = false
-        end
-
-        local scriptData = GetPreferredScriptEntryForUpgrade(up, dataByAttrib)
-        if scriptData then
-            up.scriptAvailable = true
-            up.attribute = tostring(scriptData.attribute or up.attribute or "")
-            up.scriptIncrement = tonumber(scriptData.increment) or up.scriptIncrement
-            up.scriptCap = tonumber(scriptData.cap) or up.scriptCap
-            up.scriptQuality = tonumber(scriptData.quality) or up.scriptQuality
-            if scriptData.icon and scriptData.icon ~= "" then
-                up.icon = scriptData.icon
-            end
-
-            local tierCount = DeriveTierCountFromScript(scriptData.increment, scriptData.cap, #(up.costs or {}))
-            local baseCost = tonumber(scriptData.cost) or 0
-            if baseCost > 0 and tierCount > 0 then
-                up.costs = {}
-                for i = 1, tierCount do
-                    up.costs[i] = baseCost
-                end
-            end
-
-            local attrLower = string.lower(tostring(scriptData.attribute or up.attribute or ""))
-            up.name = TF_MVMShop.AttributeDisplayNameMap[attrLower]
-                or TF_MVMShop.DisplayNameById[up.id]
-                or PrettifyAttributeName(attrLower)
-        else
-            local attrLower = string.lower(tostring(up.attribute or TF_MVMShop.CustomUpgradeAttributeMap[up.id] or ""))
-            if (not isstring(up.name)) or up.name == "" then
-                up.name = TF_MVMShop.AttributeDisplayNameMap[attrLower]
-                    or TF_MVMShop.DisplayNameById[up.id]
-                    or PrettifyAttributeName(attrLower ~= "" and attrLower or tostring(up.id or "upgrade"))
-            end
-            up.scriptIncrement = tonumber(up.scriptIncrement) or nil
-            up.scriptCap = tonumber(up.scriptCap) or nil
-            up.scriptQuality = tonumber(up.scriptQuality) or nil
-        end
-    end
-end
-
 function TF_MVMShop:LoadUpgrades()
+    TF_MVMShop.DefaultUpgrades = table.Copy(TF_MVMShop.BaseDefaultUpgrades or {})
+    TF_MVMShop.ScriptDescriptionById = {}
     for _, up in ipairs(TF_MVMShop.DefaultUpgrades) do
         if up.requiresScript then
             up.scriptAvailable = false
         end
     end
 
-    local paths = {}
-    -- convar override
+    local function ReadUpgradeData(path)
+        local txt = file.Read(path, "GAME")
+        if not txt then return nil end
+        local kv = util.KeyValuesToTable(txt)
+        if not kv then return nil end
+
+        local lookup = ParseUpgradeScriptLookupFromText(txt)
+        if not next(lookup) then
+            lookup = ParseUpgradeScriptLookup(kv)
+        end
+        local entries = ParseUpgradeEntriesFromText(txt)
+
+        return {
+            path = path,
+            lookup = lookup or {},
+            parsed = parseUpgradesKV(kv) or {},
+            scriptEntries = entries or { item = {}, player = {}, all = {} },
+        }
+    end
+
+    local function MergeLookup(baseLookup, extraLookup)
+        if not istable(extraLookup) then return baseLookup end
+        baseLookup = baseLookup or {}
+        for attr, byQuality in pairs(extraLookup) do
+            if not istable(byQuality) then continue end
+            local attrKey = string.lower(tostring(attr or ""))
+            if attrKey == "" then continue end
+            baseLookup[attrKey] = baseLookup[attrKey] or {}
+            for quality, entry in pairs(byQuality) do
+                baseLookup[attrKey][quality] = entry
+            end
+        end
+        return baseLookup
+    end
+
+    local function MergeParsedIntoList(list, parsed)
+        if not istable(list) or not istable(parsed) then return end
+        local byId = {}
+        local byAttribute = {}
+        for _, up in ipairs(list) do
+            if up.id then
+                byId[string.lower(tostring(up.id))] = up
+            end
+            local mappedAttr = TF_MVMShop.CustomUpgradeAttributeMap[up.id]
+            if isstring(mappedAttr) and mappedAttr ~= "" then
+                byAttribute[string.lower(mappedAttr)] = up
+            elseif istable(mappedAttr) then
+                for _, attrName in ipairs(mappedAttr) do
+                    attrName = string.lower(tostring(attrName or ""))
+                    if attrName ~= "" then
+                        byAttribute[attrName] = up
+                    end
+                end
+            end
+        end
+        for _, src in ipairs(parsed) do
+            local srcId = string.lower(tostring(src.id or ""))
+            local srcAttr = string.lower(tostring(src.scriptAttribute or src.attribute or src.id or ""))
+            local dst = byId[srcId] or byAttribute[srcAttr]
+            if not dst then continue end
+            if istable(src.costs) and #src.costs > 0 then dst.costs = src.costs end
+            if isstring(src.description) and src.description ~= "" then dst.description = src.description end
+            if isstring(src.icon) and src.icon ~= "" then dst.icon = src.icon end
+            if isstring(src.name) and src.name ~= "" then dst.name = src.name end
+            if isstring(src.category) and src.category ~= "" then dst.category = src.category end
+            if isstring(src.target) and src.target ~= "" then dst.target = src.target end
+        end
+    end
+
+    -- Always use Valve TF2 script as base first.
+    local basePaths = {
+        "tf/scripts/items/mvm_upgrades.txt",
+        "scripts/items/mvm_upgrades.txt",
+        "scripts/items/mvm_upgrades_tf2_stock.txt",
+    }
+
+    local baseData = nil
+    for _, path in ipairs(basePaths) do
+        baseData = ReadUpgradeData(path)
+        if baseData then break end
+    end
+
+    if not baseData then
+        if SERVER then
+            print("[MVMShop] could not load TF2 base mvm_upgrades.txt, using default list")
+        end
+        TF_MVMShop.Upgrades = table.Copy(TF_MVMShop.DefaultUpgrades)
+        rebuildUpgradesById()
+        return
+    end
+
+    local mergedLookup = table.Copy(baseData.lookup or {})
+    local mergedList = table.Copy(TF_MVMShop.DefaultUpgrades)
+    MergeParsedIntoList(mergedList, baseData.parsed)
+    local itemUpgradeCount = #(baseData.scriptEntries and baseData.scriptEntries.item or {})
+    local playerUpgradeCount = #(baseData.scriptEntries and baseData.scriptEntries.player or {})
+
+    -- Optional custom layers (map script + convar script) override TF2 base.
+    local overridePaths = {}
+    local map = string.lower(game.GetMap() or "")
+    if map ~= "" then
+        table.insert(overridePaths, string.format("maps/%s_upgrades.txt", map))
+    end
     if SERVER then
         local cv = GetConVar("tf_mvm_upgrades_file")
         if cv and cv:GetString() ~= "" then
-            table.insert(paths, cv:GetString())
+            table.insert(overridePaths, cv:GetString())
         end
     end
 
-    -- map‑specific file
-    local map = string.lower(game.GetMap() or "")
-    if map ~= "" then
-        table.insert(paths, string.format("maps/%s_upgrades.txt", map))
+    local loadedOverrides = {}
+    for _, path in ipairs(overridePaths) do
+        local extra = ReadUpgradeData(path)
+        if not extra then continue end
+        MergeParsedIntoList(mergedList, extra.parsed)
+        mergedLookup = MergeLookup(mergedLookup, extra.lookup)
+        itemUpgradeCount = itemUpgradeCount + #(extra.scriptEntries and extra.scriptEntries.item or {})
+        playerUpgradeCount = playerUpgradeCount + #(extra.scriptEntries and extra.scriptEntries.player or {})
+        loadedOverrides[#loadedOverrides + 1] = path
     end
 
-    -- bundled stock copy extracted from Valve TF2 (fallback when loose files
-    -- are unavailable through mounted GAME paths)
-    table.insert(paths, "scripts/items/mvm_upgrades_tf2_stock.txt")
-
-    -- default TF2 file(s)
-    table.insert(paths, "scripts/items/mvm_upgrades.txt")
-    table.insert(paths, "tf/scripts/items/mvm_upgrades.txt")
-
-    for _,path in ipairs(paths) do
-        local txt = file.Read(path, "GAME")
-        if txt then
-            local kv = util.KeyValuesToTable(txt)
-            if kv then
-                local scriptLookup = ParseUpgradeScriptLookupFromText(txt)
-                if not next(scriptLookup) then
-                    scriptLookup = ParseUpgradeScriptLookup(kv)
-                end
-                ApplyCustomUpgradeScriptData(scriptLookup)
-
-                local parsed = parseUpgradesKV(kv)
-                local supported = {}
-                local known = {}
-                local defaultById = {}
-                for _, u in ipairs(TF_MVMShop.DefaultUpgrades) do
-                    known[u.id] = true
-                    defaultById[u.id] = u
-                end
-                for _, u in ipairs(parsed or {}) do
-                    if known[u.id] then
-                        local base = table.Copy(defaultById[u.id] or {})
-                        if istable(u.costs) and #u.costs > 0 then base.costs = u.costs end
-                        if isstring(u.description) and u.description ~= "" then base.description = u.description end
-                        if isstring(u.icon) and u.icon ~= "" then base.icon = u.icon end
-                        if isstring(u.name) and u.name ~= "" then base.name = u.name end
-                        supported[#supported + 1] = base
-                    end
-                end
-
-                if #supported > 0 then
-                    TF_MVMShop.Upgrades = supported
-                else
-                    TF_MVMShop.Upgrades = table.Copy(TF_MVMShop.DefaultUpgrades)
-                end
-
-                ApplyScriptDataToUpgradeList(TF_MVMShop.Upgrades, scriptLookup)
-
-                rebuildUpgradesById()
-                if SERVER then
-                    print("[MVMShop] loaded upgrades from ", path, " entries=", #TF_MVMShop.Upgrades)
-                end
-                return
-            end
-        end
-    end
-    -- if none found, leave empty and print warning
-    if SERVER then
-        print("[MVMShop] no compatible upgrade file found, using default list")
-    end
+    -- Apply script-derived icon/cost/name mapping against the final merged lookup.
+    -- This helper writes into DefaultUpgrades, so rebuild final list from it.
+    ApplyCustomUpgradeScriptData(mergedLookup)
     TF_MVMShop.Upgrades = table.Copy(TF_MVMShop.DefaultUpgrades)
+    MergeParsedIntoList(TF_MVMShop.Upgrades, mergedList)
     rebuildUpgradesById()
+
+    if SERVER then
+        local extraMsg = (#loadedOverrides > 0) and (" + overrides: " .. table.concat(loadedOverrides, ", ")) or ""
+        print("[MVMShop] loaded TF2 base upgrades from " .. tostring(baseData.path) .. extraMsg
+            .. " entries=" .. tostring(#TF_MVMShop.Upgrades)
+            .. " itemDefs=" .. tostring(itemUpgradeCount)
+            .. " playerDefs=" .. tostring(playerUpgradeCount))
+    end
 end
 
 if SERVER then
@@ -511,6 +667,9 @@ end
 rebuildUpgradesById()
 
 local function IsMvMMap()
+    if TF_IsMvMMap then
+        return TF_IsMvMMap()
+    end
     return string.find(string.lower(game.GetMap() or ""), "mvm_", 1, true) ~= nil
 end
 
@@ -572,51 +731,6 @@ function TF_MVMShop:SetLevel(ply, id, level)
     upgrades[id] = ClampInt(level)
 end
 
-function TF_MVMShop:GetPendingSession(ply, createIfMissing)
-    if not IsValid(ply) then return nil end
-    local state = self:GetState(ply)
-    state.pending = state.pending or {
-        active = false,
-        deltas = {},
-        creditDelta = 0,
-    }
-    if createIfMissing and not state.pending.active then
-        state.pending.active = true
-        state.pending.deltas = {}
-        state.pending.creditDelta = 0
-    end
-    return state.pending
-end
-
-function TF_MVMShop:ClearPendingSession(ply)
-    local pending = self:GetPendingSession(ply, false)
-    if not pending then return end
-    pending.active = false
-    pending.deltas = {}
-    pending.creditDelta = 0
-end
-
-function TF_MVMShop:GetPendingDelta(ply, id)
-    local pending = self:GetPendingSession(ply, false)
-    if not pending or not pending.active then return 0 end
-    return ClampInt((pending.deltas and pending.deltas[id]) or 0)
-end
-
-function TF_MVMShop:GetEffectiveLevel(ply, id)
-    local base = self:GetLevel(ply, id)
-    local delta = self:GetPendingDelta(ply, id)
-    return math.max(0, base + delta)
-end
-
-function TF_MVMShop:GetEffectiveCredits(ply)
-    local base = self:GetCredits(ply)
-    local pending = self:GetPendingSession(ply, false)
-    if not pending or not pending.active then
-        return base
-    end
-    return math.max(0, base + ClampInt(pending.creditDelta or 0))
-end
-
 function TF_MVMShop:GetBaseSpeed(ply)
     local classTable = ply.GetPlayerClassTable and ply:GetPlayerClassTable() or nil
     return tonumber(classTable and classTable.Speed) or 300
@@ -630,14 +744,6 @@ end
 function TF_MVMShop:IsSetupOpenForPurchases()
     if not TF_MVM or not TF_MVM.Runtime then return true end
     if not TF_MVM.Runtime:IsManagedActive() then return true end
-    if TF_MVM.Runtime:IsSetupPhase() then return true end
-    if TF_MVMState and TF_MVMState.Get and TF_MVMState:Get("in_setup", false) then
-        return true
-    end
-    if TF_MVM.Runtime.IsWaveInProgress and not TF_MVM.Runtime:IsWaveInProgress() then
-        return true
-    end
-    return false
     if TF_MVM.Runtime:IsSetupPhase() then return true end
     if TF_MVMState and TF_MVMState.Get and TF_MVMState:Get("in_setup", false) then
         return true
@@ -661,12 +767,109 @@ end
 
 function TF_MVMShop:GetWeaponInLogicalSlot(ply, logicalSlot)
     if not IsValid(ply) then return nil end
+    logicalSlot = string.lower(tostring(logicalSlot or ""))
+
+    local candidates = {}
     for _, wep in ipairs(ply:GetWeapons()) do
         if IsValid(wep) and self:GetWeaponSlotName(wep) == logicalSlot then
-            return wep
+            candidates[#candidates + 1] = wep
         end
     end
-    return nil
+    if #candidates == 0 then return nil end
+    if #candidates == 1 then return candidates[1] end
+
+    local active = ply.GetActiveWeapon and ply:GetActiveWeapon() or nil
+    if IsValid(active) and self:GetWeaponSlotName(active) == logicalSlot then
+        return active
+    end
+
+    -- Prefer effect-bar / drink variants (Sandman, Milk, Jar-like secondaries, etc.)
+    -- to match TF2 upgrade intent when multiple same-slot entities are present.
+    local effectCandidates = {}
+    for _, wep in ipairs(candidates) do
+        if self:WeaponHasEffectBarLike(wep) or self:IsWeaponDrinkLike(wep) then
+            effectCandidates[#effectCandidates + 1] = wep
+        end
+    end
+    if #effectCandidates == 1 then
+        return effectCandidates[1]
+    elseif #effectCandidates > 1 then
+        table.sort(effectCandidates, function(a, b)
+            return (a:EntIndex() or 0) > (b:EntIndex() or 0)
+        end)
+        return effectCandidates[1]
+    end
+
+    -- Otherwise pick the most recently created entity in the slot.
+    table.sort(candidates, function(a, b)
+        return (a:EntIndex() or 0) > (b:EntIndex() or 0)
+    end)
+    return candidates[1]
+end
+
+function TF_MVMShop:GetStrictTargetKey(ply, target)
+    target = string.lower(tostring(target or ""))
+    if target == "primary" or target == "secondary" or target == "melee" or target == "action" then
+        local wep = self:GetWeaponInLogicalSlot(ply, target)
+        if IsValid(wep) and wep.GetClass then
+            return target .. ":" .. string.lower(tostring(wep:GetClass() or ""))
+        end
+        return target .. ":<none>"
+    end
+    return "player:<self>"
+end
+
+function TF_MVMShop:BuildStrictUpgradeValidationMatrix(ply)
+    local matrix = {}
+    local flatSet = {}
+    local baseSlots = { "primary", "secondary", "melee", "action" }
+    for _, slot in ipairs(baseSlots) do
+        matrix[self:GetStrictTargetKey(ply, slot)] = matrix[self:GetStrictTargetKey(ply, slot)] or {}
+    end
+    matrix["player:<self>"] = matrix["player:<self>"] or {}
+
+    for _, upgrade in ipairs(self.Upgrades or {}) do
+        local scriptAllowed = self:IsUpgradeEnabledByScript(upgrade)
+        local classAllowed = self:IsUpgradeAllowedForClass(ply, upgrade)
+        local loadoutAllowed = self:IsUpgradeAllowedForLoadout(ply, upgrade)
+        local allowed = scriptAllowed and classAllowed and loadoutAllowed
+        if allowed then
+            local key = self:GetStrictTargetKey(ply, upgrade.target)
+            matrix[key] = matrix[key] or {}
+            matrix[key][upgrade.id] = true
+            flatSet[upgrade.id] = true
+        end
+    end
+    return matrix, flatSet
+end
+
+function TF_MVMShop:FormatStrictUpgradeMatrixLines(ply, matrix)
+    local lines = {}
+    local keys = {}
+    for key, _ in pairs(matrix or {}) do
+        keys[#keys + 1] = key
+    end
+    table.sort(keys)
+
+    for _, key in ipairs(keys) do
+        lines[#lines + 1] = string.format("[MVMShop] %s", key)
+        local ids = {}
+        for id, _ in pairs(matrix[key] or {}) do
+            ids[#ids + 1] = id
+        end
+        table.sort(ids)
+        for _, id in ipairs(ids) do
+            local up = upgradesById[id]
+            local name = up and tostring(up.name or id) or id
+            lines[#lines + 1] = string.format("  - %s (%s)", id, name)
+        end
+    end
+
+    if #lines == 0 then
+        lines[1] = "[MVMShop] strict matrix: no upgrades available for current loadout"
+    end
+
+    return lines
 end
 
 function TF_MVMShop:WeaponSupportsClipUpgrade(wep)
@@ -689,69 +892,198 @@ function TF_MVMShop:WeaponSupportsReserveAmmoUpgrade(wep)
     return false
 end
 
-function TF_MVMShop:IsUpgradeAllowedForLoadout(ply, upgrade)
-    local target = string.lower(tostring(upgrade.target or ""))
-    local id = string.lower(tostring(upgrade.id or ""))
-
-    if target == "primary" or target == "secondary" or target == "melee" then
-        local wep = self:GetWeaponInLogicalSlot(ply, target)
-        if not IsValid(wep) then
-            return false, "missing_weapon"
-        end
-
-        if id == "clip_primary" or id == "clip_secondary" then
-            if not self:WeaponSupportsClipUpgrade(wep) then
-                return false, "weapon_no_clip"
-            end
-        elseif id == "reload_primary" or id == "reload_secondary" then
-            if not self:WeaponSupportsClipUpgrade(wep) then
-                return false, "weapon_no_reload"
-            end
-        elseif id == "ammo_primary" or id == "ammo_secondary" then
-            if not self:WeaponSupportsReserveAmmoUpgrade(wep) then
-                return false, "weapon_no_ammo"
-            end
-        end
-    elseif target == "action" then
-        -- keep canteen capacity available to mirror TF2 station behavior
-        return true, nil
-    end
-
-    return true, nil
+function TF_MVMShop:GetWeaponClassNameLower(wep)
+    if not IsValid(wep) or not wep.GetClass then return "" end
+    return string.lower(tostring(wep:GetClass() or ""))
 end
 
-function TF_MVMShop:IsUpgradeEnabledByScript(upgrade)
-    if not istable(upgrade) then return false end
-    if not upgrade.requiresScript then return true end
-    return upgrade.scriptAvailable == true
-end
-
-function TF_MVMShop:GetWeaponInLogicalSlot(ply, logicalSlot)
-    if not IsValid(ply) then return nil end
-    for _, wep in ipairs(ply:GetWeapons()) do
-        if IsValid(wep) and self:GetWeaponSlotName(wep) == logicalSlot then
-            return wep
+function TF_MVMShop:IsWeaponEnergyLike(wep)
+    if not IsValid(wep) then return false end
+    if wep.IsEnergyWeapon and wep:IsEnergyWeapon() then return true end
+    if wep.Primary and isstring(wep.Primary.Ammo) then
+        local ammoName = string.lower(wep.Primary.Ammo)
+        if ammoName == "energy" or ammoName == "metal" then
+            return true
         end
     end
+    local cls = self:GetWeaponClassNameLower(wep)
+    return string.find(cls, "raygun", 1, true) ~= nil
+        or string.find(cls, "pomson", 1, true) ~= nil
+        or string.find(cls, "shortcircuit", 1, true) ~= nil
+end
+
+function TF_MVMShop:IsWeaponSniperOrBowLike(wep)
+    local cls = self:GetWeaponClassNameLower(wep)
+    return string.find(cls, "sniperrifle", 1, true) ~= nil
+        or string.find(cls, "compound_bow", 1, true) ~= nil
+        or string.find(cls, "crossbow", 1, true) ~= nil
+        or string.find(cls, "bow", 1, true) ~= nil
+end
+
+function TF_MVMShop:IsWeaponFlamethrowerLike(wep)
+    local cls = self:GetWeaponClassNameLower(wep)
+    return string.find(cls, "flamethrower", 1, true) ~= nil
+        or string.find(cls, "airblaster", 1, true) ~= nil
+end
+
+function TF_MVMShop:IsWeaponMinigunLike(wep)
+    local cls = self:GetWeaponClassNameLower(wep)
+    return string.find(cls, "minigun", 1, true) ~= nil
+        or string.find(cls, "gatling", 1, true) ~= nil
+end
+
+function TF_MVMShop:IsWeaponSupportLike(wep)
+    local cls = self:GetWeaponClassNameLower(wep)
+    return string.find(cls, "medigun", 1, true) ~= nil
+        or string.find(cls, "buff_item", 1, true) ~= nil
+        or string.find(cls, "builder", 1, true) ~= nil
+        or string.find(cls, "pda_", 1, true) ~= nil
+        or string.find(cls, "invis", 1, true) ~= nil
+        or string.find(cls, "spellbook", 1, true) ~= nil
+        or string.find(cls, "lunchbox", 1, true) ~= nil
+        or string.find(cls, "rocketpack", 1, true) ~= nil
+        or string.find(cls, "parachute", 1, true) ~= nil
+        or string.find(cls, "wrangler", 1, true) ~= nil
+        or string.find(cls, "laser_pointer", 1, true) ~= nil
+end
+
+function TF_MVMShop:WeaponHasEffectBarLike(wep)
+    if not IsValid(wep) then return false end
+    if wep.HasEffectBarRegeneration and wep:HasEffectBarRegeneration() then
+        return true
+    end
+    if wep.OffhandProjectileReady ~= nil then
+        return true
+    end
+    local cls = self:GetWeaponClassNameLower(wep)
+    if string.find(cls, "buff_item", 1, true)
+        or string.find(cls, "conch", 1, true)
+        or string.find(cls, "banner", 1, true)
+        or string.find(cls, "backup", 1, true)
+        or string.find(cls, "battalion", 1, true) then
+        return true
+    end
+    return false
+end
+
+function TF_MVMShop:IsWeaponDrinkLike(wep)
+    local cls = self:GetWeaponClassNameLower(wep)
+    return string.find(cls, "lunchbox", 1, true) ~= nil
+        or string.find(cls, "jar", 1, true) ~= nil
+        or string.find(cls, "milk", 1, true) ~= nil
+        or string.find(cls, "bat_wood", 1, true) ~= nil
+        or string.find(cls, "giftwrap", 1, true) ~= nil
+end
+
+-- Explicit per-weapon upgrade overrides for known TF2-style edge cases.
+-- If a class appears here, only listed upgrade ids are allowed for that weapon.
+local EXPLICIT_WEAPON_UPGRADE_ALLOW = {
+    -- Scout throwables / drinks / jars
+    tf_weapon_jar_milk = { effectbar_secondary = true },
+    tf_weapon_jar = { effectbar_secondary = true },
+    tf_weapon_jar_gas = { effectbar_secondary = true },
+    tf_weapon_lunchbox_drink = { effectbar_secondary = true },
+    tf_weapon_cleaver = { effectbar_secondary = true, damage_secondary = true },
+
+    -- Soldier banners (Concheror / Buff Banner / Battalion's Backup style)
+    tf_weapon_buff_item = { buff_duration_secondary = true },
+    tf_weapon_buff_item_conch = { buff_duration_secondary = true },
+    tf_weapon_buff_item_backup = { buff_duration_secondary = true },
+    tf_weapon_buff_item_battalion = { buff_duration_secondary = true },
+
+    -- Scout melee with rechargeable projectile
+    tf_weapon_bat_wood = { damage_melee = true, swing_melee = true, lifesteal_melee = true, effectbar_melee = true },
+    tf_weapon_bat_giftwrap = { damage_melee = true, swing_melee = true, lifesteal_melee = true, effectbar_melee = true },
+}
+
+function TF_MVMShop:GetExplicitUpgradeAllowSetForWeapon(wep, target)
+    if not IsValid(wep) then return nil end
+    local cls = self:GetWeaponClassNameLower(wep)
+    local explicit = EXPLICIT_WEAPON_UPGRADE_ALLOW[cls]
+    if explicit then return explicit end
+
+    -- Pattern-based fallbacks for variants/custom subclasses.
+    if target == "secondary" then
+        if string.find(cls, "buff_item", 1, true)
+            or string.find(cls, "conch", 1, true)
+            or string.find(cls, "banner", 1, true)
+            or string.find(cls, "backup", 1, true)
+            or string.find(cls, "battalion", 1, true) then
+            return { buff_duration_secondary = true }
+        end
+        if string.find(cls, "lunchbox_drink", 1, true)
+            or string.find(cls, "jar", 1, true)
+            or string.find(cls, "milk", 1, true) then
+            return { effectbar_secondary = true }
+        end
+        if string.find(cls, "cleaver", 1, true) then
+            return { effectbar_secondary = true, damage_secondary = true }
+        end
+    elseif target == "melee" then
+        if string.find(cls, "bat_wood", 1, true) or string.find(cls, "giftwrap", 1, true) then
+            return { damage_melee = true, swing_melee = true, lifesteal_melee = true, effectbar_melee = true }
+        end
+    end
+
     return nil
 end
 
-function TF_MVMShop:WeaponSupportsClipUpgrade(wep)
+function TF_MVMShop:WeaponReloadsSinglyLike(wep)
     if not IsValid(wep) then return false end
-    local maxClip = tonumber((wep.GetMaxClip1 and wep:GetMaxClip1()) or -1) or -1
-    if maxClip > 0 then return true end
-    return wep.Primary and isnumber(wep.Primary.ClipSize) and (wep.Primary.ClipSize or -1) > 0
-end
-
-function TF_MVMShop:WeaponSupportsReserveAmmoUpgrade(wep)
-    if not IsValid(wep) then return false end
-    local ammoType = wep.GetPrimaryAmmoType and wep:GetPrimaryAmmoType() or -1
-    if ammoType and ammoType >= 0 then
+    if wep.ReloadsSingly and wep:ReloadsSingly() then
         return true
     end
-    if wep.Primary and isstring(wep.Primary.Ammo) then
-        local ammoName = string.lower(wep.Primary.Ammo)
-        return ammoName ~= "" and ammoName ~= "none"
+    return wep.ReloadsSingly == true
+end
+
+function TF_MVMShop:WeaponAutoFiresFullClipAllAtOnceLike(wep)
+    if not IsValid(wep) then return false end
+    if wep.AutoFiresFullClipAllAtOnce and wep:AutoFiresFullClipAllAtOnce() then
+        return true
+    end
+    return wep.AutoFiresFullClipAllAtOnce == true
+end
+
+function TF_MVMShop:WeaponIsBlastImpactLike(wep)
+    if not IsValid(wep) then return false end
+    if wep.IsBlastImpactWeapon and wep:IsBlastImpactWeapon() then
+        return true
+    end
+    local cls = self:GetWeaponClassNameLower(wep)
+    return string.find(cls, "rocketlauncher", 1, true) ~= nil
+        or string.find(cls, "directhit", 1, true) ~= nil
+        or string.find(cls, "flaregun_revenge", 1, true) ~= nil
+end
+
+function TF_MVMShop:GetUpgradeAttributeCandidates(upgrade)
+    local out = {}
+    if not istable(upgrade) then return out end
+
+    local function addAttr(name)
+        local key = string.lower(tostring(name or ""))
+        if key == "" then return end
+        out[#out + 1] = key
+    end
+
+    addAttr(upgrade.scriptAttribute)
+    local mapped = self.CustomUpgradeAttributeMap and self.CustomUpgradeAttributeMap[upgrade.id] or nil
+    if isstring(mapped) then
+        addAttr(mapped)
+    elseif istable(mapped) then
+        for _, name in ipairs(mapped) do
+            addAttr(name)
+        end
+    end
+    return out
+end
+
+function TF_MVMShop:UpgradeAttrMatches(upgrade, token)
+    token = string.lower(tostring(token or ""))
+    if token == "" then return false end
+    for _, attr in ipairs(self:GetUpgradeAttributeCandidates(upgrade)) do
+        if string.find(attr, token, 1, true) then
+            return true
+        end
     end
     return false
 end
@@ -765,18 +1097,86 @@ function TF_MVMShop:IsUpgradeAllowedForLoadout(ply, upgrade)
         if not IsValid(wep) then
             return false, "missing_weapon"
         end
+        local explicitAllow = self:GetExplicitUpgradeAllowSetForWeapon(wep, target)
+        if explicitAllow ~= nil and explicitAllow[id] ~= true then
+            return false, "explicit_filtered"
+        end
+        local drinkLike = self:IsWeaponDrinkLike(wep)
+        local isDamageUpgrade = id == "damage_primary" or id == "damage_secondary" or self:UpgradeAttrMatches(upgrade, "damage bonus")
+        local isFireRateUpgrade = id == "firerate_primary" or id == "firerate_secondary" or self:UpgradeAttrMatches(upgrade, "fire rate bonus")
+        local isClipUpgrade = id == "clip_primary" or id == "clip_secondary" or self:UpgradeAttrMatches(upgrade, "clip size bonus")
+        local isReloadUpgrade = id == "reload_primary" or id == "reload_secondary" or self:UpgradeAttrMatches(upgrade, "reload")
+        local isAmmoUpgrade = id == "ammo_primary" or id == "ammo_secondary" or self:UpgradeAttrMatches(upgrade, "maxammo")
+        local isEffectBarUpgrade = id == "effectbar_primary" or id == "effectbar_secondary" or id == "effectbar_melee"
+            or self:UpgradeAttrMatches(upgrade, "effect bar")
+            or self:UpgradeAttrMatches(upgrade, "charge recharge")
+            or self:UpgradeAttrMatches(upgrade, "item meter charge rate")
 
-        if id == "clip_primary" or id == "clip_secondary" then
+        if isDamageUpgrade then
+            if self:IsWeaponSupportLike(wep) or drinkLike then
+                return false, "weapon_no_damage_upgrade"
+            end
+        elseif isFireRateUpgrade then
+            -- Mirrors TF2 CanUpgradeWithAttrib(fire rate bonus): exclude melee,
+            -- flamethrowers, miniguns, sniper/bow, effect-bar weapons and full-clip dumpers.
+            if target == "melee" then
+                return false, "weapon_wrong_slot"
+            end
+            if self:IsWeaponSupportLike(wep)
+                or drinkLike
+                or self:IsWeaponFlamethrowerLike(wep)
+                or self:IsWeaponMinigunLike(wep)
+                or self:IsWeaponSniperOrBowLike(wep)
+                or self:WeaponHasEffectBarLike(wep)
+                or self:WeaponAutoFiresFullClipAllAtOnceLike(wep) then
+                return false, "weapon_no_firerate"
+            end
+        elseif isClipUpgrade then
+            if drinkLike then
+                return false, "weapon_no_clip"
+            end
             if not self:WeaponSupportsClipUpgrade(wep) then
                 return false, "weapon_no_clip"
             end
-        elseif id == "reload_primary" or id == "reload_secondary" then
-            if not self:WeaponSupportsClipUpgrade(wep) then
+            if self:WeaponIsBlastImpactLike(wep) then
+                return false, "weapon_no_clip"
+            end
+        elseif isReloadUpgrade then
+            if drinkLike then
                 return false, "weapon_no_reload"
             end
-        elseif id == "ammo_primary" or id == "ammo_secondary" then
+            local canReloadUpgrade = self:WeaponReloadsSinglyLike(wep)
+                or self:IsWeaponSniperOrBowLike(wep)
+                or string.find(self:GetWeaponClassNameLower(wep), "flaregun", 1, true) ~= nil
+            if not canReloadUpgrade then
+                return false, "weapon_no_reload"
+            end
+        elseif isAmmoUpgrade then
+            if drinkLike then
+                return false, "weapon_no_ammo"
+            end
             if not self:WeaponSupportsReserveAmmoUpgrade(wep) then
                 return false, "weapon_no_ammo"
+            end
+            if self:IsWeaponEnergyLike(wep) then
+                return false, "weapon_no_ammo"
+            end
+        elseif isEffectBarUpgrade then
+            if id == "effectbar_primary" and target ~= "primary" then
+                return false, "weapon_wrong_slot"
+            end
+            if id == "effectbar_secondary" and target ~= "secondary" then
+                return false, "weapon_wrong_slot"
+            end
+            if id == "effectbar_melee" and target ~= "melee" then
+                return false, "weapon_wrong_slot"
+            end
+            if not (self:WeaponHasEffectBarLike(wep) or drinkLike) then
+                return false, "weapon_no_effectbar"
+            end
+        elseif id == "damage_melee" or id == "swing_melee" or id == "lifesteal_melee" then
+            if target ~= "melee" then
+                return false, "weapon_wrong_slot"
             end
         end
     elseif target == "action" then
@@ -800,26 +1200,16 @@ function TF_MVMShop:CanBuyUpgrade(ply, id)
     local upgrade = upgradesById[id]
     if not upgrade then return false, "invalid_upgrade" end
     if not self:IsUpgradeEnabledByScript(upgrade) then return false, "script_disabled" end
-    if not self:IsUpgradeEnabledByScript(upgrade) then return false, "script_disabled" end
     if not self:IsUpgradeAllowedForClass(ply, upgrade) then return false, "class_restricted" end
     local allowedForLoadout, loadoutReason = self:IsUpgradeAllowedForLoadout(ply, upgrade)
     if not allowedForLoadout then return false, loadoutReason or "weapon_restricted" end
-    local allowedForLoadout, loadoutReason = self:IsUpgradeAllowedForLoadout(ply, upgrade)
-    if not allowedForLoadout then return false, loadoutReason or "weapon_restricted" end
 
-    local level = self:GetEffectiveLevel(ply, id)
+    local level = self:GetLevel(ply, id)
     if level >= #upgrade.costs then return false, "maxed" end
     local cost = upgrade.costs[level + 1]
-    if self:GetEffectiveCredits(ply) < cost then return false, "no_credits" end
+    if self:GetCredits(ply) < cost then return false, "no_credits" end
 
     return true
-end
-
-function TF_MVMShop:IsSellWindowOpen()
-    local waveCurrent = TF_MVMState and ClampInt(TF_MVMState:Get("wave_current", 1)) or 1
-    -- TF2 parity baseline: selling prior upgrades is allowed in wave 1.
-    -- (Valve also allows undo of in-flight purchases later, but this UI applies immediately.)
-    return waveCurrent <= 1
 end
 
 function TF_MVMShop:CanSellUpgrade(ply, id)
@@ -833,10 +1223,8 @@ function TF_MVMShop:CanSellUpgrade(ply, id)
     local allowedForLoadout, loadoutReason = self:IsUpgradeAllowedForLoadout(ply, upgrade)
     if not allowedForLoadout then return false, loadoutReason or "weapon_restricted" end
 
-    local level = self:GetEffectiveLevel(ply, id)
+    local level = self:GetLevel(ply, id)
     if level <= 0 then return false, "no_upgrade" end
-    local pendingDelta = self:GetPendingDelta(ply, id)
-    if (not self:IsSellWindowOpen()) and pendingDelta <= 0 then return false, "sell_locked" end
 
     return true
 end
@@ -844,26 +1232,44 @@ end
 function TF_MVMShop:GetUpgradeCost(ply, id)
     local upgrade = upgradesById[id]
     if not upgrade then return nil end
-    local level = self:GetEffectiveLevel(ply, id)
+    local level = self:GetLevel(ply, id)
     return upgrade.costs[level + 1]
 end
 
 function TF_MVMShop:GetWeaponSlotName(wep)
     if not IsValid(wep) then return "" end
+    local cls = string.lower(tostring((wep.GetClass and wep:GetClass()) or ""))
+
+    -- Explicit fallback for known secondary drinks/jars when item metadata is unavailable.
+    if string.find(cls, "jar_milk", 1, true)
+        or string.find(cls, "jar_gas", 1, true)
+        or string.find(cls, "tf_weapon_jar", 1, true)
+        or string.find(cls, "lunchbox_drink", 1, true) then
+        return "secondary"
+    end
+
     if wep.GetItemData then
         local itemData = wep:GetItemData()
         if itemData and isstring(itemData.item_slot) then
             local slot = string.lower(itemData.item_slot)
-            if slot == "primary" or slot == "secondary" or slot == "melee" then
+            if slot == "primary" or slot == "secondary" or slot == "melee" or slot == "action" then
                 return slot
             end
         end
+    end
+
+    if string.find(cls, "powerup", 1, true)
+        or string.find(cls, "canteen", 1, true)
+        or string.find(cls, "battery", 1, true)
+        or string.find(cls, "kritz_or_treat", 1, true) then
+        return "action"
     end
 
     local slot = tonumber(wep.Slot or (wep.GetSlot and wep:GetSlot()) or -1) or -1
     if slot == 0 then return "primary" end
     if slot == 1 then return "secondary" end
     if slot == 2 then return "melee" end
+    if slot == 3 or slot == 4 or slot == 5 then return "action" end
     return ""
 end
 
@@ -875,7 +1281,7 @@ function TF_MVMShop:GetDamageMultiplier(ply, slot)
 end
 function TF_MVMShop:ApplyWeaponStats(ply)
     ply.TF_MVM_BaseAmmoByType = ply.TF_MVM_BaseAmmoByType or {}
-    ply.TF_MVM_BaseAmmoByType = ply.TF_MVM_BaseAmmoByType or {}
+    ply.TF_MVM_BaseAmmoMaxByType = ply.TF_MVM_BaseAmmoMaxByType or {}
     for _, wep in ipairs(ply:GetWeapons()) do
         if not IsValid(wep) then continue end
 
@@ -884,22 +1290,25 @@ function TF_MVMShop:ApplyWeaponStats(ply)
         local reloadLevel = 0
         local clipLevel = 0
         local ammoLevel = 0
-        local ammoLevel = 0
+        local effectbarLevel = 0
+        local buffDurationLevel = 0
 
         if slot == "primary" then
             fireLevel = self:GetLevel(ply, "firerate_primary")
             reloadLevel = self:GetLevel(ply, "reload_primary")
             clipLevel = self:GetLevel(ply, "clip_primary")
             ammoLevel = self:GetLevel(ply, "ammo_primary")
-            ammoLevel = self:GetLevel(ply, "ammo_primary")
+            effectbarLevel = self:GetLevel(ply, "effectbar_primary")
         elseif slot == "secondary" then
             fireLevel = self:GetLevel(ply, "firerate_secondary")
             reloadLevel = self:GetLevel(ply, "reload_secondary")
             clipLevel = self:GetLevel(ply, "clip_secondary")
             ammoLevel = self:GetLevel(ply, "ammo_secondary")
-            ammoLevel = self:GetLevel(ply, "ammo_secondary")
+            effectbarLevel = self:GetLevel(ply, "effectbar_secondary")
+            buffDurationLevel = self:GetLevel(ply, "buff_duration_secondary")
         elseif slot == "melee" then
             fireLevel = self:GetLevel(ply, "swing_melee")
+            effectbarLevel = self:GetLevel(ply, "effectbar_melee")
         end
 
         if wep.Primary and isnumber(wep.Primary.Delay) then
@@ -918,6 +1327,26 @@ function TF_MVMShop:ApplyWeaponStats(ply)
             wep.TF_MVM_BaseReloadTime = wep.TF_MVM_BaseReloadTime or wep.ReloadTime
             wep.ReloadTime = wep.TF_MVM_BaseReloadTime * math.max(0.2, 1 - (0.1 * reloadLevel))
         end
+        -- tf_weapon_base consumes this NW var in its reload flow.
+        wep:SetNWFloat("ReloadTimeMultiplier", math.max(0.2, 1 - (0.1 * reloadLevel)))
+
+        -- TF2-like "effect bar recharge rate increased" for drinks / jars / recharge secondaries.
+        if effectbarLevel > 0 then
+            local rechargeMul = math.max(0.2, 1 - (0.25 * effectbarLevel))
+            if isnumber(wep.RechargeTime) then
+                wep.TF_MVM_BaseRechargeTime = wep.TF_MVM_BaseRechargeTime or wep.RechargeTime
+                wep.RechargeTime = wep.TF_MVM_BaseRechargeTime * rechargeMul
+            end
+            if wep.Secondary and isnumber(wep.Secondary.Delay) and (wep.OffhandProjectileReady ~= nil or self:IsWeaponDrinkLike(wep)) then
+                wep.TF_MVM_BaseOffhandDelay = wep.TF_MVM_BaseOffhandDelay or wep.Secondary.Delay
+                wep.Secondary.Delay = wep.TF_MVM_BaseOffhandDelay * rechargeMul
+            end
+        end
+
+        -- Buff banner family: extend active buff duration.
+        if self:GetWeaponClassNameLower(wep):find("buff_item", 1, true) then
+            wep.TF_MVM_BuffDurationMul = 1 + (0.25 * buffDurationLevel)
+        end
 
         if wep.Primary and isnumber(wep.Primary.ClipSize) and wep.Primary.ClipSize > 0 then
             wep.TF_MVM_BaseClipSize = wep.TF_MVM_BaseClipSize or wep.Primary.ClipSize
@@ -926,35 +1355,51 @@ function TF_MVMShop:ApplyWeaponStats(ply)
             wep:SetClip1(math.min(wep:Clip1(), newClip))
         end
 
-        if ammoLevel > 0 then
-            local ammoType = wep.GetPrimaryAmmoType and wep:GetPrimaryAmmoType() or -1
-            if isnumber(ammoType) and ammoType >= 0 then
-                local currentAmmo = math.max(0, ply:GetAmmoCount(ammoType))
-                local baseAmmo = ply.TF_MVM_BaseAmmoByType[ammoType]
-                if baseAmmo == nil then
-                    baseAmmo = currentAmmo
-                    ply.TF_MVM_BaseAmmoByType[ammoType] = baseAmmo
+        local ammoType = wep.GetPrimaryAmmoType and wep:GetPrimaryAmmoType() or -1
+        if isnumber(ammoType) and ammoType >= 0 then
+            local currentAmmo = math.max(0, ply:GetAmmoCount(ammoType))
+            local baseAmmo = ply.TF_MVM_BaseAmmoByType[ammoType]
+            if baseAmmo == nil then
+                baseAmmo = currentAmmo
+                ply.TF_MVM_BaseAmmoByType[ammoType] = baseAmmo
+            end
+
+            if ply.AmmoMax and ply.AmmoMax[ammoType] then
+                local baseMax = ply.TF_MVM_BaseAmmoMaxByType[ammoType]
+                if baseMax == nil then
+                    baseMax = tonumber(ply.AmmoMax[ammoType]) or baseAmmo
+                    ply.TF_MVM_BaseAmmoMaxByType[ammoType] = baseMax
                 end
+                ply.AmmoMax[ammoType] = math.max(1, math.floor(baseMax * (1 + (0.25 * ammoLevel))))
+            end
+
+            if ammoLevel > 0 then
                 local targetAmmo = math.max(currentAmmo, math.floor(baseAmmo * (1 + (0.25 * ammoLevel))))
                 if targetAmmo > currentAmmo then
                     ply:SetAmmo(targetAmmo, ammoType)
                 end
+            elseif ply.AmmoMax and ply.AmmoMax[ammoType] then
+                ply:SetAmmo(math.min(currentAmmo, ply.AmmoMax[ammoType]), ammoType)
             end
         end
+    end
+end
 
-        if ammoLevel > 0 then
-            local ammoType = wep.GetPrimaryAmmoType and wep:GetPrimaryAmmoType() or -1
-            if isnumber(ammoType) and ammoType >= 0 then
-                local currentAmmo = math.max(0, ply:GetAmmoCount(ammoType))
-                local baseAmmo = ply.TF_MVM_BaseAmmoByType[ammoType]
-                if baseAmmo == nil then
-                    baseAmmo = currentAmmo
-                    ply.TF_MVM_BaseAmmoByType[ammoType] = baseAmmo
-                end
-                local targetAmmo = math.max(currentAmmo, math.floor(baseAmmo * (1 + (0.25 * ammoLevel))))
-                if targetAmmo > currentAmmo then
-                    ply:SetAmmo(targetAmmo, ammoType)
-                end
+function TF_MVMShop:ApplyEngineerBuildingStats(ply)
+    if not IsValid(ply) then return end
+    local healthMul = 1 + (0.15 * self:GetLevel(ply, "building_health"))
+    local fireMul = 1 + (0.1 * self:GetLevel(ply, "building_rate"))
+    for _, className in ipairs({ "obj_sentrygun", "obj_dispenser", "obj_teleporter" }) do
+        for _, ent in ipairs(ents.FindByClass(className)) do
+            if not IsValid(ent) or ent:GetOwner() ~= ply then continue end
+            local base = ent.TF_MVM_BaseMaxHealth or ent:GetMaxHealth()
+            ent.TF_MVM_BaseMaxHealth = base
+            local newMax = math.max(1, math.floor(base * healthMul))
+            ent:SetMaxHealth(newMax)
+            ent:SetHealth(math.min(ent:Health(), newMax))
+            if className == "obj_sentrygun" then
+                ent.TF_MVM_BaseFireRate = ent.TF_MVM_BaseFireRate or (ent.FireRate or 0.1)
+                ent.FireRate = ent.TF_MVM_BaseFireRate / fireMul
             end
         end
     end
@@ -965,7 +1410,8 @@ function TF_MVMShop:ApplyPlayerStats(ply)
 
     local hpBonus = 25 * self:GetLevel(ply, "max_health")
     local speedMul = 1 + (0.08 * self:GetLevel(ply, "move_speed"))
-    local jumpMul = 1 + (0.1 * self:GetLevel(ply, "jump_height"))
+    local jumpMul = 1 + (0.2 * self:GetLevel(ply, "jump_height"))
+    local buffDurationMul = 1 + (0.25 * self:GetLevel(ply, "buff_duration_secondary"))
 
     local maxHp = self:GetBaseHealth(ply) + hpBonus
     ply:SetMaxHealth(maxHp)
@@ -992,16 +1438,21 @@ function TF_MVMShop:ApplyPlayerStats(ply)
             baseJump = 220
         end
     end
+    local jumpPower = math.floor((baseJump * jumpMul) + 0.5)
     ply.TF_MVM_BaseJumpPower = baseJump
-    ply:SetJumpPower(math.floor((baseJump * jumpMul) + 0.5))
+    -- ResetClassSpeed in class code writes PlayerJumpPower back into SetJumpPower.
+    ply.PlayerJumpPower = jumpPower
+    ply:SetJumpPower(jumpPower)
+    ply:SetNWFloat("TF_MVM_BuffDurationMul", buffDurationMul)
 
     self:ApplyWeaponStats(ply)
+    self:ApplyEngineerBuildingStats(ply)
 end
 
 function TF_MVMShop:GetUpgradeSellRefund(ply, id)
     local upgrade = upgradesById[id]
     if not upgrade then return nil end
-    local level = self:GetEffectiveLevel(ply, id)
+    local level = self:GetLevel(ply, id)
     if level <= 0 then return nil end
     return upgrade.costs[level]
 end
@@ -1022,30 +1473,31 @@ end
 function TF_MVMShop:BuildPayload(ply)
     local state = self:GetState(ply)
     local list = {}
-    local sellWindowOpen = self:IsSellWindowOpen()
+    local strictMatrix, strictAllowedSet = self:BuildStrictUpgradeValidationMatrix(ply)
+    state.strictUpgradeMatrix = strictMatrix
+
     for _, upgrade in ipairs(self.Upgrades) do
         local scriptAllowed = self:IsUpgradeEnabledByScript(upgrade)
         local classAllowed = self:IsUpgradeAllowedForClass(ply, upgrade)
         local weaponAllowed, restrictionReason = self:IsUpgradeAllowedForLoadout(ply, upgrade)
-        local available = scriptAllowed and classAllowed and weaponAllowed
+        local matrixAllowed = strictAllowedSet[upgrade.id] == true
+        local available = scriptAllowed and classAllowed and weaponAllowed and matrixAllowed
         if available then
-            local level = self:GetEffectiveLevel(ply, upgrade.id)
+            local level = self:GetLevel(ply, upgrade.id)
             local costs = istable(upgrade.costs) and upgrade.costs or {}
             local maxLevel = math.max(1, #costs)
             local nextCost = tonumber(costs[level + 1]) or 0
-            local pendingDelta = self:GetPendingDelta(ply, upgrade.id)
-            local canSellNow = (level > 0) and (sellWindowOpen or pendingDelta > 0)
             local displayName = tostring(upgrade.name or "")
+            displayName = TF_MVMShop.DisplayNameById[upgrade.id]
+                or displayName
+                or ""
             if displayName == "" or #displayName <= 2 then
-                displayName = TF_MVMShop.DisplayNameById[upgrade.id]
-                    or PrettifyAttributeName(TF_MVMShop.CustomUpgradeAttributeMap[upgrade.id] or upgrade.id)
+                displayName = PrettifyAttributeName(TF_MVMShop.CustomUpgradeAttributeMap[upgrade.id] or upgrade.id)
             end
             list[#list + 1] = {
                 id = upgrade.id,
                 name = displayName,
-                description = upgrade.description,
-                attribute = upgrade.attribute,
-                scriptIncrement = upgrade.scriptIncrement,
+                description = upgrade.description or TF_MVMShop.ScriptDescriptionById[upgrade.id] or "",
                 category = upgrade.category,
                 target = upgrade.target,
                 level = level,
@@ -1056,18 +1508,15 @@ function TF_MVMShop:BuildPayload(ply)
                 available = available,
                 restrictionReason = restrictionReason,
                 icon = upgrade.icon,
-                pendingDelta = pendingDelta,
-                canSellNow = canSellNow,
             }
         end
     end
 
     return {
-        credits = self:GetEffectiveCredits(ply),
+        credits = self:GetCredits(ply),
         inSetup = TF_MVMState and TF_MVMState:Get("in_setup", false) or false,
         waveCurrent = TF_MVMState and TF_MVMState:Get("wave_current", 0) or 0,
         waveTotal = TF_MVMState and TF_MVMState:Get("wave_total", 0) or 0,
-        sellWindowOpen = sellWindowOpen,
         canteen = {
             selected = state.canteen.selected,
             maxCharges = self:GetMaxCanteenCharges(ply),
@@ -1084,6 +1533,20 @@ function TF_MVMShop:BuildPayload(ply)
 end
 
 if SERVER then
+    concommand.Add("tf_mvm_dump_upgrade_matrix", function(ply)
+        if not IsValid(ply) then return end
+        if not TF_MVMShop:IsEnabledFor(ply) then
+            ply:ChatPrint("[MVM] Upgrade system not enabled for this player.")
+            return
+        end
+        local matrix = select(1, TF_MVMShop:BuildStrictUpgradeValidationMatrix(ply))
+        local lines = TF_MVMShop:FormatStrictUpgradeMatrixLines(ply, matrix)
+        for _, line in ipairs(lines) do
+            ply:PrintMessage(HUD_PRINTCONSOLE, line .. "\n")
+        end
+        ply:ChatPrint("[MVM] Printed strict upgrade matrix to your console.")
+    end)
+
     local function IsPlayerSpectatingTarget(spec, target)
         if not IsValid(spec) or not spec:IsPlayer() then return false end
         if not IsValid(target) or not target:IsPlayer() then return false end
@@ -1103,11 +1566,10 @@ if SERVER then
         return out
     end
 
-    local function SendPanelToViewer(subject, viewer, spectatorView, readOnly)
+    local function SendPanelToViewer(subject, viewer, spectatorView)
         if not IsValid(subject) or not IsValid(viewer) then return end
         local payload = TF_MVMShop:BuildPayload(subject)
         payload.spectatorView = spectatorView and true or false
-        payload.readOnly = readOnly and true or false
         payload.observedEntIndex = subject:EntIndex()
         payload.observedName = subject:Nick()
         net.Start("TF_MVM_UpgradeOpen")
@@ -1122,88 +1584,15 @@ if SERVER then
         end
     end
 
-    local function SendPanel(ply, opts)
+    local function SendPanel(ply)
         if not TF_MVMShop:IsEnabledFor(ply) then return end
-        local readOnly = istable(opts) and opts.readOnly == true
-        TF_MVMShop:GetPendingSession(ply, true)
-        SendPanelToViewer(ply, ply, false, readOnly)
+        SendPanelToViewer(ply, ply, false)
         for _, spec in ipairs(GetSpectatorsWatching(ply)) do
-            SendPanelToViewer(ply, spec, true, readOnly)
+            SendPanelToViewer(ply, spec, true)
             spec.TF_MVMShopWatching = ply
         end
         ply.TF_MVMUpgradePanelOpen = true
-        ply.TF_MVMUpgradeReadOnly = readOnly or nil
         ply.TF_MVMUpgradePanelOpenedAt = CurTime()
-    end
-
-    local function IsDroppedPickupCandidate(ent)
-        if not IsValid(ent) then return false end
-        if not ent.PlayerTouched or not ent.CanPickup then return false end
-        local className = string.lower(ent:GetClass() or "")
-        return string.find(className, "item_dropped", 1, true) ~= nil
-    end
-
-    local function IsReachableFromPlayer(ply, ent, maxDist)
-        if not IsValid(ply) or not IsValid(ent) then return false end
-        local shootPos = ply:GetShootPos()
-        local targetPos = ent.WorldSpaceCenter and ent:WorldSpaceCenter() or ent:GetPos()
-        if shootPos:DistToSqr(targetPos) > (maxDist * maxDist) then return false end
-
-        local tr = util.TraceLine({
-            start = shootPos,
-            endpos = targetPos,
-            filter = { ply, ent },
-            mask = MASK_SOLID,
-        })
-        return not tr.Hit
-    end
-
-    local function FindDroppedPickupInReach(ply, maxDist)
-        local shootPos = ply:GetShootPos()
-        local aimVec = ply:GetAimVector()
-        local tr = util.TraceLine({
-            start = shootPos,
-            endpos = shootPos + aimVec * maxDist,
-            filter = ply,
-            mask = MASK_SOLID,
-        })
-
-        local candidates = {}
-        if IsValid(tr.Entity) then
-            candidates[#candidates + 1] = tr.Entity
-        end
-
-        for _, ent in ipairs(ents.FindInSphere(tr.HitPos, 36)) do
-            candidates[#candidates + 1] = ent
-        end
-
-        local bestEnt = nil
-        local bestDistSqr = math.huge
-        for _, ent in ipairs(candidates) do
-            if not IsDroppedPickupCandidate(ent) then continue end
-            if not IsReachableFromPlayer(ply, ent, maxDist) then continue end
-            if not ent:CanPickup(ply) then continue end
-            local distSqr = ply:GetShootPos():DistToSqr(ent:GetPos())
-            if distSqr < bestDistSqr then
-                bestDistSqr = distSqr
-                bestEnt = ent
-            end
-        end
-
-        return bestEnt
-    end
-
-    local function TriggerQuickInspect(ply)
-        if not IsValid(ply) then return end
-        ply:SetNWString("inspect", "inspecting_start")
-        timer.Simple(0.12, function()
-            if not IsValid(ply) then return end
-            ply:SetNWString("inspect", "inspecting_released")
-            timer.Simple(0.02, function()
-                if not IsValid(ply) then return end
-                ply:SetNWString("inspect", "inspecting_done")
-            end)
-        end)
     end
 
     function TF_MVMShop:IsNearUpgradeStation(ply)
@@ -1225,7 +1614,6 @@ if SERVER then
         state.spent = 0
         state.buybacks = 0
         state.upgrades = {}
-        state.pending = { active = false, deltas = {}, creditDelta = 0 }
         state.canteen.selected = "crit"
         state.canteen.cooldown = 0
         state.canteen.charges = { crit = 0, uber = 0, refill = 0, build = 0 }
@@ -1242,79 +1630,39 @@ if SERVER then
         end
     end
 
-    function TF_MVMShop:StageBuyUpgrade(ply, id)
-        local pending = self:GetPendingSession(ply, true)
+    function TF_MVMShop:BuyUpgrade(ply, id)
         local can, reason = self:CanBuyUpgrade(ply, id)
         if not can then return false, reason end
         local cost = self:GetUpgradeCost(ply, id)
         if not cost then return false, "invalid_upgrade" end
-        pending.deltas[id] = ClampInt((pending.deltas[id] or 0) + 1)
-        pending.creditDelta = ClampInt((pending.creditDelta or 0) - cost)
+
+        local state = self:GetState(ply)
+        self:AddCredits(ply, -cost)
+        self:SetLevel(ply, id, self:GetLevel(ply, id) + 1)
+        state.spent = state.spent + cost
+        self:ApplyPlayerStats(ply)
+        if id == "max_health" then
+            ply:SetHealth(math.min(ply:GetMaxHealth(), ply:Health() + 25))
+        end
+        ply:EmitSound("MVM.PlayerUpgraded")
         return true
     end
 
-    function TF_MVMShop:StageSellUpgrade(ply, id)
-        local pending = self:GetPendingSession(ply, true)
+    function TF_MVMShop:SellUpgrade(ply, id)
         local can, reason = self:CanSellUpgrade(ply, id)
         if not can then return false, reason end
         local refund = self:GetUpgradeSellRefund(ply, id)
         if not refund then return false, "invalid_upgrade" end
-        pending.deltas[id] = ClampInt((pending.deltas[id] or 0) - 1)
-        pending.creditDelta = ClampInt((pending.creditDelta or 0) + refund)
-        return true
-    end
 
-    function TF_MVMShop:CommitPendingUpgrades(ply)
-        local pending = self:GetPendingSession(ply, false)
-        if not pending or not pending.active then return true end
         local state = self:GetState(ply)
-        local totalSpentDelta = 0
-
-        for id, delta in pairs(pending.deltas or {}) do
-            local n = ClampInt(delta)
-            if n ~= 0 then
-                local before = self:GetLevel(ply, id)
-                local after = math.max(0, before + n)
-                self:SetLevel(ply, id, after)
-
-                if n > 0 then
-                    local upgrade = upgradesById[id]
-                    local costs = (upgrade and istable(upgrade.costs)) and upgrade.costs or {}
-                    for i = 1, n do
-                        totalSpentDelta = totalSpentDelta + (tonumber(costs[before + i] or 0) or 0)
-                    end
-                elseif n < 0 then
-                    local upgrade = upgradesById[id]
-                    local costs = (upgrade and istable(upgrade.costs)) and upgrade.costs or {}
-                    for i = 0, (-n - 1) do
-                        totalSpentDelta = totalSpentDelta - (tonumber(costs[before - i] or 0) or 0)
-                    end
-                end
-            end
-        end
-
-        self:AddCredits(ply, ClampInt(pending.creditDelta or 0))
-        state.spent = math.max(0, ClampInt(state.spent) + totalSpentDelta)
-        local didBuy = (ClampInt(pending.creditDelta or 0) < 0)
-        self:ClearPendingSession(ply)
+        self:SetLevel(ply, id, self:GetLevel(ply, id) - 1)
+        self:AddCredits(ply, refund)
+        state.spent = math.max(0, (tonumber(state.spent) or 0) - refund)
         self:ApplyPlayerStats(ply)
-        if didBuy then
-            ply:EmitSound("MVM.PlayerUpgraded")
+        if id == "max_health" and ply:Health() > ply:GetMaxHealth() then
+            ply:SetHealth(ply:GetMaxHealth())
         end
         return true
-    end
-
-    function TF_MVMShop:CancelPendingUpgrades(ply)
-        self:ClearPendingSession(ply)
-        return true
-    end
-
-    function TF_MVMShop:BuyUpgrade(ply, id)
-        return self:StageBuyUpgrade(ply, id)
-    end
-
-    function TF_MVMShop:SellUpgrade(ply, id)
-        return self:StageSellUpgrade(ply, id)
     end
 
     function TF_MVMShop:Respec(ply)
@@ -1327,7 +1675,6 @@ if SERVER then
         state.upgrades = {}
         self:AddCredits(ply, refund)
         self:ApplyPlayerStats(ply)
-        ply:Spawn()
         ply:Spawn()
         return true
     end
@@ -1367,9 +1714,8 @@ if SERVER then
     end
 
     local function ApplyCanteenUber(ply)
-        if ply.AddCond then
-            ply:AddCond(TF_COND_INVULNERABLE, 5, ply)
-        end
+        ply.TF_MVMUberUntil = CurTime() + 5
+        ply:SetNWFloat("TF_MVMUberUntil", ply.TF_MVMUberUntil)
     end
 
     local function ApplyCanteenRefill(ply)
@@ -1480,7 +1826,7 @@ if SERVER then
 
     hook.Add("PlayerSwitchWeapon", "TF_MVMShop_OnSwitch", function(ply)
         if not TF_MVMShop:IsEnabledFor(ply) then return end
-        TF_MVMShop:ApplyWeaponStats(ply)
+        TF_MVMShop:ApplyPlayerStats(ply)
     end)
 
     hook.Add("EntityTakeDamage", "TF_MVMShop_DamageHooks", function(target, dmginfo)
@@ -1493,10 +1839,7 @@ if SERVER then
         end
 
         if IsValid(target) and target:IsPlayer() and TF_MVMShop:IsEnabledFor(target) then
-            if (target.InCond and target:InCond(TF_COND_INVULNERABLE))
-                or (target.InCond and target:InCond(TF_COND_INVULNERABLE_USER_BUFF))
-                or (target.InCond and target:InCond(TF_COND_INVULNERABLE_CARD_EFFECT))
-                or (target.InCond and target:InCond(TF_COND_INVULNERABLE_HIDE_UNLESS_DAMAGED)) then
+            if target.TF_MVMUberUntil and target.TF_MVMUberUntil > CurTime() then
                 dmginfo:ScaleDamage(0)
                 return
             end
@@ -1522,7 +1865,6 @@ if SERVER then
         end
     end)
 
-    hook.Add("PlayerDeath", "TF_MVMShop_HealOnKill", function(victim, inflictor, attacker)
     hook.Add("PlayerDeath", "TF_MVMShop_HealOnKill", function(victim, inflictor, attacker)
         if not IsValid(attacker) or not attacker:IsPlayer() then return end
         if attacker == victim or not TF_MVMShop:IsEnabledFor(attacker) then return end
@@ -1573,6 +1915,17 @@ if SERVER then
         end
     end)
 
+    hook.Add("Think", "TF_MVMShop_BuildingUpgradeThink", function()
+        TF_MVMShop._NextBuildingUpgradeTick = TF_MVMShop._NextBuildingUpgradeTick or 0
+        if CurTime() < TF_MVMShop._NextBuildingUpgradeTick then return end
+        TF_MVMShop._NextBuildingUpgradeTick = CurTime() + 1.0
+        for _, ply in ipairs(player.GetAll()) do
+            if TF_MVMShop:IsEnabledFor(ply) then
+                TF_MVMShop:ApplyEngineerBuildingStats(ply)
+            end
+        end
+    end)
+
     hook.Add("TF_MVM_MissionStarted", "TF_MVMShop_ResetMission", function(mission)
         local start = tonumber(mission and mission.StartingCurrency) or TF_MVMShop.StartingCredits
         TF_MVMShop:ResetAllPlayers(start)
@@ -1619,31 +1972,7 @@ if SERVER then
     concommand.Add("tf_mvm_shop", function(ply)
         if not TF_MVMShop:IsEnabledFor(ply) then return end
         if not TF_MVMShop:IsNearUpgradeStation(ply) then return end
-        if not TF_MVMShop:IsNearUpgradeStation(ply) then return end
         SendPanel(ply)
-    end)
-
-    concommand.Add("tf_itempicker", function(ply, _, args)
-        if not IsValid(ply) or not ply:IsPlayer() then return end
-
-        local mode = string.lower(tostring(args and args[1] or ""))
-        if mode == "hat" then
-            ply:ConCommand("tf_hatpainter")
-            return
-        end
-
-        local droppedPickup = FindDroppedPickupInReach(ply, 130)
-        if IsValid(droppedPickup) then
-            droppedPickup:PlayerTouched(ply)
-            return
-        end
-
-        if TF_MVMShop:IsEnabledFor(ply) and TF_MVMShop:IsNearUpgradeStation(ply) then
-            SendPanel(ply, { readOnly = true })
-            return
-        end
-
-        TriggerQuickInspect(ply)
     end)
 
     concommand.Add("tf_mvm_use_canteen", function(ply)
@@ -1679,8 +2008,6 @@ if SERVER then
 
         if action == "ui_closed" then
             ply.TF_MVMUpgradePanelOpen = nil
-            ply.TF_MVMUpgradeReadOnly = nil
-            TF_MVMShop:CancelPendingUpgrades(ply)
             SendCloseToSpectators(ply)
             return
         end
@@ -1691,8 +2018,6 @@ if SERVER then
 
         if not nearStation and not hasOpenContext then
             ply.TF_MVMUpgradePanelOpen = nil
-            ply.TF_MVMUpgradeReadOnly = nil
-            TF_MVMShop:CancelPendingUpgrades(ply)
             net.Start("TF_MVM_UpgradeClose")
             net.Send(ply)
             SendCloseToSpectators(ply)
@@ -1704,34 +2029,6 @@ if SERVER then
 
         if action == "request_open" then
             SendPanel(ply)
-            return
-        elseif ply.TF_MVMUpgradeReadOnly and (
-            action == "accept"
-            or action == "cancel"
-            or action == "buy_upgrade"
-            or action == "sell_upgrade"
-            or action == "respec"
-            or action == "buy_canteen"
-            or action == "select_canteen"
-            or action == "buyback"
-        ) then
-            SendPanel(ply, { readOnly = true })
-            return
-        elseif action == "accept" then
-            TF_MVMShop:CommitPendingUpgrades(ply)
-            ply.TF_MVMUpgradePanelOpen = nil
-            ply.TF_MVMUpgradeReadOnly = nil
-            net.Start("TF_MVM_UpgradeClose")
-            net.Send(ply)
-            SendCloseToSpectators(ply)
-            return
-        elseif action == "cancel" then
-            TF_MVMShop:CancelPendingUpgrades(ply)
-            ply.TF_MVMUpgradePanelOpen = nil
-            ply.TF_MVMUpgradeReadOnly = nil
-            net.Start("TF_MVM_UpgradeClose")
-            net.Send(ply)
-            SendCloseToSpectators(ply)
             return
         elseif action == "buy_upgrade" then
             local ok, reason = TF_MVMShop:BuyUpgrade(ply, arg)
@@ -1750,11 +2047,9 @@ if SERVER then
         elseif action == "sell_upgrade" then
             TF_MVMShop:SellUpgrade(ply, arg)
         elseif action == "respec" then
-            TF_MVMShop:CancelPendingUpgrades(ply)
             local ok, reason = TF_MVMShop:Respec(ply)
             if ok then
                 ply.TF_MVMUpgradePanelOpen = nil
-                ply.TF_MVMUpgradeReadOnly = nil
                 net.Start("TF_MVM_UpgradeClose")
                 net.Send(ply)
                 SendCloseToSpectators(ply)
@@ -1771,11 +2066,7 @@ if SERVER then
         SendPanel(ply)
     end)
 else
-    if file.Exists("gamemodes/tf/gamemode/cl_tf2_res.lua", "LUA") then
-        include("cl_tf2_res.lua")
-    else
-        include("vgui/vgui_tf2res.lua")
-    end
+    include("vgui/vgui_tf2res.lua")
 
     local function IsNearUpgradeStationClient()
         local ply = LocalPlayer()
@@ -1816,14 +2107,18 @@ else
         reload_primary = "vgui/achievements/tf_heavy_survive_crocket",
         clip_primary = "vgui/achievements/tf_scout_destroy_sentry_with_pistol",
         ammo_primary = "vgui/achievements/tf_heavy_assist_grind",
+        effectbar_primary = "vgui/achievements/tf_win_well_minimumtime",
         damage_secondary = "vgui/achievements/tf_demoman_kill_x_with_directpipe",
         firerate_secondary = "vgui/achievements/tf_scout_dodge_damage",
         reload_secondary = "vgui/achievements/tf_heavy_survive_crocket",
         clip_secondary = "vgui/achievements/tf_scout_destroy_sentry_with_pistol",
         ammo_secondary = "vgui/achievements/tf_heavy_assist_grind",
+        effectbar_secondary = "vgui/achievements/tf_win_well_minimumtime",
+        buff_duration_secondary = "vgui/achievements/tf_soldier_buff_teammates",
         damage_melee = "vgui/achievements/tf_demoman_kill_x_with_directpipe",
         swing_melee = "vgui/mvm/upgradeicons/upgrade_attackspeed",
         lifesteal_melee = "vgui/achievements/tf_medic_kill_healed_spy",
+        effectbar_melee = "vgui/achievements/tf_win_well_minimumtime",
         building_health = "vgui/achievements/tf_engineer_repair_sentry_w_medic",
         building_rate = "vgui/achievements/tf_engineer_sentry_kill_lifetime_grind",
         canteen_capacity = "vgui/achievements/tf_medic_charge_blocker",
@@ -1920,8 +2215,7 @@ else
             local r, g, b, a = v:match("^(%d+)%s+(%d+)%s+(%d+)%s*(%d*)$")
             if r and g and b then
                 local alpha = tonumber(a)
-                if alpha == nil then alpha = 255 end
-                out[string.lower(k)] = Color(tonumber(r), tonumber(g), tonumber(b), alpha)
+                out[string.lower(k)] = Color(tonumber(r), tonumber(g), tonumber(b), alpha and alpha > 0 and alpha or 255)
             end
         end
 
@@ -1976,36 +2270,32 @@ else
             return nil
         end
 
+        local bgGrayout = hudTree and TF2Res.FindByFieldName(hudTree, "BGGrayoutPanel") or nil
         local selectPanel = hudTree and TF2Res.FindByFieldName(hudTree, "SelectWeaponPanel") or nil
-        local bgGrayout = FindByFieldNames(hudTree, "BGGrayoutPanel")
         local hudPanelRoot = hudTree and TF2Res.FindByKey(hudTree, "HudUpgradePanel") or nil
-        local outterPanelBG = FindByFieldNames(hudTree, "OutterPanelBG", "OuterPanelBG")
+        local modelPanelsKV = hudPanelRoot and TF2Res.FindByKey(hudPanelRoot, "modelpanels_kv") or nil
+        local outterPanelBG = hudTree and (TF2Res.FindByFieldName(hudTree, "OutterPanelBG") or TF2Res.FindByFieldName(hudTree, "OuterPanelBG")) or nil
         local innerRim = hudTree and TF2Res.FindByFieldName(hudTree, "InnerPanelRim") or nil
         local innerBG = hudTree and TF2Res.FindByFieldName(hudTree, "InnerBGPanel") or nil
         local playerUpgradeButton = hudTree and TF2Res.FindByFieldName(hudTree, "PlayerUpgradeButton") or nil
         local activeTabPanel = hudTree and TF2Res.FindByFieldName(hudTree, "ActiveTabPanel") or nil
         local inactiveTabPanel = hudTree and TF2Res.FindByFieldName(hudTree, "InactiveTabPanel1") or nil
-        local inactiveSeparatorPanel = FindByFieldNames(hudTree, "InactiveSeparatorPanel")
         local hoverTabPanel = hudTree and TF2Res.FindByFieldName(hudTree, "MouseOverTabPanel") or nil
         local hoverUpgradePanel = hudTree and TF2Res.FindByFieldName(hudTree, "MouseOverUpgradePanel") or nil
         local classImagePanel = hudTree and TF2Res.FindByFieldName(hudTree, "ClassImage") or nil
         local creditsLabel = hudTree and TF2Res.FindByFieldName(hudTree, "CreditsLabel") or nil
         local creditsTextLabel = hudTree and TF2Res.FindByFieldName(hudTree, "CreditsTextLabel") or nil
-        local itemsDescBG = FindByFieldNames(hudTree, "UpgradeItemsDescriptionBG")
-        local itemsDescLabel = FindByFieldNames(hudTree, "UpgradeItemsDescriptionLabel")
         local upgradeItemsBG = hudTree and TF2Res.FindByFieldName(hudTree, "UpgradeItemsBG") or nil
+        local itemsDescBG = hudTree and TF2Res.FindByFieldName(hudTree, "UpgradeItemsDescriptionBG") or nil
+        local itemsDescLabel = hudTree and TF2Res.FindByFieldName(hudTree, "UpgradeItemsDescriptionLabel") or nil
         local upgradeItemsHeaderBG = hudTree and TF2Res.FindByFieldName(hudTree, "UpgradeItemsHeaderBG") or nil
         local upgradeItemsLabel = hudTree and TF2Res.FindByFieldName(hudTree, "UpgradeItemsLabel") or nil
         local itemStatsLabel = hudTree and TF2Res.FindByFieldName(hudTree, "UpgradeItemStatsLabel") or nil
         local itemNameBG = hudTree and TF2Res.FindByFieldName(hudTree, "ItemNameBG") or nil
-        local tipPanel = FindByFieldNames(hudTree, "TipPanel")
-        local tipPanelBG = FindByFieldNames(hudTree, "TipPanelBG")
-        local tipText = FindByFieldNames(hudTree, "TipText")
-        local quickEquipButton = FindByFieldNames(hudTree, "QuickEquipButton")
-        local loadoutButton = FindByFieldNames(hudTree, "LoadoutButton")
         local respecButton = hudTree and TF2Res.FindByFieldName(hudTree, "RespecButton") or nil
         local cancelButton = hudTree and TF2Res.FindByFieldName(hudTree, "CancelButton") or nil
         local closeButton = hudTree and TF2Res.FindByFieldName(hudTree, "CloseButton") or nil
+        local inactiveSeparatorPanel = FindByFieldNames(hudTree, "InactiveSeparatorPanel")
 
         local upgradeCard = buyTree and TF2Res.FindByFieldName(buyTree, "UpgradeBuyPanel") or nil
         local iconBorder = buyTree and TF2Res.FindByFieldName(buyTree, "IconBorder") or nil
@@ -2023,22 +2313,11 @@ else
             return tf2UpgradeResCache
         end
 
-        local function ResolveOverrideColor(node, key, fallback)
-            local raw = TF2Res.GetString(node, key, nil)
-            if not isstring(raw) or raw == "" then return fallback end
-            local r, g, b, a = raw:match("^(%d+)%s+(%d+)%s+(%d+)%s*(%d*)$")
-            if r and g and b then
-                local alpha = tonumber(a)
-                if alpha == nil then alpha = 255 end
-                return Color(tonumber(r), tonumber(g), tonumber(b), alpha)
-            end
-            return GetSchemeColor(raw, fallback)
-        end
-
         tf2UpgradeResCache = {
             selectW = TF2Res.GetNumber(selectPanel, "wide", 500),
             selectH = TF2Res.GetNumber(selectPanel, "tall", 350),
             panelY = TF2Res.GetNumber(selectPanel, "ypos", 85),
+            backdropColor = TF2Res.GetColor(bgGrayout, "bgcolor_override", Color(0, 0, 0, 210)),
             innerX = TF2Res.GetNumber(innerRim, "xpos", 10),
             innerY = TF2Res.GetNumber(innerRim, "ypos", 50),
             innerW = TF2Res.GetNumber(innerRim, "wide", 480),
@@ -2051,9 +2330,14 @@ else
             tabH = TF2Res.GetNumber(playerUpgradeButton, "tall", 50),
             tabTextInsetX = TF2Res.GetNumber(playerUpgradeButton, "textinsetx", 50),
             tabFont = TF2Res.GetString(playerUpgradeButton, "font", "HudFontSmallBold"),
-            tabTextAlignment = TF2Res.GetString(playerUpgradeButton, "textAlignment", "center"),
-            tabTextInsetY = TF2Res.GetNumber(playerUpgradeButton, "textinsety", 6),
+            tabSoundDown = TF2Res.GetString(playerUpgradeButton, "sound_depressed", "ui/buttonclick.wav"),
+            tabSoundUp = TF2Res.GetString(playerUpgradeButton, "sound_released", "ui/buttonclickrelease.wav"),
             tabTextColor = GetSchemeColor("TanLight", Color(231, 218, 186)),
+            tabIconX = TF2Res.GetNumber(modelPanelsKV, "model_center_x", 4),
+            tabIconY = TF2Res.GetNumber(modelPanelsKV, "model_ypos", 3),
+            tabIconW = TF2Res.GetNumber(modelPanelsKV, "model_wide", 30),
+            tabIconH = TF2Res.GetNumber(modelPanelsKV, "model_tall", 30),
+            tabLabelY = TF2Res.GetNumber(modelPanelsKV, "text_ypos", 6),
             tabStartX = TF2Res.GetNumber(activeTabPanel, "xpos", 88),
             tabStartY = TF2Res.GetNumber(playerUpgradeButton, "ypos", 10),
             tabGap = TF2Res.GetNumber(hudPanelRoot, "itempanel_xdelta", 5),
@@ -2063,6 +2347,7 @@ else
             infoX = TF2Res.GetNumber(upgradeItemsBG, "xpos", 25),
             infoY = TF2Res.GetNumber(upgradeItemsBG, "ypos", 135),
             infoH = TF2Res.GetNumber(upgradeItemsBG, "tall", 130),
+            infoHeaderH = TF2Res.GetNumber(upgradeItemsHeaderBG, "tall", 20),
             infoDescX = TF2Res.GetNumber(itemStatsLabel, "xpos", 30),
             infoDescY = TF2Res.GetNumber(itemStatsLabel, "ypos", 160),
             infoDescW = TF2Res.GetNumber(itemStatsLabel, "wide", 120),
@@ -2071,13 +2356,17 @@ else
             rowH = TF2Res.GetNumber(upgradeCard, "tall", 45),
             rowIconW = TF2Res.GetNumber(iconBorder, "wide", 30),
             rowIconH = TF2Res.GetNumber(iconBorder, "tall", 30),
+            rowIconBorderX = TF2Res.GetNumber(iconBorder, "xpos", 2),
+            rowIconBorderY = TF2Res.GetNumber(iconBorder, "ypos", 2),
             rowIconX = TF2Res.GetNumber(iconPanel, "xpos", 4),
             rowIconY = TF2Res.GetNumber(iconPanel, "ypos", 4),
+            rowIconInnerW = TF2Res.GetNumber(iconPanel, "wide", 26),
+            rowIconInnerH = TF2Res.GetNumber(iconPanel, "tall", 26),
             rowRightW = TF2Res.GetNumber(buySellBG, "wide", 20),
-            priceY = TF2Res.GetNumber(priceLabel, "ypos", 32),
             priceX = TF2Res.GetNumber(priceLabel, "xpos", 2),
             priceW = TF2Res.GetNumber(priceLabel, "wide", 30),
             priceH = TF2Res.GetNumber(priceLabel, "tall", 13),
+            priceY = TF2Res.GetNumber(priceLabel, "ypos", 32),
             textX = TF2Res.GetNumber(shortDesc, "xpos", 37),
             textY = TF2Res.GetNumber(shortDesc, "ypos", 4),
             textW = TF2Res.GetNumber(shortDesc, "wide", 97),
@@ -2090,22 +2379,18 @@ else
             minusY = TF2Res.GetNumber(decrementBtn, "ypos", 24),
             minusW = TF2Res.GetNumber(decrementBtn, "wide", 16),
             minusH = TF2Res.GetNumber(decrementBtn, "tall", 16),
-            -- CImageButton semantics in TF2:
-            -- inactiveimage = idle image, activeimage = hovered/pressed image.
-            buyActiveImage = TF2Res.GetString(incrementBtn, "activeimage", "vgui/pve/buy_selected"),
-            buyInactiveImage = TF2Res.GetString(incrementBtn, "inactiveimage", "vgui/pve/buy_enabled"),
-            sellActiveImage = TF2Res.GetString(decrementBtn, "activeimage", "vgui/pve/sell_selected"),
-            sellInactiveImage = TF2Res.GetString(decrementBtn, "inactiveimage", "vgui/pve/sell_enabled"),
+            -- TF2 CImageButton behavior: activeimage = enabled art, inactiveimage = disabled art.
+            buyEnabledImage = TF2Res.GetString(incrementBtn, "activeimage", "vgui/pve/buy_enabled"),
+            buyDisabledImage = TF2Res.GetString(incrementBtn, "inactiveimage", "vgui/pve/buy_disabled"),
+            -- Optional press/hover override art (TF2 commonly uses buy_selected).
+            buySelectedImage = TF2Res.GetString(incrementBtn, "selectedimage", "vgui/pve/buy_selected"),
+            sellEnabledImage = TF2Res.GetString(decrementBtn, "activeimage", "vgui/pve/sell_enabled"),
+            sellDisabledImage = TF2Res.GetString(decrementBtn, "inactiveimage", "vgui/pve/sell_disabled"),
+            sellSelectedImage = TF2Res.GetString(decrementBtn, "selectedimage", "vgui/pve/sell_selected"),
             plusSoundDown = TF2Res.GetString(incrementBtn, "sound_depressed", "ui/buttonclick.wav"),
             plusSoundUp = TF2Res.GetString(incrementBtn, "sound_released", "ui/buttonclickrelease.wav"),
             minusSoundDown = TF2Res.GetString(decrementBtn, "sound_depressed", "ui/buttonclick.wav"),
             minusSoundUp = TF2Res.GetString(decrementBtn, "sound_released", "ui/buttonclickrelease.wav"),
-            plusDefaultBG = ResolveOverrideColor(incrementBtn, "defaultBgColor_override", Color(255, 255, 255, 0)),
-            plusArmedBG = ResolveOverrideColor(incrementBtn, "armedBgColor_override", Color(255, 255, 255, 0)),
-            plusDepressedBG = ResolveOverrideColor(incrementBtn, "depressedBgColor_override", Color(255, 255, 255, 0)),
-            minusDefaultBG = ResolveOverrideColor(decrementBtn, "defaultBgColor_override", Color(255, 255, 255, 0)),
-            minusArmedBG = ResolveOverrideColor(decrementBtn, "armedBgColor_override", Color(255, 255, 255, 0)),
-            minusDepressedBG = ResolveOverrideColor(decrementBtn, "depressedBgColor_override", Color(255, 255, 255, 0)),
             respecW = TF2Res.GetNumber(respecButton, "wide", 120),
             respecH = TF2Res.GetNumber(respecButton, "tall", 17),
             respecX = TF2Res.GetNumber(respecButton, "xpos", 50),
@@ -2122,63 +2407,58 @@ else
             upgradeDelta = TF2Res.GetNumber(hudPanelRoot, "upgradebuypanel_delta", 6),
             upgradeListX = TF2Res.GetNumber(hudPanelRoot, "upgradebuypanel_xpos", 160),
             upgradeListY = TF2Res.GetNumber(hudPanelRoot, "upgradebuypanel_ypos", 65),
+            pipW = TF2Res.GetNumber(skillTreeKV, "wide", 16),
+            pipH = TF2Res.GetNumber(skillTreeKV, "tall", 16),
             classX = TF2Res.GetNumber(classImagePanel, "xpos", 30),
             classY = TF2Res.GetNumber(classImagePanel, "ypos", 15),
             classW = TF2Res.GetNumber(classImagePanel, "wide", 40),
             classH = TF2Res.GetNumber(classImagePanel, "tall", 40),
-            cardBorderImage = TF2Res.GetString(outterPanelBG, "image", "../HUD/tournament_panel_brown"),
-            cardCornerSrcW = TF2Res.GetNumber(outterPanelBG, "src_corner_width", 23),
-            cardCornerSrcH = TF2Res.GetNumber(outterPanelBG, "src_corner_height", 23),
-            cardCornerDrawW = TF2Res.GetNumber(outterPanelBG, "draw_corner_width", 8),
-            cardCornerDrawH = TF2Res.GetNumber(outterPanelBG, "draw_corner_height", 8),
-            backdropColor = TF2Res.GetColor(bgGrayout, "bgcolor_override", Color(0, 0, 0, 210)),
             colCardBG = TF2Res.GetColor(selectPanel, "bgcolor_override", Color(63, 59, 55, 250)),
             colActiveTab = TF2Res.GetColor(activeTabPanel, "bgcolor_override", Color(142, 132, 121, 255)),
             colInactiveTab = TF2Res.GetColor(inactiveTabPanel, "bgcolor_override", Color(77, 72, 68, 255)),
             colHoverTab = TF2Res.GetColor(hoverTabPanel, "bgcolor_override", Color(239, 128, 73, 255)),
             colHoverUpgrade = TF2Res.GetColor(hoverUpgradePanel, "bgcolor_override", Color(239, 128, 73, 255)),
             colInactiveSeparator = TF2Res.GetColor(inactiveSeparatorPanel, "bgcolor_override", Color(0, 0, 0, 128)),
-            colDescBG = TF2Res.GetColor(itemsDescBG, "bgcolor_override", Color(52, 48, 45, 255)),
             colListBG = TF2Res.GetColor(upgradeItemsBG, "bgcolor_override", Color(97, 94, 85, 255)),
+            colDescBG = TF2Res.GetColor(itemsDescBG, "bgcolor_override", Color(52, 48, 45, 255)),
             colListHeader = TF2Res.GetColor(upgradeItemsHeaderBG, "bgcolor_override", Color(72, 68, 63, 255)),
             colRowBG = TF2Res.GetColor(TF2Res.FindByFieldName(buyTree, "InnerPanelRim"), "bgcolor_override", Color(97, 94, 85, 255)),
             colRowIcon = TF2Res.GetColor(iconBorder, "bgcolor_override", Color(235, 226, 202, 255)),
             colRowRight = TF2Res.GetColor(buySellBG, "bgcolor_override", Color(117, 114, 103, 255)),
             creditsFont = TF2Res.GetString(creditsLabel, "font", "HudFontMedium"),
             creditsTextFont = TF2Res.GetString(creditsTextLabel, "font", "HudFontSmallBold"),
+            creditsX = TF2Res.GetNumber(creditsLabel, "xpos", 0),
+            creditsY = TF2Res.GetNumber(creditsLabel, "ypos", 280),
+            creditsW = TF2Res.GetNumber(creditsLabel, "wide", 245),
+            creditsH = TF2Res.GetNumber(creditsLabel, "tall", 30),
+            creditsColor = TF2Res.GetColor(creditsLabel, "fgcolor", GetSchemeColor("CreditsGreen", Color(121, 195, 58))),
+            creditsTextX = TF2Res.GetNumber(creditsTextLabel, "xpos", 250),
+            creditsTextY = TF2Res.GetNumber(creditsTextLabel, "ypos", 280),
+            creditsTextW = TF2Res.GetNumber(creditsTextLabel, "wide", 500),
+            creditsTextH = TF2Res.GetNumber(creditsTextLabel, "tall", 30),
+            creditsTextColor = TF2Res.GetColor(creditsTextLabel, "fgcolor", GetSchemeColor("TanLight", Color(231, 218, 186))),
             buttonFont = TF2Res.GetString(cancelButton, "font", "HudFontSmallestBold"),
+            cancelSoundDown = TF2Res.GetString(cancelButton, "sound_depressed", "ui/buttonclick.wav"),
+            cancelSoundUp = TF2Res.GetString(cancelButton, "sound_released", "ui/buttonclickrelease.wav"),
+            closeSoundDown = TF2Res.GetString(closeButton, "sound_depressed", "ui/buttonclick.wav"),
+            closeSoundUp = TF2Res.GetString(closeButton, "sound_released", "ui/buttonclickrelease.wav"),
+            respecSoundDown = TF2Res.GetString(respecButton, "sound_depressed", "ui/buttonclick.wav"),
+            respecSoundUp = TF2Res.GetString(respecButton, "sound_released", "ui/buttonclickrelease.wav"),
+            rowNameFont = TF2Res.GetString(shortDesc, "font", "HudFontSmallest"),
+            rowPriceFont = TF2Res.GetString(priceLabel, "font", "HudFontSmallestBold"),
             creditsTextToken = TF2Res.GetString(creditsTextLabel, "labelText", "#TF_PVE_UpgradeAmount"),
             cancelTextToken = TF2Res.GetString(cancelButton, "labelText", "#TF_PVE_UpgradeCancel"),
             closeTextToken = TF2Res.GetString(closeButton, "labelText", "#TF_PVE_UpgradeDone"),
             respecTextToken = TF2Res.GetString(respecButton, "labelText", "#TF_PVE_UpgradeRespec"),
             itemHeaderFont = TF2Res.GetString(upgradeItemsLabel, "font", "HudFontSmallBold"),
             itemStatsFont = TF2Res.GetString(itemStatsLabel, "font", "HudFontSmallest"),
-            itemDescFont = TF2Res.GetString(itemsDescLabel, "font", "ItemFontAttribLarge"),
-            rowNameFont = TF2Res.GetString(shortDesc, "font", "HudFontSmallest"),
-            rowPriceFont = TF2Res.GetString(priceLabel, "font", "HudFontSmallestBold"),
-            pipW = TF2Res.GetNumber(skillTreeKV, "wide", 16),
-            pipH = TF2Res.GetNumber(skillTreeKV, "tall", 16),
-            infoHeaderH = TF2Res.GetNumber(upgradeItemsHeaderBG, "tall", 20),
-            titleFont = TF2Res.GetString(upgradeItemsLabel, "font", "HudFontSmallBold"),
-            waveFont = TF2Res.GetString(creditsTextLabel, "font", "HudFontSmallestBold"),
-            tipX = TF2Res.GetNumber(tipPanel, "xpos", 0),
-            tipY = TF2Res.GetNumber(tipPanel, "ypos", 395),
-            tipW = TF2Res.GetNumber(tipPanel, "wide", 500),
-            tipH = TF2Res.GetNumber(tipPanel, "tall", 40),
-            tipFont = TF2Res.GetString(tipText, "font", "HudFontSmallest"),
-            tipTextToken = TF2Res.GetString(tipText, "labelText", "%tiptext%"),
-            quickEquipX = TF2Res.GetNumber(quickEquipButton, "xpos", 250),
-            quickEquipY = TF2Res.GetNumber(quickEquipButton, "ypos", 195),
-            quickEquipW = TF2Res.GetNumber(quickEquipButton, "wide", 120),
-            quickEquipH = TF2Res.GetNumber(quickEquipButton, "tall", 17),
-            quickEquipTextToken = TF2Res.GetString(quickEquipButton, "labelText", "#TF_PVE_Quick_Equip_Bottle"),
-            loadoutX = TF2Res.GetNumber(loadoutButton, "xpos", 250),
-            loadoutY = TF2Res.GetNumber(loadoutButton, "ypos", 215),
-            loadoutW = TF2Res.GetNumber(loadoutButton, "wide", 120),
-            loadoutH = TF2Res.GetNumber(loadoutButton, "tall", 17),
-            loadoutTextToken = TF2Res.GetString(loadoutButton, "labelText", "#OpenGeneralLoadout"),
             colInnerRim = TF2Res.GetColor(innerRim, "bgcolor_override", Color(142, 132, 121, 255)),
             colInnerBG = TF2Res.GetColor(innerBG, "bgcolor_override", Color(77, 72, 68, 255)),
+            cardBorderImage = TF2Res.GetString(outterPanelBG, "image", "../HUD/tournament_panel_brown"),
+            cardCornerSrcW = TF2Res.GetNumber(outterPanelBG, "src_corner_width", 23),
+            cardCornerSrcH = TF2Res.GetNumber(outterPanelBG, "src_corner_height", 23),
+            cardCornerDrawW = TF2Res.GetNumber(outterPanelBG, "draw_corner_width", 8),
+            cardCornerDrawH = TF2Res.GetNumber(outterPanelBG, "draw_corner_height", 8),
         }
 
         return tf2UpgradeResCache
@@ -2215,6 +2495,44 @@ else
         return out
     end
 
+    local function SetAspectIcon(panel, path)
+        if not IsValid(panel) then return end
+        local normalized = NormalizeIconPath(path)
+        if not isstring(normalized) or normalized == "" then
+            normalized = isstring(path) and path or nil
+        end
+        panel.IconPath = normalized
+        panel.IconMat = nil
+        panel.Paint = function(self, w, h)
+            local p = self.IconPath
+            if not isstring(p) or p == "" then return end
+            if not self.IconMat then
+                self.IconMat = Material(p)
+            end
+            local mat = self.IconMat
+            if not mat or (mat.IsError and mat:IsError()) then return end
+
+            local mw = tonumber(mat:Width()) or w
+            local mh = tonumber(mat:Height()) or h
+            if mw <= 0 or mh <= 0 then
+                surface.SetMaterial(mat)
+                surface.SetDrawColor(255, 255, 255, 255)
+                surface.DrawTexturedRect(0, 0, w, h)
+                return
+            end
+
+            local scale = math.min(w / mw, h / mh)
+            local dw = math.floor(mw * scale + 0.5)
+            local dh = math.floor(mh * scale + 0.5)
+            local dx = math.floor((w - dw) * 0.5)
+            local dy = math.floor((h - dh) * 0.5)
+
+            surface.SetMaterial(mat)
+            surface.SetDrawColor(255, 255, 255, 255)
+            surface.DrawTexturedRect(dx, dy, dw, dh)
+        end
+    end
+
     local function ResolveClassPortraitIcon(ply, className)
         local rawClass = string.lower(tostring(className or "scout"))
         local classKey = CLASS_ICON_ALIAS[rawClass] or rawClass
@@ -2241,6 +2559,23 @@ else
 
     local function GetClientWeaponSlotName(wep)
         if not IsValid(wep) then return "" end
+        local cls = string.lower(tostring((wep.GetClass and wep:GetClass()) or ""))
+
+        -- Mirror server-side fallback so drink/jar/banners resolve consistently.
+        if string.find(cls, "jar_milk", 1, true)
+            or string.find(cls, "jar_gas", 1, true)
+            or string.find(cls, "tf_weapon_jar", 1, true)
+            or string.find(cls, "lunchbox_drink", 1, true) then
+            return "secondary"
+        end
+
+        if string.find(cls, "powerup", 1, true)
+            or string.find(cls, "canteen", 1, true)
+            or string.find(cls, "battery", 1, true)
+            or string.find(cls, "kritz_or_treat", 1, true) then
+            return "action"
+        end
+
         if wep.GetItemData then
             local itemData = wep:GetItemData()
             if itemData and isstring(itemData.item_slot) then
@@ -2254,6 +2589,7 @@ else
         if slot == 0 then return "primary" end
         if slot == 1 then return "secondary" end
         if slot == 2 then return "melee" end
+        if slot == 3 or slot == 4 or slot == 5 then return "action" end
         return ""
     end
 
@@ -2309,8 +2645,47 @@ else
         local ply = IsValid(subjectPly) and subjectPly or LocalPlayer()
         local className = string.lower(tostring(IsValid(ply) and ply:GetPlayerClass() or ""))
 
-        local tabs = {
-            { key = "player", label = "PLAYER", slot = "player", fallbackIcon = SLOT_FALLBACK_ICON.player },
+        local function UpgradeMatchesTab(up, tabKey)
+            local target = string.lower(tostring(up and up.target or ""))
+            local category = string.lower(tostring(up and up.category or ""))
+            if tabKey == "player" then
+                return target == "player" or category == "player"
+            end
+            if tabKey == "primary" or tabKey == "secondary" or tabKey == "melee" then
+                return target == tabKey or category == tabKey
+            end
+            if tabKey == "special" then
+                return category == "engineer"
+            end
+            if tabKey == "action" then
+                return category == "canteen" or target == "action"
+            end
+            return false
+        end
+
+        local function HasVisibleUpgradesForTab(tabKey)
+            for _, up in ipairs((payload and payload.upgrades) or {}) do
+                if up.available ~= false and UpgradeMatchesTab(up, tabKey) then
+                    return true
+                end
+            end
+            return false
+        end
+
+        local function HasEquippedItemInSlot(slotName)
+            if not IsValid(ply) then return false end
+            if slotName == "player" then return true end
+            for _, wep in ipairs(ply:GetWeapons()) do
+                if not IsValid(wep) then continue end
+                if GetClientWeaponSlotName(wep) == slotName then
+                    return true
+                end
+            end
+            return false
+        end
+
+        local tabDefs = {
+            { key = "player", label = "PLAYER", slot = "player", fallbackIcon = SLOT_FALLBACK_ICON.player, always = true },
             { key = "primary", label = "PRIMARY", slot = "primary", fallbackIcon = SLOT_FALLBACK_ICON.primary },
             { key = "secondary", label = "SECONDARY", slot = "secondary", fallbackIcon = SLOT_FALLBACK_ICON.secondary },
             { key = "melee", label = "MELEE", slot = "melee", fallbackIcon = SLOT_FALLBACK_ICON.melee },
@@ -2318,10 +2693,21 @@ else
 
         if className == "engineer" or className == "spy" then
             local slot = className == "engineer" and "pda" or "building"
-            tabs[#tabs + 1] = { key = "special", label = className == "engineer" and "PDA" or "SAPPER", slot = slot, fallbackIcon = SLOT_FALLBACK_ICON[slot] }
+            tabDefs[#tabDefs + 1] = { key = "special", label = className == "engineer" and "PDA" or "SAPPER", slot = slot, fallbackIcon = SLOT_FALLBACK_ICON[slot] }
         end
 
-        tabs[#tabs + 1] = { key = "action", label = "CANTEEN", slot = "action", fallbackIcon = SLOT_FALLBACK_ICON.action }
+        tabDefs[#tabDefs + 1] = { key = "action", label = "CANTEEN", slot = "action", fallbackIcon = SLOT_FALLBACK_ICON.action }
+
+        local tabs = {}
+        for _, def in ipairs(tabDefs) do
+            if def.always or HasVisibleUpgradesForTab(def.key) or HasEquippedItemInSlot(def.slot) then
+                tabs[#tabs + 1] = def
+            end
+        end
+
+        if #tabs == 0 then
+            tabs[1] = { key = "player", label = "PLAYER", slot = "player", fallbackIcon = SLOT_FALLBACK_ICON.player }
+        end
 
         return tabs
     end
@@ -2349,13 +2735,8 @@ else
         if not istable(payload) then return end
 
         if IsValid(TF_MVMUpgradeFrame) and TF_MVMUpgradeFrame.ApplyPayload then
-            local wantsReadOnly = payload.readOnly == true
-            if TF_MVMUpgradeFrame.ReadOnly ~= wantsReadOnly then
-                TF_MVMUpgradeFrame:Close()
-            else
-                TF_MVMUpgradeFrame:ApplyPayload(payload)
-                return
-            end
+            TF_MVMUpgradeFrame:ApplyPayload(payload)
+            return
         end
 
         local res = GetTF2UpgradeRes()
@@ -2364,8 +2745,8 @@ else
                 ScrW() / ((res.selectW or 500) + 90),
                 ScrH() / ((res.selectH or 350) + 120)
             ),
-            1.6,
-            2.9
+            1.0,
+            2.4
         )
 
         local cardW = math.floor((res.selectW or 500) * uiScale)
@@ -2373,17 +2754,25 @@ else
         local pad = math.floor((res.innerX or 10) * uiScale)
         local infoW = math.floor((res.infoW or 130) * uiScale)
         local topBarH = math.floor((res.innerY or 50) * uiScale)
-        local bottomBarH = math.floor((math.max(res.cancelH or 17, res.respecH or 17) + 12) * uiScale)
         local bottomY = math.floor(((res.innerY or 50) + (res.innerH or 230) + 5) * uiScale)
+        local bottomBarH = math.floor((math.max(res.cancelH or 17, res.respecH or 17) + 12) * uiScale)
         local listTop = math.floor((res.innerBGY or 55) * uiScale)
-        -- TF2 runtime parity: c_tf_upgrades.cpp overrides button images in code
-        -- based on affordability/level, instead of trusting static .res defaults.
-        local matBuyActive = Material("vgui/pve/buy_selected")
-        local matBuyInactive = Material("vgui/pve/buy_enabled")
-        local matBuyDisabled = Material("vgui/pve/buy_disabled")
-        local matSellActive = Material("vgui/pve/sell_selected")
-        local matSellInactive = Material("vgui/pve/sell_enabled")
-        local matSellDisabled = Material("vgui/pve/sell_disabled")
+        local matBuySelected = Material(NormalizeIconPath(res.buySelectedImage) or "vgui/pve/buy_selected")
+        local matBuyEnabled = Material(NormalizeIconPath(res.buyEnabledImage) or "vgui/pve/buy_enabled")
+        local matBuyDisabled = Material(NormalizeIconPath(res.buyDisabledImage) or "vgui/pve/buy_disabled")
+        local matSellSelected = Material(NormalizeIconPath(res.sellSelectedImage) or "vgui/pve/sell_selected")
+        local matSellEnabled = Material(NormalizeIconPath(res.sellEnabledImage) or "vgui/pve/sell_enabled")
+        local matSellDisabled = Material(NormalizeIconPath(res.sellDisabledImage) or "vgui/pve/sell_disabled")
+        local function SafeMat(mat, fallback)
+            if mat and (not mat.IsError or not mat:IsError()) then return mat end
+            return fallback
+        end
+        matBuyEnabled = SafeMat(matBuyEnabled, Material("vgui/pve/buy_enabled"))
+        matBuyDisabled = SafeMat(matBuyDisabled, Material("vgui/pve/buy_disabled"))
+        matBuySelected = SafeMat(matBuySelected, matBuyEnabled)
+        matSellEnabled = SafeMat(matSellEnabled, Material("vgui/pve/sell_enabled"))
+        matSellDisabled = SafeMat(matSellDisabled, Material("vgui/pve/sell_disabled"))
+        matSellSelected = SafeMat(matSellSelected, matSellEnabled)
         local matPipFilled = Material("vgui/pve/chalf_circle")
         local matPipEmpty = Material("vgui/pve/chalf_circle_empty")
 
@@ -2406,7 +2795,7 @@ else
         end
         local txtMaxReached = LocalizeToken("TF_PVE_UpgradeMaxed")
         local txtNotEnough = LocalizeToken("TF_Not_Enough_Resources")
-        local txtCancel = (payload.readOnly == true) and "CLOSE" or LocalizeToken(res.cancelTextToken or "#TF_PVE_UpgradeCancel")
+        local txtCancel = LocalizeToken(res.cancelTextToken or "#TF_PVE_UpgradeCancel")
         local txtAccept = LocalizeToken(res.closeTextToken or "#TF_PVE_UpgradeDone")
         local txtRespec = LocalizeToken(res.respecTextToken or "#TF_PVE_UpgradeRespec")
         local txtItemToUpgrade = LocalizeToken("TF_PVE_UpgradeTitle")
@@ -2418,9 +2807,9 @@ else
         local function PlayUiClick(soundPath)
             if isstring(soundPath) and soundPath ~= "" then
                 surface.PlaySound(soundPath)
-                return
+            else
+                surface.PlaySound("ui/buttonclickrelease.wav")
             end
-            surface.PlaySound("ui/buttonclickrelease.wav")
         end
 
         local function FormatUpgradeCost(cost)
@@ -2460,13 +2849,9 @@ else
         local frame = vgui.Create("DFrame")
         TF_MVMUpgradeFrame = frame
         frame.SpectatorView = payload.spectatorView == true
-        frame.ReadOnly = payload.readOnly == true
         frame.ObservedEntIndex = tonumber(payload.observedEntIndex or -1) or -1
         local subjectPly = frame.SpectatorView and Entity(frame.ObservedEntIndex) or LocalPlayer()
         frame:SetTitle("")
-        frame:SetDraggable(false)
-        frame:ShowCloseButton(false)
-        frame:SetSize(ScrW(), ScrH())
         frame:SetDraggable(false)
         frame:ShowCloseButton(false)
         frame:SetSize(ScrW(), ScrH())
@@ -2475,13 +2860,9 @@ else
         frame:SetMouseInputEnabled(true)
         gui.EnableScreenClicker(true)
         frame:Center()
-        frame:SetKeyboardInputEnabled(false)
-        frame:SetMouseInputEnabled(true)
-        gui.EnableScreenClicker(true)
-        frame:Center()
         frame.Paint = function(self, w, h)
-            local bg = res.backdropColor or Color(0, 0, 0, 210)
-            surface.SetDrawColor(bg.r, bg.g, bg.b, bg.a)
+            local c = res.backdropColor or Color(0, 0, 0, 210)
+            surface.SetDrawColor(c.r, c.g, c.b, c.a)
             surface.DrawRect(0, 0, w, h)
         end
         frame.OnKeyCodePressed = function(self, code)
@@ -2524,117 +2905,154 @@ else
             surface.SetDrawColor(res.colInnerBG or Color(77, 72, 68, 255))
             surface.DrawRect(pad + 2, topBarH + 2, w - (pad * 2) - 4, h - topBarH - bottomBarH - pad - 4)
 
-            draw.SimpleText("UPGRADE STATION", res.titleFont or "HudFontSmallBold", pad + math.floor(8 * uiScale), math.floor(6 * uiScale), colTanLight, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
-            local creditY = bottomY + math.floor(10 * uiScale)
-            draw.SimpleText(tostring(payload.credits or 0), res.creditsFont or "HudFontMedium", w * 0.5 - math.floor(24 * uiScale), creditY, colCreditsGreen, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
-            draw.SimpleText(txtCredits, res.creditsTextFont or "HudFontSmallBold", w * 0.5 - math.floor(18 * uiScale), creditY, colTanLight, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-            draw.SimpleText("WAVE " .. tostring(payload.waveCurrent or 0) .. " / " .. tostring(payload.waveTotal or 0), res.waveFont or "HudFontSmallestBold", w - pad - math.floor(8 * uiScale), math.floor(10 * uiScale), colTanLight, TEXT_ALIGN_RIGHT, TEXT_ALIGN_TOP)
-            local sepY = math.floor((res.tabRowBottomY or 48) * uiScale)
-            local sepH = math.max(1, math.floor((res.tabSeparatorH or 5) * uiScale))
-            local sepCol = res.colInactiveSeparator or Color(0, 0, 0, 128)
-            surface.SetDrawColor(sepCol.r, sepCol.g, sepCol.b, sepCol.a)
-            surface.DrawRect(pad, sepY, w - (pad * 2), sepH)
+            draw.SimpleText("UPGRADE STATION", "HudFontSmallBold", pad + math.floor(8 * uiScale), math.floor(6 * uiScale), colTanLight, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+            draw.SimpleText("WAVE " .. tostring(payload.waveCurrent or 0) .. " / " .. tostring(payload.waveTotal or 0), "HudFontSmallestBold", w - pad - math.floor(8 * uiScale), math.floor(10 * uiScale), colTanLight, TEXT_ALIGN_RIGHT, TEXT_ALIGN_TOP)
         end
 
-        local classIcon = nil
+        -- Class portrait is represented by the PLAYER tab icon; avoid drawing a second standalone portrait.
 
-        local tabs = BuildTabsForPlayer(payload, subjectPly)
-        local selectedTab = tabs[1] and tabs[1].key or "player"
+        local tabs = {}
+        local selectedTab = "player"
         local tabButtons = {}
+        local tabSep = nil
+        local tabsSignature = ""
 
         local tabX = math.floor((res.tabStartX or 88) * uiScale)
         local tabW = math.floor((res.tabW or 70) * uiScale)
         local tabH = math.floor((res.tabH or 50) * uiScale)
-        local tabGap = math.max(1, math.floor((res.tabGap or 5) * uiScale))
+        local tabGap = math.floor((res.tabGap or 5) * uiScale)
+        local tabSepY = math.floor((res.tabRowBottomY or 48) * uiScale)
+        local tabSepH = math.max(1, math.floor((res.tabSeparatorH or 5) * uiScale))
 
-        for i, tab in ipairs(tabs) do
-            local btn = vgui.Create("DButton", card)
-            btn:SetText("")
-            btn:SetSize(tabW, tabH)
-            btn:SetPos(tabX + (i - 1) * (tabW + tabGap), math.floor((res.tabStartY or 10) * uiScale))
-            btn.Paint = function(self, w, h)
-                local active = selectedTab == tab.key
-                if active then
-                    surface.SetDrawColor(res.colActiveTab or Color(142, 132, 121, 255))
-                else
-                    surface.SetDrawColor(res.colInactiveTab or Color(72, 68, 64, 255))
-                end
-                surface.DrawRect(0, 0, w, h)
-
-                if active then
-                    surface.SetDrawColor(res.colHoverTab or Color(241, 158, 81, 255))
-                    surface.DrawOutlinedRect(0, 0, w, h, 1)
-                    surface.SetDrawColor(255, 230, 185, 80)
-                    surface.DrawRect(1, 1, w - 2, 1)
-                else
-                    surface.SetDrawColor(35, 33, 31, 255)
-                    surface.DrawOutlinedRect(0, 0, w, h, 1)
-                    surface.SetDrawColor(0, 0, 0, 90)
-                    surface.DrawRect(0, h - 2, w, 2)
-                end
-
-                surface.SetDrawColor(26, 24, 22, 150)
-                surface.DrawRect(w - 1, 0, 1, h)
+        local function BuildTabsSignature(list)
+            local out = {}
+            for _, t in ipairs(list or {}) do
+                out[#out + 1] = tostring(t.key or "")
             end
-            btn.DoClick = function()
-                PlayUiClick()
-                selectedTab = tab.key
-                if card.QueueUpgradeRebuild then
-                    card:QueueUpgradeRebuild()
-                end
-            end
-            btn.OnCursorEntered = function()
-                PlayUiRollover()
-            end
-
-            local icon = vgui.Create("DImage", btn)
-            icon:SetPos(math.floor(4 * uiScale), math.floor(3 * uiScale))
-            icon:SetSize(math.floor(30 * uiScale), math.floor(30 * uiScale))
-            icon:SetImage(tab.fallbackIcon)
-
-            local label = vgui.Create("DLabel", btn)
-            local tabTextX = math.floor((res.tabTextInsetX or 50) * uiScale)
-            local tabPadR = math.floor(4 * uiScale)
-            local tabTextY = math.floor(6 * uiScale)
-            local tabLabelH = math.floor(40 * uiScale)
-            label:SetText(tab.label)
-            local tabFont = res.tabFont or "HudFontSmallest"
-            label:SetFont(tabFont)
-            label:SetWrap(false)
-            label:SetTextColor(res.tabTextColor or colTanLight)
-            label:SetContentAlignment(4)
-            surface.SetFont(tabFont)
-            local textW = select(1, surface.GetTextSize(tab.label or ""))
-            local availW = tabW - tabTextX - tabPadR
-            if textW > availW then
-                -- Keep text in one line like TF2 by pulling the start left first.
-                local minTextX = math.floor(34 * uiScale)
-                tabTextX = math.max(minTextX, tabW - textW - tabPadR)
-                availW = tabW - tabTextX - tabPadR
-            end
-            if textW > availW then
-                -- Final fallback for GMOD font mismatch with TF2 font metrics.
-                tabFont = "HudFontSmallest"
-                label:SetFont(tabFont)
-            end
-            label:SetPos(tabTextX, tabTextY)
-            label:SetSize(math.max(1, tabW - tabTextX - tabPadR), tabLabelH)
-
-            tabButtons[#tabButtons + 1] = { tab = tab, button = btn, icon = icon, label = label, iconPath = tab.fallbackIcon }
+            return table.concat(out, "|")
         end
+
+        local function RebuildTabButtons(force)
+            local nextTabs = BuildTabsForPlayer(payload, subjectPly)
+            local nextSignature = BuildTabsSignature(nextTabs)
+            if not force and nextSignature == tabsSignature and #tabButtons > 0 then
+                return false
+            end
+            tabsSignature = nextSignature
+
+            for _, entry in ipairs(tabButtons) do
+                if IsValid(entry.button) then
+                    entry.button:Remove()
+                end
+            end
+            tabButtons = {}
+            if IsValid(tabSep) then
+                tabSep:Remove()
+                tabSep = nil
+            end
+
+            tabs = nextTabs
+            if #tabs <= 0 then
+                tabs = {
+                    { key = "player", label = "PLAYER", slot = "player", fallbackIcon = SLOT_FALLBACK_ICON.player },
+                }
+            end
+
+            local previousTab = selectedTab
+            selectedTab = nil
+            for _, tab in ipairs(tabs) do
+                if tab.key == previousTab then
+                    selectedTab = previousTab
+                    break
+                end
+            end
+            if not selectedTab then
+                selectedTab = tabs[1].key
+            end
+
+            for i, tab in ipairs(tabs) do
+                local btn = vgui.Create("DButton", card)
+                btn:SetText("")
+                btn:SetSize(tabW, tabH)
+                btn:SetPos(tabX + (i - 1) * (tabW + tabGap), math.floor((res.tabStartY or 10) * uiScale))
+                btn.Paint = function(self, w, h)
+                    local active = selectedTab == tab.key
+                    if active then
+                        surface.SetDrawColor(res.colActiveTab or Color(142, 132, 121, 255))
+                    else
+                        surface.SetDrawColor(res.colInactiveTab or Color(72, 68, 64, 255))
+                    end
+                    surface.DrawRect(0, 0, w, h)
+
+                    if active then
+                        surface.SetDrawColor(res.colHoverTab or Color(241, 158, 81, 255))
+                        surface.DrawOutlinedRect(0, 0, w, h, 1)
+                        surface.SetDrawColor(255, 230, 185, 80)
+                        surface.DrawRect(1, 1, w - 2, 1)
+                    else
+                        surface.SetDrawColor(35, 33, 31, 255)
+                        surface.DrawOutlinedRect(0, 0, w, h, 1)
+                        surface.SetDrawColor(0, 0, 0, 90)
+                        surface.DrawRect(0, h - 2, w, 2)
+                    end
+
+                    surface.SetDrawColor(26, 24, 22, 150)
+                    surface.DrawRect(w - 1, 0, 1, h)
+                end
+                btn.DoClick = function()
+                    PlayUiClick(res.tabSoundDown)
+                    PlayUiClick(res.tabSoundUp)
+                    selectedTab = tab.key
+                    if card.QueueUpgradeRebuild then
+                        card:QueueUpgradeRebuild()
+                    end
+                end
+                btn.OnCursorEntered = function()
+                    PlayUiRollover()
+                end
+
+                local icon = vgui.Create("DImage", btn)
+                icon:SetPos(math.floor((res.tabIconX or 4) * uiScale), math.floor((res.tabIconY or 3) * uiScale))
+                icon:SetSize(math.floor((res.tabIconW or 30) * uiScale), math.floor((res.tabIconH or 30) * uiScale))
+                SetAspectIcon(icon, tab.fallbackIcon)
+
+                local label = vgui.Create("DLabel", btn)
+                local tabTextX = math.floor((res.tabTextInsetX or 50) * uiScale)
+                label:SetPos(tabTextX, math.floor((res.tabLabelY or 6) * uiScale))
+                label:SetSize(math.max(1, tabW - tabTextX - math.floor(4 * uiScale)), math.floor((res.tabH or 50) * uiScale))
+                label:SetText(tab.label)
+                label:SetFont(res.tabFont or "HudFontSmallest")
+                label:SetWrap(false)
+                label:SetTextColor(res.tabTextColor or colTanLight)
+                label:SetContentAlignment(4)
+
+                tabButtons[#tabButtons + 1] = { tab = tab, button = btn, icon = icon, label = label, iconPath = tab.fallbackIcon }
+            end
+
+            local tabRight = tabX + (#tabs * tabW) + math.max(0, (#tabs - 1) * tabGap)
+            tabSep = vgui.Create("DPanel", card)
+            tabSep:SetPos(tabX, tabSepY)
+            tabSep:SetSize(math.max(1, tabRight - tabX), tabSepH)
+            tabSep:SetMouseInputEnabled(false)
+            tabSep.Paint = function(self, w, h)
+                surface.SetDrawColor(res.colInactiveSeparator or Color(0, 0, 0, 128))
+                surface.DrawRect(0, 0, w, h)
+            end
+
+            return true
+        end
+
+        RebuildTabButtons(true)
 
         local infoPanel = vgui.Create("DPanel", card)
         local infoX = math.floor((res.infoX or (res.innerX or 10)) * uiScale)
         local infoY = math.floor((res.infoY or (res.innerBGY or 55)) * uiScale)
-        local infoH = math.floor((res.infoH or (cardH - infoY - bottomBarH - pad)) * uiScale)
+        local infoH = math.floor((res.infoH or ((res.innerH or 230) - 100)) * uiScale)
         infoPanel:SetPos(infoX, infoY)
         infoPanel:SetSize(infoW, infoH)
         infoPanel.Paint = function(self,w,h)
-            surface.SetDrawColor(res.colListBG or Color(97, 94, 85, 255))
+            surface.SetDrawColor(res.colDescBG or res.colListBG or Color(97, 94, 85, 255))
             surface.DrawRect(0,0,w,h)
-            local descCol = res.colDescBG or res.colListBG or Color(97, 94, 85, 255)
-            surface.SetDrawColor(descCol.r, descCol.g, descCol.b, descCol.a)
-            surface.DrawRect(0, math.floor((res.infoHeaderH or 20) * uiScale), w, math.max(0, h - math.floor((res.infoHeaderH or 20) * uiScale)))
             surface.SetDrawColor(res.colListHeader or Color(72, 68, 63, 255))
             surface.DrawRect(0, 0, w, math.floor((res.infoHeaderH or 20) * uiScale))
         end
@@ -2646,158 +3064,215 @@ else
         infoPanel.name:SetTextColor(colListHeaderText)
 
         infoPanel.desc = vgui.Create("DLabel", infoPanel)
-        local descX = math.floor(((res.infoDescX or 30) - (res.infoX or 25)) * uiScale)
-        local descY = math.floor(((res.infoDescY or 160) - (res.infoY or 135)) * uiScale)
-        local descW = math.floor((res.infoDescW or 120) * uiScale)
-        local descH = math.floor((res.infoDescH or 105) * uiScale)
+        local descX = math.max(0, math.floor(((res.infoDescX or 30) - (res.infoX or 25)) * uiScale))
+        local descY = math.max(math.floor(24 * uiScale), math.floor(((res.infoDescY or 160) - (res.infoY or 135)) * uiScale))
         infoPanel.desc:SetPos(descX, descY)
-        infoPanel.desc:SetSize(descW, descH)
-        infoPanel.desc:SetFont(res.itemStatsFont or res.itemDescFont or "HudFontSmallest")
+        infoPanel.desc:SetSize(math.floor((res.infoDescW or 120) * uiScale), math.floor((res.infoDescH or 105) * uiScale))
+        infoPanel.desc:SetFont(res.itemStatsFont or "HudFontSmallest")
         infoPanel.desc:SetWrap(true)
         infoPanel.desc:SetAutoStretchVertical(true)
         infoPanel.desc:SetTextColor(colAttribPositive)
 
         infoPanel.slotLabel = vgui.Create("DLabel", infoPanel)
-        local slotLabelH = math.floor(14 * uiScale)
-        local slotLabelY = infoPanel:GetTall() - slotLabelH - math.floor(8 * uiScale)
-        infoPanel.slotLabel:SetPos(math.floor(4 * uiScale), slotLabelY)
-        infoPanel.slotLabel:SetSize(infoW - math.floor(8 * uiScale), slotLabelH)
-        infoPanel.slotLabel:SetFont("HudFontSmallestBold")
+        infoPanel.slotLabel:SetPos(math.floor(4 * uiScale), infoPanel:GetTall() - math.floor(32 * uiScale))
+        infoPanel.slotLabel:SetSize(infoW - math.floor(8 * uiScale), math.floor(14 * uiScale))
+        infoPanel.slotLabel:SetFont(res.itemStatsFont or "HudFontSmallestBold")
         infoPanel.slotLabel:SetTextColor(Color(252, 221, 118))
         infoPanel.slotLabel:SetText("")
 
-        local function BuildTabStatsText(tabKey)
-            local function FormatAccumulatedStatLine(up, lvl)
-                local id = string.lower(tostring(up.id or ""))
-                local attr = string.lower(tostring(up.attribute or ""))
-                local name = MaybeLocalize(up.name or "")
-                if not isstring(name) or name == "" then
-                    name = tostring(up.id or "Upgrade")
+        local selectedUpgradeByTab = {}
+        local hoveredUpgradeByTab = {}
+
+        local function FindUpgradeInTabById(tabKey, upId)
+            if not isstring(upId) or upId == "" then return nil end
+            for _, candidate in ipairs(payload.upgrades or {}) do
+                if candidate.id == upId and UpgradeBelongsToTab(candidate, tabKey) then
+                    return candidate
                 end
-                local shortNameMap = {
-                    ["Primary Damage"] = "Damage",
-                    ["Secondary Damage"] = "Damage",
-                    ["Melee Damage"] = "Damage",
-                    ["Primary Fire Rate"] = "Firing Speed",
-                    ["Secondary Fire Rate"] = "Firing Speed",
-                    ["Primary Reload"] = "Reload Speed",
-                    ["Secondary Reload"] = "Reload Speed",
-                    ["Primary Clip Size"] = "Clip Size",
-                    ["Secondary Clip Size"] = "Clip Size",
-                    ["Primary Ammo"] = "Ammo Capacity",
-                    ["Secondary Ammo"] = "Ammo Capacity",
-                }
-                name = shortNameMap[name] or name
+            end
+            return nil
+        end
 
-                local inc = tonumber(up.scriptIncrement)
-                if not inc then
-                    local fallbackIncById = {
-                        move_speed = 0.08,
-                        jump_height = 0.10,
-                        resist_all = -0.08,
-                        resist_bullet = -0.10,
-                        resist_blast = -0.10,
-                        resist_fire = -0.12,
-                        damage_primary = 0.12,
-                        damage_secondary = 0.12,
-                        damage_melee = 0.15,
-                        firerate_primary = -0.10,
-                        firerate_secondary = -0.10,
-                        reload_primary = -0.10,
-                        reload_secondary = -0.10,
-                        clip_primary = 0.50,
-                        clip_secondary = 0.50,
-                        ammo_primary = 0.50,
-                        ammo_secondary = 0.50,
-                        swing_melee = -0.10,
-                        max_health = 25,
-                        autoheal = 2,
-                        lifesteal_melee = 25,
-                        canteen_capacity = 1,
-                        building_health = 0.15,
-                        building_rate = 0.10,
-                    }
-                    inc = fallbackIncById[id]
-                    if not inc then
-                        local fallbackIncByAttrib = {
-                            ["melee attack rate bonus"] = -0.10,
-                            ["fire rate bonus"] = -0.10,
-                            ["faster reload rate"] = -0.10,
-                            ["damage bonus"] = 0.12,
-                            ["dmg taken from crit reduced"] = -0.08,
-                            ["dmg taken from bullets reduced"] = -0.10,
-                            ["dmg taken from blast reduced"] = -0.10,
-                            ["dmg taken from fire reduced"] = -0.12,
-                            ["move speed bonus"] = 0.08,
-                            ["increased jump height"] = 0.10,
-                            ["clip size bonus upgrade"] = 0.50,
-                            ["maxammo primary increased"] = 0.50,
-                            ["maxammo secondary increased"] = 0.50,
-                            ["health regen"] = 2,
-                            ["max health additive bonus"] = 25,
-                            ["heal on kill"] = 25,
-                            ["engy building health bonus"] = 0.15,
-                            ["engy sentry fire rate increased"] = 0.10,
-                            ["canteen specialist"] = 1,
-                        }
-                        inc = fallbackIncByAttrib[attr]
-                    end
+        local function GetPriorityUpgradeForCurrentTab()
+            local hovered = FindUpgradeInTabById(selectedTab, hoveredUpgradeByTab[selectedTab] or "")
+            if hovered then return hovered end
+            return FindUpgradeInTabById(selectedTab, selectedUpgradeByTab[selectedTab] or "")
+        end
+
+        local function FormatAccumulatedStatLine(up, lvl)
+            lvl = tonumber(lvl or 0) or 0
+            if lvl <= 0 then return nil end
+
+            local id = string.lower(tostring(up and up.id or ""))
+
+            local function asIntOrTrim(v)
+                if math.abs(v - math.floor(v)) < 0.001 then
+                    return tostring(math.floor(v))
                 end
-                if inc and inc ~= 0 then
-                    local total = inc * lvl
-                    local absTotal = math.abs(total)
-
-                    -- TF2 scripts store many bonuses as 0.xx fractions.
-                    if math.abs(inc) < 1 then
-                        local pct = math.floor((absTotal * 100) + 0.5)
-                        local sign = total >= 0 and "+" or "-"
-                        if string.find(attr, "attack rate", 1, true)
-                            or string.find(attr, "fire rate", 1, true)
-                            or string.find(attr, "reload", 1, true)
-                            or string.find(attr, "dmg taken", 1, true)
-                            or string.find(attr, "resistance", 1, true)
-                        then
-                            sign = "+"
-                        elseif string.find(attr, "damage penalty", 1, true) then
-                            sign = "-"
-                        end
-                        return string.format("%s%d%% %s", sign, pct, name)
-                    end
-
-                    local rounded = math.floor(absTotal + 0.5)
-                    local sign = total >= 0 and "+" or "-"
-                    if id == "autoheal" or string.find(attr, "regen", 1, true) then
-                        return string.format("%s%d HP/s %s", sign, rounded, name)
-                    end
-                    return string.format("%s%d %s", sign, rounded, name)
-                end
-
-                return "+ " .. name
+                return tostring(math.floor(v * 100 + 0.5) / 100)
             end
 
+            local templateById = {
+                firerate_primary = "%s%% faster firing speed",
+                firerate_secondary = "%s%% faster firing speed",
+                reload_primary = "%s%% faster reload speed",
+                reload_secondary = "%s%% faster reload speed",
+                swing_melee = "%s%% faster swing speed",
+                resist_fire = "%s%% fire damage resistance",
+                resist_bullet = "%s%% bullet damage resistance",
+                resist_blast = "%s%% blast damage resistance",
+                resist_all = "%s%% damage resistance",
+                move_speed = "%s%% movement speed",
+                jump_height = "%s%% jump height",
+                damage_primary = "%s%% damage bonus",
+                damage_secondary = "%s%% damage bonus",
+                damage_melee = "%s%% damage bonus",
+                clip_primary = "%s%% clip size",
+                clip_secondary = "%s%% clip size",
+                ammo_primary = "%s%% ammo capacity",
+                ammo_secondary = "%s%% ammo capacity",
+                effectbar_secondary = "%s%% faster recharge rate",
+                buff_duration_secondary = "%s%% buff duration",
+                effectbar_primary = "%s%% faster recharge rate",
+                effectbar_melee = "%s%% faster recharge rate",
+                autoheal = "%s health regenerated per second",
+                lifesteal_melee = "%s health on kill",
+                max_health = "%s max health",
+                canteen_capacity = "%s canteen capacity",
+            }
+
+            local perLevelById = {
+                -- Percent upgrades
+                firerate_primary = 10,
+                firerate_secondary = 10,
+                reload_primary = 20,
+                reload_secondary = 20,
+                swing_melee = 10,
+                resist_fire = 10,
+                resist_bullet = 10,
+                resist_blast = 10,
+                resist_all = 8,
+                move_speed = 10,
+                jump_height = 20,
+                damage_primary = 20,
+                damage_secondary = 20,
+                damage_melee = 25,
+                clip_primary = 50,
+                clip_secondary = 50,
+                ammo_primary = 50,
+                ammo_secondary = 50,
+                effectbar_secondary = 25,
+                buff_duration_secondary = 25,
+                effectbar_primary = 25,
+                effectbar_melee = 25,
+                -- Flat upgrades
+                autoheal = 2,
+                lifesteal_melee = 25,
+                max_health = 25,
+                canteen_capacity = 1,
+            }
+
+            if templateById[id] and perLevelById[id] then
+                local total = (perLevelById[id] or 0) * lvl
+                return "+" .. string.format(templateById[id], asIntOrTrim(total))
+            end
+
+            local raw = MaybeLocalize(up and up.name or "")
+            if not isstring(raw) or raw == "" then
+                raw = MaybeLocalize(up and up.description or "")
+            end
+            raw = string.Trim(tostring(raw or ""))
+            if raw == "" then return nil end
+
+            -- e.g. "+10% Firing Speed" -> "+30% Firing Speed" at level 3
+            local pct, label = string.match(raw, "^%+?([%d%.]+)%%%s+(.+)$")
+            if pct and label then
+                local total = (tonumber(pct) or 0) * lvl
+                if total ~= total then return raw end
+                return string.format("+%s%% %s", asIntOrTrim(total), tostring(label))
+            end
+
+            -- e.g. "+1 Canteen Capacity" -> "+2 Canteen Capacity" at level 2
+            local flat, flatLabel = string.match(raw, "^%+?([%d%.]+)%s+(.+)$")
+            if flat and flatLabel then
+                local total = (tonumber(flat) or 0) * lvl
+                return string.format("+%s %s", asIntOrTrim(total), tostring(flatLabel))
+            end
+
+            return raw
+        end
+
+        local function BuildTabStatsText(tabKey)
             local lines = {}
             for _, candidate in ipairs(payload.upgrades or {}) do
-                if not UpgradeBelongsToTab(candidate, tabKey) then
-                    continue
+                if UpgradeBelongsToTab(candidate, tabKey) then
+                    local lvl = tonumber(candidate.level or 0) or 0
+                    if lvl > 0 then
+                        local line = FormatAccumulatedStatLine(candidate, lvl)
+                        if isstring(line) and line ~= "" then
+                            lines[#lines + 1] = line
+                        end
+                    end
                 end
-                local lvl = math.max(0, tonumber(candidate.level or 0) or 0)
-                if lvl <= 0 then
-                    continue
-                end
-                lines[#lines + 1] = FormatAccumulatedStatLine(candidate, lvl)
             end
             return table.concat(lines, "\n")
         end
 
         local function SetInfo(up)
-            local statsText = BuildTabStatsText(selectedTab)
-            if up then
-                infoPanel.name:SetText(MaybeLocalize(up.name or ""))
-                local descText = MaybeLocalize(up.description or "")
-                if statsText ~= "" then
-                    descText = (descText ~= "" and (descText .. "\n\n") or "") .. statsText
+            local activeTab
+            for _, t in ipairs(tabs) do
+                if t.key == selectedTab then
+                    activeTab = t
+                    break
                 end
-                infoPanel.desc:SetText(descText)
+            end
+            local displayName = activeTab and activeTab.label or "PLAYER"
+            local itemName = nil
+            if activeTab and activeTab.slot then
+                itemName = select(1, GetSlotItemVisual(activeTab.slot, subjectPly))
+            end
+            local statsText = BuildTabStatsText(selectedTab)
+            local selectedDesc = ""
+            local selectedTitle = ""
+            if up then
+                selectedDesc = MaybeLocalize(up.description or TF_MVMShop.ScriptDescriptionById[up.id] or "")
+                if not isstring(selectedDesc) then
+                    selectedDesc = tostring(selectedDesc or "")
+                end
+                selectedDesc = string.Trim(selectedDesc)
+                selectedTitle = MaybeLocalize(up.name or TF_MVMShop.DisplayNameById[up.id] or "")
+                if not isstring(selectedTitle) then
+                    selectedTitle = tostring(selectedTitle or "")
+                end
+                selectedTitle = string.Trim(selectedTitle)
+            end
+
+            infoPanel.name:SetText((up and selectedTitle ~= "") and selectedTitle or displayName)
+            local bodyParts = {}
+            if up then
+                if selectedDesc == "" and selectedTitle ~= "" then
+                    selectedDesc = selectedTitle
+                end
+                if selectedDesc ~= "" then
+                    bodyParts[#bodyParts + 1] = selectedDesc
+                end
+                if isstring(itemName) and itemName ~= "" then
+                    bodyParts[#bodyParts + 1] = itemName
+                end
+                if statsText ~= "" then
+                    bodyParts[#bodyParts + 1] = statsText
+                end
+            else
+                if isstring(itemName) and itemName ~= "" then
+                    bodyParts[#bodyParts + 1] = itemName
+                end
+                if statsText ~= "" then
+                    bodyParts[#bodyParts + 1] = statsText
+                end
+            end
+            infoPanel.desc:SetText(table.concat(bodyParts, "\n\n"))
+
+            if up then
                 local nextCost = tonumber(up.nextCost or 0) or 0
                 if nextCost > 0 then
                     infoPanel.slotLabel:SetText(FormatUpgradeCost(nextCost))
@@ -2811,24 +3286,6 @@ else
                     infoPanel.slotLabel:SetTextColor(Color(223, 89, 71, 255))
                 end
             else
-                local activeTab
-                for _, t in ipairs(tabs) do
-                    if t.key == selectedTab then
-                        activeTab = t
-                        break
-                    end
-                end
-                local displayName = activeTab and activeTab.label or "PLAYER"
-                local itemName = nil
-                if activeTab and activeTab.slot then
-                    itemName = select(1, GetSlotItemVisual(activeTab.slot, subjectPly))
-                end
-                infoPanel.name:SetText(displayName)
-                local text = itemName or ""
-                if statsText ~= "" then
-                    text = (text ~= "" and (text .. "\n\n") or "") .. statsText
-                end
-                infoPanel.desc:SetText(text)
                 infoPanel.slotLabel:SetText(txtSelectUpgrade ~= "" and txtSelectUpgrade or txtItemToUpgrade)
                 infoPanel.slotLabel:SetTextColor(Color(252, 221, 118))
             end
@@ -2836,7 +3293,6 @@ else
 
         local list = vgui.Create("DScrollPanel", card)
         card.UpgradeList = list
-        card.SelectedUpgradeByTab = card.SelectedUpgradeByTab or {}
         local baseListX = res.upgradeListX or ((res.innerX or 10) + (res.infoW or 130) + (res.innerX or 10))
         local baseListY = res.upgradeListY or (res.innerBGY or 55)
         local listPosX = math.floor(baseListX * uiScale)
@@ -2858,7 +3314,6 @@ else
 
         function list:PopulateRows()
             self:Clear()
-            local selectedId = card.SelectedUpgradeByTab and card.SelectedUpgradeByTab[selectedTab]
             local cols = 2
             local spacing = math.floor((res.upgradeDelta or 6) * uiScale)
             local areaW = self:GetWide()
@@ -2883,18 +3338,33 @@ else
                 row:SetPos(x, y)
                 row:SetMouseInputEnabled(true)
                 row.hovered = false
-                row.selected = (selectedId ~= nil and up.id == selectedId)
+                row.selected = false
                 function row:OnCursorEntered()
                     self.hovered = true
+                    hoveredUpgradeByTab[selectedTab] = up.id
                     PlayUiRollover()
                     SetInfo(up)
                 end
                 function row:OnCursorExited()
-                    self.hovered = false
-                    if card.SelectedUpgradeByTab and card.SelectedUpgradeByTab[selectedTab] == up.id then
-                        SetInfo(up)
-                    else
-                        SetInfo(nil)
+                    -- Ignore child transition exits; row:Think handles true leave.
+                end
+                function row:Think()
+                    local mx, my = gui.MousePos()
+                    if mx <= 0 and my <= 0 then return end
+                    local sx, sy = self:LocalToScreen(0, 0)
+                    local inside = mx >= sx and mx < (sx + self:GetWide()) and my >= sy and my < (sy + self:GetTall())
+                    if inside then
+                        if not self.hovered then
+                            self.hovered = true
+                            hoveredUpgradeByTab[selectedTab] = up.id
+                            SetInfo(up)
+                        end
+                    elseif self.hovered then
+                        self.hovered = false
+                        if hoveredUpgradeByTab[selectedTab] == up.id then
+                            hoveredUpgradeByTab[selectedTab] = nil
+                        end
+                        SetInfo(GetPriorityUpgradeForCurrentTab())
                     end
                 end
                 row.OnMousePressed = function(self, mc)
@@ -2906,7 +3376,8 @@ else
                         return
                     end
                     self.selected = true
-                    card.SelectedUpgradeByTab[selectedTab] = up.id
+                    selectedUpgradeByTab[selectedTab] = up.id
+                    hoveredUpgradeByTab[selectedTab] = up.id
                     SetInfo(up)
                     for _, child in ipairs(self:GetParent():GetChildren()) do
                         if child ~= self and child.selected ~= nil then
@@ -2915,13 +3386,38 @@ else
                     end
                 end
                 row.Paint = function(self, w, h)
-                    surface.SetDrawColor(res.colRowBG or Color(97, 94, 85, 255))
-                    surface.DrawRect(0, 0, w, h)
-                    surface.SetDrawColor(res.colRowIcon or Color(235, 226, 202, 255))
-                    surface.DrawRect(math.floor(2 * uiScale), math.floor(2 * uiScale), math.floor((res.rowIconW or 30) * uiScale), math.floor((res.rowIconH or 30) * uiScale))
+                    local rowRadius = math.max(3, math.floor(4 * uiScale))
+                    draw.RoundedBox(
+                        rowRadius,
+                        0,
+                        0,
+                        w,
+                        h,
+                        res.colRowBG or Color(97, 94, 85, 255)
+                    )
+                    draw.RoundedBox(
+                        math.max(2, math.floor(2 * uiScale)),
+                        math.floor((res.rowIconBorderX or 2) * uiScale),
+                        math.floor((res.rowIconBorderY or 2) * uiScale),
+                        math.floor((res.rowIconW or 30) * uiScale),
+                        math.floor((res.rowIconH or 30) * uiScale),
+                        res.colRowIcon or Color(235, 226, 202, 255)
+                    )
                     local stripW = math.floor((res.rowRightW or 20) * uiScale)
-                    surface.SetDrawColor(res.colRowRight or Color(117, 114, 103, 255))
-                    surface.DrawRect(w - stripW, 0, stripW, h)
+                    draw.RoundedBoxEx(
+                        rowRadius,
+                        w - stripW,
+                        0,
+                        stripW,
+                        h,
+                        res.colRowRight or Color(117, 114, 103, 255),
+                        false,
+                        true,
+                        false,
+                        true
+                    )
+                    surface.SetDrawColor(0, 0, 0, 70)
+                    surface.DrawOutlinedRect(0, 0, w, h, 1)
                     if self.selected then
                         surface.SetDrawColor(242, 140, 74, 255)
                         surface.DrawOutlinedRect(0, 0, w, h, 2)
@@ -2932,12 +3428,8 @@ else
                 end
 
                 local icon = vgui.Create("DImage", row)
-                local iconX = math.floor((res.rowIconX or 4) * uiScale)
-                local iconY = math.floor((res.rowIconY or 4) * uiScale)
-                local iconW = math.max(1, math.floor((res.rowIconW or 30) * uiScale) - (iconX * 2))
-                local iconH = math.max(1, math.floor((res.rowIconH or 30) * uiScale) - (iconY * 2))
-                icon:SetPos(iconX, iconY)
-                icon:SetSize(iconW, iconH)
+                icon:SetPos(math.floor((res.rowIconX or 4) * uiScale), math.floor((res.rowIconY or 4) * uiScale))
+                icon:SetSize(math.floor((res.rowIconInnerW or 26) * uiScale), math.floor((res.rowIconInnerH or 26) * uiScale))
                 icon:SetMouseInputEnabled(false)
                 local upgradeIconPath = NormalizeIconPath(up.icon)
                 if not IsValidIconPath(upgradeIconPath) then
@@ -2946,7 +3438,7 @@ else
                 if not IsValidIconPath(upgradeIconPath) then
                     upgradeIconPath = "vgui/pve/upgrade_unowned"
                 end
-                icon:SetImage(upgradeIconPath)
+                SetAspectIcon(icon, upgradeIconPath)
 
                 local price = vgui.Create("DPanel", row)
                 local priceY = math.floor((res.priceY or 32) * uiScale)
@@ -2959,6 +3451,7 @@ else
                     if rowCostText == "" then return end
                     draw.SimpleText(rowCostText, res.rowPriceFont or "HudFontSmallestBold", w * 0.5, h * 0.5, colTanLight, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
                 end
+                row.selected = selectedUpgradeByTab[selectedTab] == up.id
 
                 local desc = vgui.Create("DPanel", row)
                 local rowTextX = math.floor((res.textX or 37) * uiScale)
@@ -2985,10 +3478,8 @@ else
                 plus:SetKeyboardInputEnabled(false)
                 local upCost = tonumber(up.nextCost or 0) or 0
                 local credits = tonumber(payload.credits or 0) or 0
-                local canBuy = (not frame.SpectatorView) and (not frame.ReadOnly) and (up.available ~= false) and up.classAllowed and (up.weaponAllowed ~= false) and upCost > 0 and credits >= upCost
-                local sellWindowOpen = payload.sellWindowOpen ~= false
-                local rowSellVisible = sellWindowOpen or ((tonumber(up.pendingDelta or 0) or 0) > 0)
-                local canSell = (up.canSellNow == true) and (not frame.SpectatorView) and (not frame.ReadOnly) and (up.available ~= false) and up.classAllowed and (up.weaponAllowed ~= false) and (tonumber(up.level or 0) or 0) > 0
+                local canBuy = (not frame.SpectatorView) and (up.available ~= false) and up.classAllowed and (up.weaponAllowed ~= false) and upCost > 0 and credits >= upCost
+                local canSell = (not frame.SpectatorView) and (up.available ~= false) and up.classAllowed and (up.weaponAllowed ~= false) and (tonumber(up.level or 0) or 0) > 0
                 plus:SetEnabled(canBuy)
                 if upCost <= 0 then
                     plus:SetTooltip(txtMaxReached)
@@ -2999,35 +3490,25 @@ else
                 end
                 plus.Paint = function(self, w, h)
                     local mat = matBuyDisabled
-                    local bg = res.plusDefaultBG or Color(255, 255, 255, 0)
                     if canBuy then
-                        if self:IsDown() then
-                            mat = matBuyActive
-                            bg = res.plusDepressedBG or bg
-                        elseif self:IsHovered() then
-                            mat = matBuyActive
-                            bg = res.plusArmedBG or bg
+                        if self:IsDown() or self:IsHovered() then
+                            mat = matBuySelected
                         else
-                            mat = matBuyInactive
-                            bg = res.plusDefaultBG or bg
+                            mat = matBuyEnabled
                         end
                     end
                     surface.SetDrawColor(255, 255, 255, 255)
                     surface.SetMaterial(mat)
                     surface.DrawTexturedRect(0, 0, w, h)
-                    if bg.a > 0 then
-                        surface.SetDrawColor(bg.r, bg.g, bg.b, bg.a)
-                        surface.DrawRect(0, 0, w, h)
-                    end
                 end
                 plus.OnCursorEntered = function()
                     PlayUiRollover()
+                    hoveredUpgradeByTab[selectedTab] = up.id
+                    SetInfo(up)
                 end
                 plus.DoClick = function()
-                    if frame.SpectatorView or not canBuy then return end
-                    if isstring(res.plusSoundDown) and res.plusSoundDown ~= "" then
-                        surface.PlaySound(res.plusSoundDown)
-                    end
+                    if frame.SpectatorView then return end
+                    PlayUiClick(res.plusSoundDown)
                     PlayUiClick(res.plusSoundUp)
                     SendAction("buy_upgrade", up.id)
                 end
@@ -3036,42 +3517,31 @@ else
                 minus:SetPos(math.floor((res.minusX or 137) * uiScale), math.floor((res.minusY or 24) * uiScale))
                 minus:SetSize(math.floor((res.minusW or 16) * uiScale), math.floor((res.minusH or 16) * uiScale))
                 minus:SetText("")
-                minus:SetVisible(rowSellVisible)
                 minus:SetEnabled(canSell)
                 minus:SetTooltip(canSell and LocalizeToken("TF_PVE_UpgradeSell") or "")
                 minus.Paint = function(self, w, h)
                     local mat = matSellDisabled
-                    local bg = res.minusDefaultBG or Color(255, 255, 255, 0)
-                    if canSell then
-                        if self:IsDown() then
-                            mat = matSellActive
-                            bg = res.minusDepressedBG or bg
-                        elseif self:IsHovered() then
-                            mat = matSellActive
-                            bg = res.minusArmedBG or bg
+                    if self:IsEnabled() then
+                        if self:IsDown() or self:IsHovered() then
+                            mat = matSellSelected
                         else
-                            mat = matSellInactive
-                            bg = res.minusDefaultBG or bg
+                            mat = matSellEnabled
                         end
                     end
                     surface.SetDrawColor(255, 255, 255, 255)
                     surface.SetMaterial(mat)
                     surface.DrawTexturedRect(0, 0, w, h)
-                    if bg.a > 0 then
-                        surface.SetDrawColor(bg.r, bg.g, bg.b, bg.a)
-                        surface.DrawRect(0, 0, w, h)
-                    end
                 end
                 minus.OnCursorEntered = function()
                     if canSell then
                         PlayUiRollover()
                     end
+                    hoveredUpgradeByTab[selectedTab] = up.id
+                    SetInfo(up)
                 end
                 minus.DoClick = function()
                     if frame.SpectatorView or not canSell then return end
-                    if isstring(res.minusSoundDown) and res.minusSoundDown ~= "" then
-                        surface.PlaySound(res.minusSoundDown)
-                    end
+                    PlayUiClick(res.minusSoundDown)
                     PlayUiClick(res.minusSoundUp)
                     SendAction("sell_upgrade", up.id)
                 end
@@ -3119,17 +3589,7 @@ else
             end
 
             self:GetCanvas():SetTall(y + upgradeCardH + spacing)
-
-            local selectedUp = nil
-            if selectedId then
-                for _, up in ipairs(payload.upgrades or {}) do
-                    if up.id == selectedId and UpgradeBelongsToTab(up, selectedTab) then
-                        selectedUp = up
-                        break
-                    end
-                end
-            end
-            SetInfo(selectedUp)
+            SetInfo(GetPriorityUpgradeForCurrentTab())
 
             local vbar = self:GetVBar()
             if IsValid(vbar) then
@@ -3167,6 +3627,32 @@ else
         bottom.Paint = function(self, w, h)
             surface.SetDrawColor(res.colListBG or Color(97, 94, 85, 255))
             surface.DrawRect(0, 0, w, h)
+
+            local creditsColor = res.creditsColor or colCreditsGreen
+            if (not creditsColor) or ((creditsColor.a or 255) <= 0) then
+                creditsColor = colCreditsGreen
+            end
+            local creditsTextColor = res.creditsTextColor or colTanLight
+            if (not creditsTextColor) or ((creditsTextColor.a or 255) <= 0) then
+                creditsTextColor = colTanLight
+            end
+
+            local centerX = math.floor(w * 0.5)
+            local centerY = math.floor(h * 0.5)
+            local amount = tostring(payload.credits or 0)
+            local amountFont = res.creditsFont or "HudFontMedium"
+            local textFont = res.creditsTextFont or "HudFontSmallBold"
+
+            surface.SetFont(amountFont)
+            local amountW = select(1, surface.GetTextSize(amount))
+            surface.SetFont(textFont)
+            local textW = select(1, surface.GetTextSize(txtCredits))
+            local gap = math.floor(8 * uiScale)
+            local totalW = amountW + gap + textW
+            local leftX = centerX - math.floor(totalW * 0.5)
+
+            draw.SimpleText(amount, amountFont, leftX + amountW, centerY, creditsColor, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
+            draw.SimpleText(txtCredits, textFont, leftX + amountW + gap, centerY, creditsTextColor, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
         end
 
         local respecBtn = vgui.Create("DButton", bottom)
@@ -3176,10 +3662,10 @@ else
         respecBtn:SetSize(math.floor((res.respecW or 120) * uiScale), math.floor((res.respecH or 17) * uiScale))
         respecBtn:SetText(txtRespec)
         SkinActionButton(respecBtn)
-        respecBtn:SetEnabled((not frame.SpectatorView) and (not frame.ReadOnly))
+        respecBtn:SetEnabled(not frame.SpectatorView)
         respecBtn.DoClick = function()
-            if frame.ReadOnly then return end
-            PlayUiClick()
+            PlayUiClick(res.respecSoundDown)
+            PlayUiClick(res.respecSoundUp)
             frame:Close()
             SendAction("respec", "")
         end
@@ -3191,23 +3677,19 @@ else
         cancelBtn:SetText(txtCancel)
         SkinActionButton(cancelBtn)
         cancelBtn.DoClick = function()
-            PlayUiClick()
-            if frame.ReadOnly then
-                frame:Close()
-                return
-            end
-            SendAction("cancel", "")
+            PlayUiClick(res.cancelSoundDown)
+            PlayUiClick(res.cancelSoundUp)
+            frame:Close()
         end
 
         local acceptBtn = vgui.Create("DButton", bottom)
         acceptBtn:SetSize(btnW, btnH)
         acceptBtn:SetText(txtAccept)
         SkinActionButton(acceptBtn)
-        acceptBtn:SetVisible(not frame.ReadOnly)
         acceptBtn.DoClick = function()
-            if frame.ReadOnly then return end
-            PlayUiClick()
-            SendAction("accept", "")
+            PlayUiClick(res.closeSoundDown)
+            PlayUiClick(res.closeSoundUp)
+            frame:Close()
         end
 
         local cancelPadY = math.max(0, math.floor((res.cancelY or 285) * uiScale) - bottomY)
@@ -3216,6 +3698,7 @@ else
         acceptBtn:SetPos(math.floor(((res.closeX or 415) - bottomXOffset) * uiScale), closePadY)
 
         local function RefreshTabIcons()
+            local rebuilt = RebuildTabButtons(false)
             for _, entry in ipairs(tabButtons) do
                 local tab = entry.tab
                 local _, iconPath = GetSlotItemVisual(tab.slot, subjectPly)
@@ -3223,10 +3706,14 @@ else
                     iconPath = tab.fallbackIcon
                 end
                 if entry.iconPath ~= iconPath then
-                    entry.icon:SetImage(iconPath)
+                    SetAspectIcon(entry.icon, iconPath)
                     entry.iconPath = iconPath
                 end
             end
+            if rebuilt and card.QueueUpgradeRebuild then
+                card:QueueUpgradeRebuild()
+            end
+            SetInfo(GetPriorityUpgradeForCurrentTab())
         end
 
         RefreshTabIcons()
@@ -3269,16 +3756,20 @@ else
             if not istable(newPayload) then return end
             payload = newPayload
             self.SpectatorView = payload.spectatorView == true
-            self.ReadOnly = payload.readOnly == true
             self.ObservedEntIndex = tonumber(payload.observedEntIndex or -1) or -1
             subjectPly = self.SpectatorView and Entity(self.ObservedEntIndex) or LocalPlayer()
-            -- ClassImage panel intentionally omitted to avoid duplicate class portrait.
+            if IsValid(classIcon) then
+                local cls = string.lower(tostring((IsValid(subjectPly) and subjectPly:GetPlayerClass()) or "scout"))
+                SetAspectIcon(classIcon, ResolveClassPortraitIcon(subjectPly, cls))
+            end
 
             upgradesById = {}
             for _, up in ipairs(payload.upgrades or {}) do
                 if up.id then upgradesById[up.id] = up end
             end
 
+            RebuildTabButtons(true)
+            RefreshTabIcons()
             if card.QueueUpgradeRebuild then
                 card:QueueUpgradeRebuild()
             end
@@ -3293,9 +3784,6 @@ else
         if not IsMvMMap() or not ply:Alive() or GetConVarNumber("cl_drawhud") == 0 then
             return
         end
-        -- clear suppression once the player walks out of the station
-        if lastCloseTime and not IsNearUpgradeStationClient() then
-            lastCloseTime = nil
         -- clear suppression once the player walks out of the station
         if lastCloseTime and not IsNearUpgradeStationClient() then
             lastCloseTime = nil

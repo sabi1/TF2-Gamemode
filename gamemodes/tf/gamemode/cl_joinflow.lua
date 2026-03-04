@@ -126,6 +126,16 @@ function TFJoinFlow:OpenTeamSelect(initialFlow)
 		jfLog("OpenTeamSelect ignored: already visible")
 		return
 	end
+
+	-- Always reload the current team panel script from disk so swaps between
+	-- backups take effect without requiring a full reconnect/restart.
+	do
+		local ok, err = pcall(include, "vgui/menu_teamselectpanel.lua")
+		if not ok then
+			jfLog("team panel include failed: " .. tostring(err))
+		end
+	end
+
 	if not vgui.GetControlTable("TFTeamSelectPanel") then
 		jfLog("TFTeamSelectPanel control missing, scheduling retry")
 		if ensurePanelClass("TFTeamSelectPanel", 20) then

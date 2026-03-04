@@ -1,0 +1,5 @@
+"VertexLitGeneric"
+{
+	"$basetexture"		"models/props_plantation/column02_full_001"
+	"$color2" "{ 252 249 232 }"
+}
