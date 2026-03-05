@@ -519,6 +519,7 @@ local STRICT_SCHEMA = {
         BeginAtWave = true,
         RunForThisManyWaves = true,
         DesiredCount = true,
+        Where = true,
         TFBot = true,
     },
     TFBot = {
@@ -561,7 +562,6 @@ local STRICT_SCHEMA = {
 local REQUIRED_KEYS = {
     WaveSchedule = { "Wave" },
     WaveSpawn = { "TotalCount" },
-    Mission = { "Objective" },
 }
 
 local function StrictEnabled()

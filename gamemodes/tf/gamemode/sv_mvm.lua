@@ -314,6 +314,7 @@ local function GetWaveEndMusic(waveIndex, waveTotal)
 end
 
 local waveStartAnnounced = {}
+local suppressMannedUpOnce = false
 
 local function GetWaveStartAnnouncerLine(waveIndex, waveTotal)
     waveIndex = math.max(1, tonumber(waveIndex) or 1)
@@ -364,6 +365,11 @@ end
 
 hook.Add("TF_MVM_MissionStarted", "TF_MVM_Announcer_MissionStart", function()
     waveStartAnnounced = {}
+    if suppressMannedUpOnce then
+        suppressMannedUpOnce = false
+        PlayMvMAnnouncerSound("Announcer.MVM_Get_To_Upgrade")
+        return
+    end
     PlayMvMAnnouncerSound("Announcer.MVM_Manned_Up")
 end)
 
@@ -471,7 +477,21 @@ hook.Add("TF_MVM_MissionCompleted", "TF_MVM_Announcer_MissionComplete", function
     PlayMvMAnnouncerSound("Announcer.MVM_All_Dead")
 end)
 
-hook.Add("TF_MVM_MissionFailed", "TF_MVM_Announcer_MissionFailed", function()
+hook.Add("TF_MVM_MissionFailed", "TF_MVM_Announcer_MissionFailed", function(reason)
     PlayMvMAnnouncerSound("Announcer.MVM_Game_Over_Loss")
     PlayMvMMusic("music.mvm_lost_wave")
+
+    if reason ~= "bomb_deployed" then return end
+
+    local restartTimer = "TF_MVM_RestartAfterBombDeploy"
+    if timer.Exists(restartTimer) then
+        timer.Remove(restartTimer)
+    end
+
+    timer.Create(restartTimer, 15.25, 1, function()
+        if not TF_MVM or not TF_MVM.Runtime then return end
+        if TF_MVM.Runtime:IsManagedActive() then return end
+        suppressMannedUpOnce = true
+        ArmDeferredStart(nil)
+    end)
 end)

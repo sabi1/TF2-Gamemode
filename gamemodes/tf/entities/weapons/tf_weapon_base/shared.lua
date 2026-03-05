@@ -859,6 +859,151 @@ function SWEP:InitializeAttachedModels()
 	end
 end
 
+local function NormalizeAmmoType(ammoType)
+	if ammoType == nil then return nil end
+	if isstring(ammoType) then
+		local lowered = string.lower(ammoType)
+		if lowered == "" or lowered == "none" then
+			return nil
+		end
+	end
+	return ammoType
+end
+
+local function WeaponSlotIndex(wep)
+	if not IsValid(wep) then return 0 end
+	local slot = wep.Slot
+	if slot == nil and isfunction(wep.GetSlot) then
+		slot = wep:GetSlot()
+	end
+	return tonumber(slot) or 0
+end
+
+local function WeaponHasUsableAmmoForSelection(wep)
+	if not IsValid(wep) then return false end
+	if wep.Hidden or wep.IsPDA then
+		return true
+	end
+
+	local primary = wep.Primary or {}
+	local clipSize = tonumber(primary.ClipSize or -1) or -1
+	local clip = tonumber((wep.Clip1 and wep:Clip1()) or -1) or -1
+	local ammoType = NormalizeAmmoType(primary.Ammo)
+	local reserve = tonumber((wep.Ammo1 and wep:Ammo1()) or -1) or -1
+	local owner = wep:GetOwner()
+
+	-- Some throwables while holstered can report stale Ammo1().
+	-- Resolve reserve ammo from all known pools and use the max.
+	if IsValid(owner) and owner.GetAmmoCount then
+		if ammoType ~= nil then
+			local ownerReserveByName = tonumber(owner:GetAmmoCount(ammoType) or -1) or -1
+			if ownerReserveByName > reserve then
+				reserve = ownerReserveByName
+			end
+		end
+		if isfunction(wep.GetPrimaryAmmoType) then
+			local primaryAmmoType = wep:GetPrimaryAmmoType()
+			if isnumber(primaryAmmoType) and primaryAmmoType >= 0 then
+				local ownerReserveById = tonumber(owner:GetAmmoCount(primaryAmmoType) or -1) or -1
+				if ownerReserveById > reserve then
+					reserve = ownerReserveById
+				end
+			end
+		end
+	end
+
+	-- Throwables can be readiness-driven; trust full meter as usable.
+	if wep.HasCustomMeleeBehaviour and isfunction(wep.GetHUDMeterValue) then
+		local meter = tonumber(wep:GetHUDMeterValue() or 0) or 0
+		if meter >= 0.999 then
+			return true
+		end
+	end
+
+	-- Pure melee weapons (ammo type "none") must always remain selectable.
+	if wep.IsMeleeWeapon and ammoType == nil then
+		return true
+	end
+
+	-- Ammo-less weapons (true melee, mediguns, utility, etc.) are always selectable.
+	if clipSize < 0 and ammoType == nil and clip < 0 and reserve < 0 then
+		return true
+	end
+
+	if clip > 0 then
+		return true
+	end
+
+	if reserve > 0 then
+		return true
+	end
+
+	return false
+end
+
+function SWEP:HasUsableAmmoForSelection()
+	return WeaponHasUsableAmmoForSelection(self)
+end
+
+function SWEP:FindNextWeaponWithAmmo()
+	local owner = self:GetOwner()
+	if not IsValid(owner) then return nil end
+
+	local weapons = {}
+	for _, wep in ipairs(owner:GetWeapons()) do
+		if IsValid(wep) and not wep.Hidden then
+			table.insert(weapons, wep)
+		end
+	end
+
+	if #weapons <= 1 then return nil end
+
+	table.sort(weapons, function(a, b)
+		local as = WeaponSlotIndex(a)
+		local bs = WeaponSlotIndex(b)
+		if as == bs then
+			return (a:GetClass() or "") < (b:GetClass() or "")
+		end
+		return as < bs
+	end)
+
+	local currentIndex = 1
+	for i, wep in ipairs(weapons) do
+		if wep == self then
+			currentIndex = i
+			break
+		end
+	end
+
+	for offset = 1, #weapons - 1 do
+		local index = ((currentIndex - 1 + offset) % #weapons) + 1
+		local candidate = weapons[index]
+		if IsValid(candidate) and WeaponHasUsableAmmoForSelection(candidate) then
+			return candidate
+		end
+	end
+
+	return nil
+end
+
+function SWEP:AutoSwitchIfOutOfAmmo()
+	if CLIENT then return false end
+
+	local owner = self:GetOwner()
+	if not IsValid(owner) or not owner:Alive() then return false end
+	if owner:GetActiveWeapon() ~= self then return false end
+	if self.Reloading or self.NextReloadStart or self.NextReload or self.NextReload2 then return false end
+	if self:HasUsableAmmoForSelection() then return false end
+
+	local nextWeapon = self:FindNextWeaponWithAmmo()
+	if IsValid(nextWeapon) and nextWeapon ~= self then
+		owner:SelectWeapon(nextWeapon:GetClass())
+		return true
+	end
+
+	return false
+end
+
 function SWEP:Deploy() 
 	local vm = self.Owner:GetViewModel()
 	if (IsValid(vm)) then
@@ -1233,6 +1378,18 @@ function SWEP:Deploy()
 		if !self.Owner:IsHL2() then
 			self.Owner:ResetClassSpeed()
 		end
+		if not self:HasUsableAmmoForSelection() then
+			local nextWeapon = self:FindNextWeaponWithAmmo()
+			if IsValid(nextWeapon) and nextWeapon ~= self then
+				self.Owner:SelectWeapon(nextWeapon:GetClass())
+				return false
+			end
+		end
+		timer.Simple(0, function()
+			if IsValid(self) then
+				self:AutoSwitchIfOutOfAmmo()
+			end
+		end)
 	end
 	
 	if CLIENT and not self.DoneFirstDeploy then
@@ -1430,18 +1587,8 @@ function SWEP:Inspect()
 		self.CModel:SetProxyVar("CritStatus",s2)
 
 	end
-	if (self:Ammo1() < 1 and self:Clip1() < 1 and self.Primary.ClipSize > 0 and self.AmmoType != nil || self:Ammo1() < 1 and self.AmmoType != nil) then
-		if (CurTime() > self:GetNextPrimaryFire()) then
-			if (self.HoldType == "PRIMARY") then
-				if (IsValid(self.Owner:GetWeapons()[2])) then
-					self.Owner:SelectWeapon(self.Owner:GetWeapons()[2]:GetClass())
-				end
-			elseif ((self.HoldType == "SECONDARY" or (self:GetClass() == "tf_weapon_jar" or self:GetClass() == "tf_weapon_jar_milk")) and self.Owner:GetPlayerClass() != "medic") then
-				if (IsValid(self.Owner:GetWeapons()[3])) then
-					self.Owner:SelectWeapon(self.Owner:GetWeapons()[3]:GetClass())
-				end
-			end
-		end
+	if SERVER and CurTime() > self:GetNextPrimaryFire() then
+		self:AutoSwitchIfOutOfAmmo()
 	end
 	self:InspectAnimCheck()
 end	

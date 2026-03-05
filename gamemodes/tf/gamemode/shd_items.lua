@@ -491,19 +491,31 @@ function META:GetFullName()
 end
 
 function META:GetNameColor()
-	local q = (self.GetQuality and self:GetQuality()) or 0
-	
-	return Colors["QualityColor"..QUALITY_COLORS[q]] or Colors.QualityColorUnique
+	local q = tonumber((self.GetQuality and self:GetQuality()) or 0) or 0
+	local qualityKey = QUALITY_COLORS[q]
+	if not qualityKey then
+		return Colors.QualityColorUnique
+	end
+
+	return Colors["QualityColor" .. qualityKey] or Colors.QualityColorUnique
 end
 
 function META:GetIconTextureID()
-	local item = (self.GetItemData and self:GetItemData())
-	
-	if not item or not item.image_inventory then
+	local imagePath = nil
+	if self.GetResolvedInventoryImage then
+		imagePath = self:GetResolvedInventoryImage()
+	end
+
+	if not imagePath then
+		local item = (self.GetItemData and self:GetItemData())
+		imagePath = item and item.image_inventory or nil
+	end
+
+	if not imagePath or imagePath == "" then
 		return
 	end
-	
-	return surface.GetTextureID(item.image_inventory)
+
+	return surface.GetTextureID(imagePath)
 end
 
 end

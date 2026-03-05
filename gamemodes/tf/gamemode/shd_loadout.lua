@@ -2,6 +2,9 @@ include("shd_items.lua")
 --include("shd_workshop.lua")
 
 tf_items.LoadGameItems("items_game.lua") 
+if not tf_items.ItemsByID[15002] and file.Exists("gamemodes/tf/gamemode/items/items_game_nomount.lua", "GAME") then
+	tf_items.LoadGameItems("items_game_nomount.lua")
+end
 --
 --==================================================
 -- DIRECT FIXES

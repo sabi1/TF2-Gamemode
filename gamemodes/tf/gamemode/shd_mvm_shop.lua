@@ -373,7 +373,7 @@ local function ParseUpgradeEntriesFromText(txt)
             local entry = {
                 id = tostring(numericId),
                 name = PrettifyAttributeName(attrib),
-                target = GuessUpgradeTargetFromAttribute(attrib, isPlayerUpgrade),
+                target = (uiGroup == 2) and "action" or GuessUpgradeTargetFromAttribute(attrib, isPlayerUpgrade),
                 category = isPlayerUpgrade and "Player" or "Weapon",
                 description = "",
                 icon = tostring(icon or ""),
@@ -429,6 +429,30 @@ DeriveTierCountFromScript = function(increment, cap, fallback)
 
     if not levels or levels < 1 then return fallback end
     return math.Clamp(levels, 1, 8)
+end
+
+local function SanitizeUpgradeIdPart(value)
+    local s = string.lower(tostring(value or ""))
+    s = string.gsub(s, "[^%w]+", "_")
+    s = string.gsub(s, "^_+", "")
+    s = string.gsub(s, "_+$", "")
+    if s == "" then
+        s = "custom"
+    end
+    return s
+end
+
+local function BuildDynamicUpgradeId(entry)
+    local attr = SanitizeUpgradeIdPart(entry and (entry.scriptAttribute or entry.attribute or entry.id) or "")
+    local target = SanitizeUpgradeIdPart(entry and entry.target or "weapon")
+    return "dyn_" .. target .. "_" .. attr
+end
+
+local function IsDynamicUpgradeCandidate(src)
+    if not istable(src) then return false end
+    local attr = string.lower(tostring(src.scriptAttribute or src.attribute or ""))
+    if attr == "" then return false end
+    return true
 end
 
 local function ApplyCustomUpgradeScriptData(dataByAttrib)
@@ -547,26 +571,77 @@ function TF_MVMShop:LoadUpgrades()
         if not istable(list) or not istable(parsed) then return end
         local byId = {}
         local byAttribute = {}
+        local byAttributeTarget = {}
+        local byDynamicKey = {}
         for _, up in ipairs(list) do
             if up.id then
                 byId[string.lower(tostring(up.id))] = up
             end
+            local upTarget = string.lower(tostring(up.target or ""))
             local mappedAttr = TF_MVMShop.CustomUpgradeAttributeMap[up.id]
             if isstring(mappedAttr) and mappedAttr ~= "" then
-                byAttribute[string.lower(mappedAttr)] = up
+                local attrKey = string.lower(mappedAttr)
+                if byAttribute[attrKey] == nil then
+                    byAttribute[attrKey] = up
+                end
+                if upTarget ~= "" then
+                    byAttributeTarget[upTarget .. "|" .. attrKey] = up
+                end
             elseif istable(mappedAttr) then
                 for _, attrName in ipairs(mappedAttr) do
                     attrName = string.lower(tostring(attrName or ""))
                     if attrName ~= "" then
-                        byAttribute[attrName] = up
+                        if byAttribute[attrName] == nil then
+                            byAttribute[attrName] = up
+                        end
+                        if upTarget ~= "" then
+                            byAttributeTarget[upTarget .. "|" .. attrName] = up
+                        end
                     end
                 end
+            end
+
+            local upAttr = string.lower(tostring(up.scriptAttribute or ""))
+            if upAttr ~= "" and upTarget ~= "" then
+                byDynamicKey[upTarget .. "|" .. upAttr] = up
             end
         end
         for _, src in ipairs(parsed) do
             local srcId = string.lower(tostring(src.id or ""))
             local srcAttr = string.lower(tostring(src.scriptAttribute or src.attribute or src.id or ""))
-            local dst = byId[srcId] or byAttribute[srcAttr]
+            local srcTarget = string.lower(tostring(src.target or GuessUpgradeTargetFromAttribute(srcAttr, src.category == "Player") or ""))
+            local dst = byId[srcId] or byAttributeTarget[srcTarget .. "|" .. srcAttr] or byAttribute[srcAttr] or byDynamicKey[srcTarget .. "|" .. srcAttr]
+
+            if not dst and IsDynamicUpgradeCandidate(src) then
+                local id = BuildDynamicUpgradeId(src)
+                if byId[id] then
+                    local qualityPart = tonumber(src.scriptQuality or 0)
+                    id = id .. "_q" .. tostring(qualityPart)
+                end
+
+                dst = {
+                    id = id,
+                    name = TF_MVMShop.AttributeDisplayNameMap[srcAttr] or PrettifyAttributeName(srcAttr),
+                    category = src.category or ((srcTarget == "player") and "Player" or "Weapon"),
+                    target = srcTarget ~= "" and srcTarget or "primary",
+                    description = src.description or "",
+                    costs = istable(src.costs) and table.Copy(src.costs) or {},
+                    icon = src.icon,
+                    scriptAttribute = srcAttr,
+                    scriptQuality = tonumber(src.scriptQuality) or nil,
+                    scriptUiGroup = tonumber(src.scriptUiGroup) or nil,
+                    scriptIncrement = tonumber(src.scriptIncrement) or nil,
+                    scriptCap = tonumber(src.scriptCap) or nil,
+                    dynamicScript = true,
+                }
+                if #dst.costs == 0 then
+                    dst.costs[1] = 100
+                end
+                list[#list + 1] = dst
+                byId[string.lower(id)] = dst
+                byDynamicKey[dst.target .. "|" .. srcAttr] = dst
+            end
+
             if not dst then continue end
             if istable(src.costs) and #src.costs > 0 then dst.costs = src.costs end
             if isstring(src.description) and src.description ~= "" then dst.description = src.description end
@@ -574,6 +649,11 @@ function TF_MVMShop:LoadUpgrades()
             if isstring(src.name) and src.name ~= "" then dst.name = src.name end
             if isstring(src.category) and src.category ~= "" then dst.category = src.category end
             if isstring(src.target) and src.target ~= "" then dst.target = src.target end
+            if srcAttr ~= "" then dst.scriptAttribute = srcAttr end
+            if src.scriptQuality ~= nil then dst.scriptQuality = tonumber(src.scriptQuality) or dst.scriptQuality end
+            if src.scriptUiGroup ~= nil then dst.scriptUiGroup = tonumber(src.scriptUiGroup) or dst.scriptUiGroup end
+            if src.scriptIncrement ~= nil then dst.scriptIncrement = tonumber(src.scriptIncrement) or dst.scriptIncrement end
+            if src.scriptCap ~= nil then dst.scriptCap = tonumber(src.scriptCap) or dst.scriptCap end
         end
     end
 
@@ -654,6 +734,18 @@ if SERVER then
         if IsValid(ply) and not ply:IsAdmin() then return end
         TF_MVMShop:LoadUpgrades()
         print("[MVMShop] reload complete, " .. #TF_MVMShop.Upgrades .. " entries")
+    end)
+    concommand.Add("tf_mvm_upgrade_coverage", function(ply)
+        if IsValid(ply) and not ply:IsAdmin() then return end
+        local report = TF_MVMShop:BuildScriptCoverageReport()
+        print(string.format("[MVMShop] coverage totalScriptEntries=%d uniqueScriptAttributes=%d unsupported=%d",
+            tonumber(report.totalScriptEntries) or 0,
+            tonumber(report.uniqueScriptAttributes) or 0,
+            #(report.unsupported or {})
+        ))
+        if #(report.unsupported or {}) > 0 then
+            print("[MVMShop] unsupported attrs: " .. table.concat(report.unsupported, ", "))
+        end
     end)
 else
     -- client should refresh lookup when panel is opened
@@ -1199,6 +1291,10 @@ function TF_MVMShop:CanBuyUpgrade(ply, id)
 
     local upgrade = upgradesById[id]
     if not upgrade then return false, "invalid_upgrade" end
+    local canteenType = self:GetCanteenTypeForScriptAttribute(upgrade.scriptAttribute)
+    if tonumber(upgrade.scriptUiGroup) == 2 and canteenType then
+        return self:CanBuyCanteenAsUpgrade(ply, canteenType)
+    end
     if not self:IsUpgradeEnabledByScript(upgrade) then return false, "script_disabled" end
     if not self:IsUpgradeAllowedForClass(ply, upgrade) then return false, "class_restricted" end
     local allowedForLoadout, loadoutReason = self:IsUpgradeAllowedForLoadout(ply, upgrade)
@@ -1212,12 +1308,28 @@ function TF_MVMShop:CanBuyUpgrade(ply, id)
     return true
 end
 
+function TF_MVMShop:CanBuyCanteenAsUpgrade(ply, canteenType)
+    local c = self.CanteenTypes[canteenType]
+    if not c then return false, "invalid_canteen" end
+    local state = self:GetState(ply)
+    if ClampInt(state.canteen.charges[canteenType]) >= self:GetMaxCanteenCharges(ply) then
+        return false, "canteen_full"
+    end
+    if self:GetCredits(ply) < c.cost then
+        return false, "no_credits"
+    end
+    return true
+end
+
 function TF_MVMShop:CanSellUpgrade(ply, id)
     if not self:IsEnabledFor(ply) then return false, "not_enabled" end
     if not self:IsSetupOpenForPurchases() then return false, "setup_only" end
 
     local upgrade = upgradesById[id]
     if not upgrade then return false, "invalid_upgrade" end
+    if tonumber(upgrade.scriptUiGroup) == 2 then
+        return false, "no_upgrade"
+    end
     if not self:IsUpgradeEnabledByScript(upgrade) then return false, "script_disabled" end
     if not self:IsUpgradeAllowedForClass(ply, upgrade) then return false, "class_restricted" end
     local allowedForLoadout, loadoutReason = self:IsUpgradeAllowedForLoadout(ply, upgrade)
@@ -1274,11 +1386,205 @@ function TF_MVMShop:GetWeaponSlotName(wep)
 end
 
 function TF_MVMShop:GetDamageMultiplier(ply, slot)
-    if slot == "primary" then return 1 + (0.12 * self:GetLevel(ply, "damage_primary")) end
-    if slot == "secondary" then return 1 + (0.12 * self:GetLevel(ply, "damage_secondary")) end
-    if slot == "melee" then return 1 + (0.15 * self:GetLevel(ply, "damage_melee")) end
-    return 1
+    local level, inc, hasInc = self:GetUpgradeProgressForSlot(ply, slot, "damage bonus")
+    local _, apInc, apHas = self:GetScriptAttributeProgress(ply, slot, "armor piercing")
+    local _, penInc, penHas = self:GetScriptAttributeProgress(ply, slot, "projectile penetration")
+    local _, penHeavyInc, penHeavyHas = self:GetScriptAttributeProgress(ply, slot, "projectile penetration heavy")
+    local _, rocketSpecInc, rocketSpecHas = self:GetScriptAttributeProgress(ply, slot, "rocket specialist")
+    local _, expSniperInc, expSniperHas = self:GetScriptAttributeProgress(ply, slot, "explosive sniper shot")
+    local _, attackProjInc, attackProjHas = self:GetScriptAttributeProgress(ply, slot, "attack projectiles")
+    if hasInc then
+        local extra = 0
+        if apHas then extra = extra + math.max(0, apInc) end
+        if penHas then extra = extra + math.max(0, penInc) * 0.05 end
+        if penHeavyHas then extra = extra + math.max(0, penHeavyInc) * 0.04 end
+        if rocketSpecHas then extra = extra + math.max(0, rocketSpecInc) * 0.05 end
+        if expSniperHas then extra = extra + math.max(0, expSniperInc) * 0.05 end
+        if attackProjHas then extra = extra + math.max(0, attackProjInc) * 0.03 end
+        return math.max(0.1, 1 + inc + extra)
+    end
+    local base = 1
+    if slot == "primary" then base = 1 + (0.12 * level) end
+    if slot == "secondary" then base = 1 + (0.12 * level) end
+    if slot == "melee" then base = 1 + (0.15 * level) end
+    if apHas then base = base + math.max(0, apInc) end
+    if penHas then base = base + (math.max(0, penInc) * 0.05) end
+    if penHeavyHas then base = base + (math.max(0, penHeavyInc) * 0.04) end
+    if rocketSpecHas then base = base + (math.max(0, rocketSpecInc) * 0.05) end
+    if expSniperHas then base = base + (math.max(0, expSniperInc) * 0.05) end
+    if attackProjHas then base = base + (math.max(0, attackProjInc) * 0.03) end
+    return math.max(0.1, base)
 end
+
+function TF_MVMShop:SlotMatchesUpgradeTarget(slot, target)
+    slot = string.lower(tostring(slot or ""))
+    target = string.lower(tostring(target or ""))
+    if target == "" then return false end
+    if target == slot then return true end
+    if target == "weapon" or target == "all" then
+        return slot == "primary" or slot == "secondary" or slot == "melee"
+    end
+    return false
+end
+
+function TF_MVMShop:UpgradeMatchesAnyTokens(upgrade, tokens)
+    if not istable(tokens) then return false end
+    for _, token in ipairs(tokens) do
+        if self:UpgradeAttrMatches(upgrade, token) then
+            return true
+        end
+    end
+    return false
+end
+
+function TF_MVMShop:GetUpgradeProgressForSlot(ply, slot, ...)
+    local tokens = { ... }
+    local totalLevel = 0
+    local totalInc = 0
+    local hasInc = false
+    for _, upgrade in ipairs(self.Upgrades or {}) do
+        if not self:SlotMatchesUpgradeTarget(slot, upgrade.target) then continue end
+        if not self:UpgradeMatchesAnyTokens(upgrade, tokens) then continue end
+        local level = self:GetLevel(ply, upgrade.id)
+        if level <= 0 then continue end
+        totalLevel = totalLevel + level
+        local inc = tonumber(upgrade.scriptIncrement)
+        if inc ~= nil then
+            totalInc = totalInc + (inc * level)
+            hasInc = true
+        end
+    end
+    return totalLevel, totalInc, hasInc
+end
+
+function TF_MVMShop:GetScriptAttributeProgress(ply, target, attributeName)
+    local want = string.lower(tostring(attributeName or ""))
+    if want == "" then return 0, 0, false end
+    local totalLevel = 0
+    local totalInc = 0
+    local hasInc = false
+    for _, upgrade in ipairs(self.Upgrades or {}) do
+        if not self:SlotMatchesUpgradeTarget(target, upgrade.target) then continue end
+        local attr = string.lower(tostring(upgrade.scriptAttribute or ""))
+        if attr ~= want then continue end
+        local level = self:GetLevel(ply, upgrade.id)
+        if level <= 0 then continue end
+        totalLevel = totalLevel + level
+        local inc = tonumber(upgrade.scriptIncrement)
+        if inc ~= nil then
+            totalInc = totalInc + (inc * level)
+            hasInc = true
+        end
+    end
+    return totalLevel, totalInc, hasInc
+end
+
+function TF_MVMShop:GetScriptAttributeProgressAnyTarget(ply, attributeName)
+    local levelA, incA, hasA = self:GetScriptAttributeProgress(ply, "primary", attributeName)
+    local levelB, incB, hasB = self:GetScriptAttributeProgress(ply, "secondary", attributeName)
+    local levelC, incC, hasC = self:GetScriptAttributeProgress(ply, "melee", attributeName)
+    local levelP, incP, hasP = self:GetScriptAttributeProgress(ply, "player", attributeName)
+    return (levelA + levelB + levelC + levelP), (incA + incB + incC + incP), (hasA or hasB or hasC or hasP)
+end
+
+function TF_MVMShop:GetCanteenTypeForScriptAttribute(attr)
+    attr = string.lower(tostring(attr or ""))
+    if attr == "critboost" then return "crit" end
+    if attr == "ubercharge" then return "uber" end
+    if attr == "refill_ammo" then return "refill" end
+    if attr == "recall" then return "refill" end
+    if attr == "building instant upgrade" then return "build" end
+    return nil
+end
+
+function TF_MVMShop:BuildScriptCoverageReport()
+    local report = {
+        totalScriptEntries = 0,
+        uniqueScriptAttributes = 0,
+        unsupported = {},
+    }
+    local byAttr = {}
+    for _, up in ipairs(self.Upgrades or {}) do
+        local attr = string.lower(tostring(up.scriptAttribute or ""))
+        if attr == "" then continue end
+        report.totalScriptEntries = report.totalScriptEntries + 1
+        byAttr[attr] = true
+    end
+
+    local supported = {
+        ["damage bonus"] = true,
+        ["fire rate bonus"] = true,
+        ["melee attack rate bonus"] = true,
+        ["faster reload rate"] = true,
+        ["clip size bonus upgrade"] = true,
+        ["clip size upgrade atomic"] = true,
+        ["maxammo primary increased"] = true,
+        ["maxammo secondary increased"] = true,
+        ["maxammo metal increased"] = true,
+        ["maxammo grenades1 increased"] = true,
+        ["effect bar recharge rate increased"] = true,
+        ["charge recharge rate increased"] = true,
+        ["mult_item_meter_charge_rate"] = true,
+        ["increase buff duration"] = true,
+        ["srifle charge rate increased"] = true,
+        ["projectile speed increased"] = true,
+        ["weapon burn dmg increased"] = true,
+        ["weapon burn time increased"] = true,
+        ["airblast pushback scale"] = true,
+        ["move speed bonus"] = true,
+        ["increased jump height"] = true,
+        ["health regen"] = true,
+        ["max health additive bonus"] = true,
+        ["heal on kill"] = true,
+        ["ubercharge rate bonus"] = true,
+        ["healing mastery"] = true,
+        ["overheal expert"] = true,
+        ["metal regen"] = true,
+        ["dmg taken from bullets reduced"] = true,
+        ["dmg taken from blast reduced"] = true,
+        ["dmg taken from fire reduced"] = true,
+        ["dmg taken from crit reduced"] = true,
+        ["damage force reduction"] = true,
+        ["engy building health bonus"] = true,
+        ["engy sentry fire rate increased"] = true,
+        ["engy dispenser radius increased"] = true,
+        ["engy disposable sentries"] = true,
+        ["bidirectional teleport"] = true,
+        ["building instant upgrade"] = true,
+        ["canteen specialist"] = true,
+        ["critboost"] = true,
+        ["ubercharge"] = true,
+        ["refill_ammo"] = true,
+        ["recall"] = true,
+        ["applies snare effect"] = true,
+        ["mark for death"] = true,
+        ["bleeding duration"] = true,
+        ["rocket specialist"] = true,
+        ["projectile penetration"] = true,
+        ["projectile penetration heavy"] = true,
+        ["armor piercing"] = true,
+        ["attack projectiles"] = true,
+        ["explosive sniper shot"] = true,
+        ["generate rage on damage"] = true,
+        ["generate rage on heal"] = true,
+        ["uber duration bonus"] = true,
+        ["critboost on kill"] = true,
+        ["robo sapper"] = true,
+        ["mad milk syringes"] = true,
+        ["falling_impact_radius_stun"] = true,
+        ["explode_on_ignite"] = true,
+        ["thermal_thruster_air_launch"] = true,
+    }
+    for attr, _ in pairs(byAttr) do
+        report.uniqueScriptAttributes = report.uniqueScriptAttributes + 1
+        if not supported[attr] then
+            report.unsupported[#report.unsupported + 1] = attr
+        end
+    end
+    table.sort(report.unsupported)
+    return report
+end
+
 function TF_MVMShop:ApplyWeaponStats(ply)
     ply.TF_MVM_BaseAmmoByType = ply.TF_MVM_BaseAmmoByType or {}
     ply.TF_MVM_BaseAmmoMaxByType = ply.TF_MVM_BaseAmmoMaxByType or {}
@@ -1286,53 +1592,56 @@ function TF_MVMShop:ApplyWeaponStats(ply)
         if not IsValid(wep) then continue end
 
         local slot = self:GetWeaponSlotName(wep)
-        local fireLevel = 0
-        local reloadLevel = 0
-        local clipLevel = 0
-        local ammoLevel = 0
-        local effectbarLevel = 0
-        local buffDurationLevel = 0
-
-        if slot == "primary" then
-            fireLevel = self:GetLevel(ply, "firerate_primary")
-            reloadLevel = self:GetLevel(ply, "reload_primary")
-            clipLevel = self:GetLevel(ply, "clip_primary")
-            ammoLevel = self:GetLevel(ply, "ammo_primary")
-            effectbarLevel = self:GetLevel(ply, "effectbar_primary")
-        elseif slot == "secondary" then
-            fireLevel = self:GetLevel(ply, "firerate_secondary")
-            reloadLevel = self:GetLevel(ply, "reload_secondary")
-            clipLevel = self:GetLevel(ply, "clip_secondary")
-            ammoLevel = self:GetLevel(ply, "ammo_secondary")
-            effectbarLevel = self:GetLevel(ply, "effectbar_secondary")
-            buffDurationLevel = self:GetLevel(ply, "buff_duration_secondary")
-        elseif slot == "melee" then
-            fireLevel = self:GetLevel(ply, "swing_melee")
-            effectbarLevel = self:GetLevel(ply, "effectbar_melee")
-        end
+        local fireLevel, fireInc, fireHasInc = self:GetUpgradeProgressForSlot(ply, slot, "fire rate bonus", "melee attack rate bonus")
+        local reloadLevel, reloadInc, reloadHasInc = self:GetUpgradeProgressForSlot(ply, slot, "faster reload rate", "reload")
+        local clipLevel, clipInc, clipHasInc = self:GetUpgradeProgressForSlot(ply, slot, "clip size bonus")
+        local ammoLevel, ammoInc, ammoHasInc = self:GetUpgradeProgressForSlot(ply, slot, "maxammo", "ammo capacity")
+        local effectbarLevel, effectbarInc, effectbarHasInc = self:GetUpgradeProgressForSlot(ply, slot, "effect bar", "charge recharge", "item meter charge rate")
+        local buffDurationLevel, buffDurationInc, buffDurationHasInc = self:GetUpgradeProgressForSlot(ply, slot, "increase buff duration", "buff duration")
+        local _, sniperChargeInc, sniperChargeHas = self:GetScriptAttributeProgress(ply, slot, "srifle charge rate increased")
+        local _, projSpeedInc, projSpeedHas = self:GetScriptAttributeProgress(ply, slot, "projectile speed increased")
+        local _, burnDmgInc, burnDmgHas = self:GetScriptAttributeProgress(ply, slot, "weapon burn dmg increased")
+        local _, burnTimeInc, burnTimeHas = self:GetScriptAttributeProgress(ply, slot, "weapon burn time increased")
+        local _, airblastInc, airblastHas = self:GetScriptAttributeProgress(ply, slot, "airblast pushback scale")
+        local _, uberRateInc, uberRateHas = self:GetScriptAttributeProgress(ply, slot, "ubercharge rate bonus")
+        local _, healRateInc, healRateHas = self:GetScriptAttributeProgress(ply, slot, "healing mastery")
+        local _, overhealInc, overhealHas = self:GetScriptAttributeProgress(ply, slot, "overheal expert")
+        local _, meterInc, meterHas = self:GetScriptAttributeProgress(ply, slot, "mult_item_meter_charge_rate")
 
         if wep.Primary and isnumber(wep.Primary.Delay) then
             wep.TF_MVM_BasePrimaryDelay = wep.TF_MVM_BasePrimaryDelay or wep.Primary.Delay
-            local mul = math.max(0.2, 1 - ((slot == "melee" and 0.1 or 0.08) * fireLevel))
+            local mul = nil
+            if fireHasInc then
+                mul = math.max(0.2, 1 + fireInc)
+            else
+                mul = math.max(0.2, 1 - ((slot == "melee" and 0.1 or 0.08) * fireLevel))
+            end
             wep.Primary.Delay = wep.TF_MVM_BasePrimaryDelay * mul
         end
 
         if wep.Secondary and isnumber(wep.Secondary.Delay) and slot ~= "melee" then
             wep.TF_MVM_BaseSecondaryDelay = wep.TF_MVM_BaseSecondaryDelay or wep.Secondary.Delay
-            local mul = math.max(0.2, 1 - (0.08 * fireLevel))
+            local mul = nil
+            if fireHasInc then
+                mul = math.max(0.2, 1 + fireInc)
+            else
+                mul = math.max(0.2, 1 - (0.08 * fireLevel))
+            end
             wep.Secondary.Delay = wep.TF_MVM_BaseSecondaryDelay * mul
         end
 
         if isnumber(wep.ReloadTime) then
             wep.TF_MVM_BaseReloadTime = wep.TF_MVM_BaseReloadTime or wep.ReloadTime
-            wep.ReloadTime = wep.TF_MVM_BaseReloadTime * math.max(0.2, 1 - (0.1 * reloadLevel))
+            local reloadMul = reloadHasInc and math.max(0.2, 1 + reloadInc) or math.max(0.2, 1 - (0.1 * reloadLevel))
+            wep.ReloadTime = wep.TF_MVM_BaseReloadTime * reloadMul
         end
         -- tf_weapon_base consumes this NW var in its reload flow.
-        wep:SetNWFloat("ReloadTimeMultiplier", math.max(0.2, 1 - (0.1 * reloadLevel)))
+        local reloadNW = reloadHasInc and math.max(0.2, 1 + reloadInc) or math.max(0.2, 1 - (0.1 * reloadLevel))
+        wep:SetNWFloat("ReloadTimeMultiplier", reloadNW)
 
         -- TF2-like "effect bar recharge rate increased" for drinks / jars / recharge secondaries.
         if effectbarLevel > 0 then
-            local rechargeMul = math.max(0.2, 1 - (0.25 * effectbarLevel))
+            local rechargeMul = effectbarHasInc and math.max(0.2, 1 + effectbarInc) or math.max(0.2, 1 - (0.25 * effectbarLevel))
             if isnumber(wep.RechargeTime) then
                 wep.TF_MVM_BaseRechargeTime = wep.TF_MVM_BaseRechargeTime or wep.RechargeTime
                 wep.RechargeTime = wep.TF_MVM_BaseRechargeTime * rechargeMul
@@ -1345,41 +1654,94 @@ function TF_MVMShop:ApplyWeaponStats(ply)
 
         -- Buff banner family: extend active buff duration.
         if self:GetWeaponClassNameLower(wep):find("buff_item", 1, true) then
-            wep.TF_MVM_BuffDurationMul = 1 + (0.25 * buffDurationLevel)
+            if buffDurationHasInc then
+                wep.TF_MVM_BuffDurationMul = math.max(0.1, 1 + buffDurationInc)
+            else
+                wep.TF_MVM_BuffDurationMul = 1 + (0.25 * buffDurationLevel)
+            end
+        end
+
+        if sniperChargeHas then
+            wep.SniperChargeRateMultiplier = math.max(0.1, 1 + sniperChargeInc)
+        end
+        if projSpeedHas then
+            wep.TF_MVM_BaseProjectileSpeed = wep.TF_MVM_BaseProjectileSpeed or wep.ProjectileSpeed or 1
+            wep.ProjectileSpeed = wep.TF_MVM_BaseProjectileSpeed * math.max(0.1, 1 + projSpeedInc)
+            wep.ProjectileSpeedMultiplier = math.max(0.1, 1 + projSpeedInc)
+        end
+        if burnDmgHas then
+            wep.BurnDamageMultiplier = math.max(0.1, 1 + burnDmgInc)
+        end
+        if burnTimeHas then
+            wep.BurnTimeMultiplier = math.max(0.1, 1 + burnTimeInc)
+        end
+        if airblastHas then
+            wep.AirblastPushbackMultiplier = math.max(0.1, 1 + airblastInc)
+        end
+        if uberRateHas then
+            wep.UberchargeRateMultiplier = math.max(0.1, 1 + uberRateInc)
+        end
+        if healRateHas then
+            wep.HealRateMultiplier = math.max(0.1, 1 + healRateInc)
+        end
+        if overhealHas then
+            wep.OverhealMultiplier = math.max(0.1, 1 + overhealInc)
+        end
+        if meterHas then
+            wep.ItemMeterChargeRateMultiplier = math.max(0.1, 1 + meterInc)
         end
 
         if wep.Primary and isnumber(wep.Primary.ClipSize) and wep.Primary.ClipSize > 0 then
             wep.TF_MVM_BaseClipSize = wep.TF_MVM_BaseClipSize or wep.Primary.ClipSize
-            local newClip = math.max(1, math.floor(wep.TF_MVM_BaseClipSize * (1 + (0.2 * clipLevel))))
+            local clipMul = clipHasInc and (1 + clipInc) or (1 + (0.2 * clipLevel))
+            local newClip = math.max(1, math.floor(wep.TF_MVM_BaseClipSize * clipMul))
             wep.Primary.ClipSize = newClip
             wep:SetClip1(math.min(wep:Clip1(), newClip))
         end
 
         local ammoType = wep.GetPrimaryAmmoType and wep:GetPrimaryAmmoType() or -1
-        if isnumber(ammoType) and ammoType >= 0 then
-            local currentAmmo = math.max(0, ply:GetAmmoCount(ammoType))
-            local baseAmmo = ply.TF_MVM_BaseAmmoByType[ammoType]
+        local ammoKey = nil
+        if wep.Primary and isstring(wep.Primary.Ammo) and wep.Primary.Ammo ~= "" and wep.Primary.Ammo ~= "none" then
+            ammoKey = wep.Primary.Ammo
+        elseif isnumber(ammoType) and ammoType >= 0 and game.GetAmmoName then
+            ammoKey = game.GetAmmoName(ammoType)
+        end
+        local ammoHandle = ammoKey or ammoType
+        if ammoHandle ~= nil and ((isnumber(ammoHandle) and ammoHandle >= 0) or (isstring(ammoHandle) and ammoHandle ~= "" and ammoHandle ~= "none")) then
+            local currentAmmo = math.max(0, ply:GetAmmoCount(ammoHandle))
+            local baseAmmo = ply.TF_MVM_BaseAmmoByType[ammoHandle]
             if baseAmmo == nil then
                 baseAmmo = currentAmmo
-                ply.TF_MVM_BaseAmmoByType[ammoType] = baseAmmo
+                ply.TF_MVM_BaseAmmoByType[ammoHandle] = baseAmmo
             end
 
-            if ply.AmmoMax and ply.AmmoMax[ammoType] then
-                local baseMax = ply.TF_MVM_BaseAmmoMaxByType[ammoType]
+            if ply.AmmoMax and ply.AmmoMax[ammoHandle] then
+                local baseMax = ply.TF_MVM_BaseAmmoMaxByType[ammoHandle]
                 if baseMax == nil then
-                    baseMax = tonumber(ply.AmmoMax[ammoType]) or baseAmmo
-                    ply.TF_MVM_BaseAmmoMaxByType[ammoType] = baseMax
+                    baseMax = tonumber(ply.AmmoMax[ammoHandle]) or baseAmmo
+                    ply.TF_MVM_BaseAmmoMaxByType[ammoHandle] = baseMax
                 end
-                ply.AmmoMax[ammoType] = math.max(1, math.floor(baseMax * (1 + (0.25 * ammoLevel))))
+                local ammoMul = ammoHasInc and (1 + ammoInc) or (1 + (0.25 * ammoLevel))
+                ply.AmmoMax[ammoHandle] = math.max(1, math.floor(baseMax * ammoMul))
             end
 
             if ammoLevel > 0 then
-                local targetAmmo = math.max(currentAmmo, math.floor(baseAmmo * (1 + (0.25 * ammoLevel))))
+                local ammoMul = ammoHasInc and (1 + ammoInc) or (1 + (0.25 * ammoLevel))
+                local targetAmmo = math.max(currentAmmo, math.floor(baseAmmo * ammoMul))
                 if targetAmmo > currentAmmo then
-                    ply:SetAmmo(targetAmmo, ammoType)
+                    if ply.SetAmmoCount then
+                        ply:SetAmmoCount(targetAmmo, ammoHandle)
+                    else
+                        ply:SetAmmo(targetAmmo, ammoHandle)
+                    end
                 end
-            elseif ply.AmmoMax and ply.AmmoMax[ammoType] then
-                ply:SetAmmo(math.min(currentAmmo, ply.AmmoMax[ammoType]), ammoType)
+            elseif ply.AmmoMax and ply.AmmoMax[ammoHandle] then
+                local clampedAmmo = math.min(currentAmmo, ply.AmmoMax[ammoHandle])
+                if ply.SetAmmoCount then
+                    ply:SetAmmoCount(clampedAmmo, ammoHandle)
+                else
+                    ply:SetAmmo(clampedAmmo, ammoHandle)
+                end
             end
         end
     end
@@ -1389,6 +1751,17 @@ function TF_MVMShop:ApplyEngineerBuildingStats(ply)
     if not IsValid(ply) then return end
     local healthMul = 1 + (0.15 * self:GetLevel(ply, "building_health"))
     local fireMul = 1 + (0.1 * self:GetLevel(ply, "building_rate"))
+    local _, engyHealthInc, engyHealthHas = self:GetScriptAttributeProgressAnyTarget(ply, "engy building health bonus")
+    local _, engyRateInc, engyRateHas = self:GetScriptAttributeProgressAnyTarget(ply, "engy sentry fire rate increased")
+    local _, dispRangeInc, dispRangeHas = self:GetScriptAttributeProgressAnyTarget(ply, "engy dispenser radius increased")
+    local biTeleLevel = self:GetScriptAttributeProgressAnyTarget(ply, "bidirectional teleport")
+    local instLevel = self:GetScriptAttributeProgressAnyTarget(ply, "building instant upgrade")
+    if engyHealthHas then
+        healthMul = healthMul * math.max(0.1, 1 + engyHealthInc)
+    end
+    if engyRateHas then
+        fireMul = fireMul * math.max(0.1, 1 - engyRateInc)
+    end
     for _, className in ipairs({ "obj_sentrygun", "obj_dispenser", "obj_teleporter" }) do
         for _, ent in ipairs(ents.FindByClass(className)) do
             if not IsValid(ent) or ent:GetOwner() ~= ply then continue end
@@ -1400,6 +1773,21 @@ function TF_MVMShop:ApplyEngineerBuildingStats(ply)
             if className == "obj_sentrygun" then
                 ent.TF_MVM_BaseFireRate = ent.TF_MVM_BaseFireRate or (ent.FireRate or 0.1)
                 ent.FireRate = ent.TF_MVM_BaseFireRate / fireMul
+                local _, rocketSpecInc, rocketSpecHas = self:GetScriptAttributeProgress(ply, "primary", "rocket specialist")
+                if rocketSpecHas then
+                    ent.TF_MVM_RocketSpecialist = math.max(0, rocketSpecInc)
+                end
+            elseif className == "obj_dispenser" and dispRangeHas then
+                ent.TF_MVM_BaseRange = ent.TF_MVM_BaseRange or tonumber(ent.Range) or 100
+                ent.Range = math.max(32, math.floor(ent.TF_MVM_BaseRange * math.max(0.1, 1 + dispRangeInc)))
+            elseif className == "obj_teleporter" then
+                ent.TF_MVM_BidirectionalTeleport = (biTeleLevel and biTeleLevel > 0) and true or false
+            end
+            if instLevel and instLevel > 0 and ent.GetLevel and ent.Upgrade and ent.NumLevels then
+                local levelNow = tonumber(ent:GetLevel()) or 1
+                if levelNow < (tonumber(ent.NumLevels) or 3) then
+                    ent:Upgrade()
+                end
             end
         end
     end
@@ -1412,6 +1800,29 @@ function TF_MVMShop:ApplyPlayerStats(ply)
     local speedMul = 1 + (0.08 * self:GetLevel(ply, "move_speed"))
     local jumpMul = 1 + (0.2 * self:GetLevel(ply, "jump_height"))
     local buffDurationMul = 1 + (0.25 * self:GetLevel(ply, "buff_duration_secondary"))
+    local _, dynHpInc, dynHpHas = self:GetScriptAttributeProgress(ply, "player", "max health additive bonus")
+    local _, dynSpeedInc, dynSpeedHas = self:GetScriptAttributeProgress(ply, "player", "move speed bonus")
+    local _, dynJumpInc, dynJumpHas = self:GetScriptAttributeProgress(ply, "player", "increased jump height")
+    local _, dynBuffInc, dynBuffHas = self:GetScriptAttributeProgress(ply, "secondary", "increase buff duration")
+    local _, dynMetalInc, dynMetalHas = self:GetScriptAttributeProgressAnyTarget(ply, "metal regen")
+    local _, dynRegenInc, dynRegenHas = self:GetScriptAttributeProgressAnyTarget(ply, "health regen")
+    local _, dynCanteenInc, dynCanteenHas = self:GetScriptAttributeProgressAnyTarget(ply, "canteen specialist")
+    local _, dynDmgForceInc, dynDmgForceHas = self:GetScriptAttributeProgressAnyTarget(ply, "damage force reduction")
+    local _, dynResBulletInc, dynResBulletHas = self:GetScriptAttributeProgressAnyTarget(ply, "dmg taken from bullets reduced")
+    local _, dynResBlastInc, dynResBlastHas = self:GetScriptAttributeProgressAnyTarget(ply, "dmg taken from blast reduced")
+    local _, dynResFireInc, dynResFireHas = self:GetScriptAttributeProgressAnyTarget(ply, "dmg taken from fire reduced")
+    local _, dynResCritInc, dynResCritHas = self:GetScriptAttributeProgressAnyTarget(ply, "dmg taken from crit reduced")
+    local _, dynHealOnKillInc, dynHealOnKillHas = self:GetScriptAttributeProgressAnyTarget(ply, "heal on kill")
+    local _, dynCritOnKillInc, dynCritOnKillHas = self:GetScriptAttributeProgressAnyTarget(ply, "critboost on kill")
+    local _, dynSnareInc, dynSnareHas = self:GetScriptAttributeProgressAnyTarget(ply, "applies snare effect")
+    local _, dynMarkInc, dynMarkHas = self:GetScriptAttributeProgressAnyTarget(ply, "mark for death")
+    local _, dynBleedInc, dynBleedHas = self:GetScriptAttributeProgressAnyTarget(ply, "bleeding duration")
+    local _, dynUberDurInc, dynUberDurHas = self:GetScriptAttributeProgressAnyTarget(ply, "uber duration bonus")
+
+    if dynHpHas then hpBonus = hpBonus + math.floor(dynHpInc + 0.5) end
+    if dynSpeedHas then speedMul = speedMul * math.max(0.1, 1 + dynSpeedInc) end
+    if dynJumpHas then jumpMul = jumpMul * math.max(0.1, 1 + dynJumpInc) end
+    if dynBuffHas then buffDurationMul = buffDurationMul * math.max(0.1, 1 + dynBuffInc) end
 
     local maxHp = self:GetBaseHealth(ply) + hpBonus
     ply:SetMaxHealth(maxHp)
@@ -1444,6 +1855,36 @@ function TF_MVMShop:ApplyPlayerStats(ply)
     ply.PlayerJumpPower = jumpPower
     ply:SetJumpPower(jumpPower)
     ply:SetNWFloat("TF_MVM_BuffDurationMul", buffDurationMul)
+    ply.TF_MVM_Dynamic = ply.TF_MVM_Dynamic or {}
+    ply.TF_MVM_Dynamic.HealthRegenPerSec = dynRegenHas and math.max(0, dynRegenInc) or 0
+    ply.TF_MVM_Dynamic.MetalRegenPerSec = dynMetalHas and math.max(0, dynMetalInc) or 0
+    ply.TF_MVM_Dynamic.CanteenBonus = dynCanteenHas and math.max(0, math.floor(dynCanteenInc + 0.5)) or 0
+    ply.TF_MVM_Dynamic.DamageForceMult = dynDmgForceHas and math.max(0.1, 1 - math.max(0, dynDmgForceInc)) or 1
+    ply.TF_MVM_Dynamic.ResistBulletMult = dynResBulletHas and math.max(0.1, 1 + dynResBulletInc) or 1
+    ply.TF_MVM_Dynamic.ResistBlastMult = dynResBlastHas and math.max(0.1, 1 + dynResBlastInc) or 1
+    ply.TF_MVM_Dynamic.ResistFireMult = dynResFireHas and math.max(0.1, 1 + dynResFireInc) or 1
+    ply.TF_MVM_Dynamic.ResistCritMult = dynResCritHas and math.max(0.1, 1 + dynResCritInc) or 1
+    ply.TF_MVM_Dynamic.HealOnKill = dynHealOnKillHas and math.max(0, math.floor(dynHealOnKillInc + 0.5)) or 0
+    ply.TF_MVM_Dynamic.CritOnKillDuration = dynCritOnKillHas and math.max(0, dynCritOnKillInc) or 0
+    ply.TF_MVM_Dynamic.SnareScale = dynSnareHas and dynSnareInc or 0
+    ply.TF_MVM_Dynamic.MarkForDeathDuration = dynMarkHas and math.max(0, dynMarkInc) or 0
+    ply.TF_MVM_Dynamic.BleedDuration = dynBleedHas and math.max(0, dynBleedInc) or 0
+    ply.TF_MVM_Dynamic.UberDurationBonus = dynUberDurHas and math.max(0, dynUberDurInc) or 0
+
+    local _, maxMetalInc, maxMetalHas = self:GetScriptAttributeProgressAnyTarget(ply, "maxammo metal increased")
+    if maxMetalHas and ply.AmmoMax and ply.AmmoMax[TF_METAL] then
+        ply.TF_MVM_BaseAmmoMaxByType = ply.TF_MVM_BaseAmmoMaxByType or {}
+        local base = ply.TF_MVM_BaseAmmoMaxByType[TF_METAL] or tonumber(ply.AmmoMax[TF_METAL]) or 0
+        ply.TF_MVM_BaseAmmoMaxByType[TF_METAL] = base
+        ply.AmmoMax[TF_METAL] = math.max(1, math.floor(base * (1 + maxMetalInc)))
+    end
+    local _, maxGrenInc, maxGrenHas = self:GetScriptAttributeProgressAnyTarget(ply, "maxammo grenades1 increased")
+    if maxGrenHas and ply.AmmoMax and ply.AmmoMax[TF_GRENADES1] then
+        ply.TF_MVM_BaseAmmoMaxByType = ply.TF_MVM_BaseAmmoMaxByType or {}
+        local base = ply.TF_MVM_BaseAmmoMaxByType[TF_GRENADES1] or tonumber(ply.AmmoMax[TF_GRENADES1]) or 0
+        ply.TF_MVM_BaseAmmoMaxByType[TF_GRENADES1] = base
+        ply.AmmoMax[TF_GRENADES1] = math.max(1, math.floor(base * (1 + maxGrenInc)))
+    end
 
     self:ApplyWeaponStats(ply)
     self:ApplyEngineerBuildingStats(ply)
@@ -1458,7 +1899,11 @@ function TF_MVMShop:GetUpgradeSellRefund(ply, id)
 end
 
 function TF_MVMShop:GetMaxCanteenCharges(ply)
-    return 1 + self:GetLevel(ply, "canteen_capacity")
+    local dynamicBonus = 0
+    if IsValid(ply) and ply.TF_MVM_Dynamic then
+        dynamicBonus = tonumber(ply.TF_MVM_Dynamic.CanteenBonus) or 0
+    end
+    return 1 + self:GetLevel(ply, "canteen_capacity") + math.max(0, math.floor(dynamicBonus))
 end
 
 function TF_MVMShop:SyncCanteenNW(ply)
@@ -1633,6 +2078,13 @@ if SERVER then
     function TF_MVMShop:BuyUpgrade(ply, id)
         local can, reason = self:CanBuyUpgrade(ply, id)
         if not can then return false, reason end
+        local upgrade = upgradesById[id]
+        if not upgrade then return false, "invalid_upgrade" end
+        local canteenType = self:GetCanteenTypeForScriptAttribute(upgrade.scriptAttribute)
+        if tonumber(upgrade.scriptUiGroup) == 2 and canteenType then
+            return self:BuyCanteenCharge(ply, canteenType)
+        end
+
         local cost = self:GetUpgradeCost(ply, id)
         if not cost then return false, "invalid_upgrade" end
 
@@ -1714,7 +2166,8 @@ if SERVER then
     end
 
     local function ApplyCanteenUber(ply)
-        ply.TF_MVMUberUntil = CurTime() + 5
+        local bonus = (ply.TF_MVM_Dynamic and tonumber(ply.TF_MVM_Dynamic.UberDurationBonus)) or 0
+        ply.TF_MVMUberUntil = CurTime() + 5 + math.max(0, bonus)
         ply:SetNWFloat("TF_MVMUberUntil", ply.TF_MVMUberUntil)
     end
 
@@ -1836,6 +2289,28 @@ if SERVER then
             local weapon = attacker:GetActiveWeapon()
             if IsValid(weapon) then slot = TF_MVMShop:GetWeaponSlotName(weapon) end
             dmginfo:ScaleDamage(TF_MVMShop:GetDamageMultiplier(attacker, slot))
+            local dynAtk = attacker.TF_MVM_Dynamic or {}
+            if IsValid(target) and target:IsPlayer() then
+                local markDur = tonumber(dynAtk.MarkForDeathDuration) or 0
+                if markDur > 0 and target.AddPlayerState and target.RemovePlayerState then
+                    target:AddPlayerState(PLAYERSTATE_MARKED, true)
+                    timer.Create("TF_MVMShop_Mark_" .. target:EntIndex(), markDur, 1, function()
+                        if IsValid(target) then
+                            target:RemovePlayerState(PLAYERSTATE_MARKED, true)
+                        end
+                    end)
+                end
+                local snareScale = tonumber(dynAtk.SnareScale) or 0
+                if snareScale < 0 and target.AddPlayerState and target.RemovePlayerState then
+                    local dur = math.max(0.2, math.min(3, math.abs(snareScale) * 2))
+                    target:AddPlayerState(PLAYERSTATE_STUNNED, true)
+                    timer.Create("TF_MVMShop_Snare_" .. target:EntIndex(), dur, 1, function()
+                        if IsValid(target) then
+                            target:RemovePlayerState(PLAYERSTATE_STUNNED, true)
+                        end
+                    end)
+                end
+            end
         end
 
         if IsValid(target) and target:IsPlayer() and TF_MVMShop:IsEnabledFor(target) then
@@ -1843,6 +2318,8 @@ if SERVER then
                 dmginfo:ScaleDamage(0)
                 return
             end
+            local dyn = target.TF_MVM_Dynamic or {}
+            dmginfo:SetDamageForce(dmginfo:GetDamageForce() * (tonumber(dyn.DamageForceMult) or 1))
 
             local resistAll = TF_MVMShop:GetLevel(target, "resist_all")
             if resistAll > 0 then
@@ -1853,14 +2330,20 @@ if SERVER then
             if bit.band(damageType, DMG_BULLET) ~= 0 then
                 local v = TF_MVMShop:GetLevel(target, "resist_bullet")
                 if v > 0 then dmginfo:ScaleDamage(math.max(0.15, 1 - (0.1 * v))) end
+                dmginfo:ScaleDamage(tonumber(dyn.ResistBulletMult) or 1)
             end
             if bit.band(damageType, DMG_BLAST) ~= 0 then
                 local v = TF_MVMShop:GetLevel(target, "resist_blast")
                 if v > 0 then dmginfo:ScaleDamage(math.max(0.15, 1 - (0.1 * v))) end
+                dmginfo:ScaleDamage(tonumber(dyn.ResistBlastMult) or 1)
             end
             if bit.band(damageType, DMG_BURN) ~= 0 then
                 local v = TF_MVMShop:GetLevel(target, "resist_fire")
                 if v > 0 then dmginfo:ScaleDamage(math.max(0.15, 1 - (0.12 * v))) end
+                dmginfo:ScaleDamage(tonumber(dyn.ResistFireMult) or 1)
+            end
+            if dmginfo:IsDamageType(DMG_CRUSH) or dmginfo:IsDamageType(DMG_CLUB) or dmginfo:IsDamageType(DMG_SLASH) then
+                dmginfo:ScaleDamage(tonumber(dyn.ResistCritMult) or 1)
             end
         end
     end)
@@ -1892,6 +2375,16 @@ if SERVER then
         if healAmount > 0 then
             attacker:SetHealth(math.min(attacker:Health() + healAmount, attacker:GetMaxHealth()))
         end
+
+        local dyn = attacker.TF_MVM_Dynamic or {}
+        local genericHeal = tonumber(dyn.HealOnKill) or 0
+        if genericHeal > 0 then
+            attacker:SetHealth(math.min(attacker:Health() + math.floor(genericHeal), attacker:GetMaxHealth()))
+        end
+        local critDur = tonumber(dyn.CritOnKillDuration) or 0
+        if critDur > 0 and GAMEMODE and GAMEMODE.AddCritBoostTime then
+            GAMEMODE:AddCritBoostTime(attacker, critDur)
+        end
     end)
 
     hook.Add("Think", "TF_MVMShop_AutoHealRegen", function()
@@ -1903,15 +2396,26 @@ if SERVER then
             if not TF_MVMShop:IsEnabledFor(ply) then continue end
             if not ply:Alive() then continue end
 
-            local level = TF_MVMShop:GetLevel(ply, "autoheal")
-            if level <= 0 then continue end
-
             local hp = ply:Health()
             local maxHp = ply:GetMaxHealth()
-            if hp >= maxHp then continue end
-
+            local level = TF_MVMShop:GetLevel(ply, "autoheal")
             local healPerSec = 2 * level
-            ply:SetHealth(math.min(maxHp, hp + healPerSec))
+            local dyn = ply.TF_MVM_Dynamic or {}
+            healPerSec = healPerSec + math.max(0, tonumber(dyn.HealthRegenPerSec) or 0)
+            if healPerSec > 0 and hp < maxHp then
+                ply:SetHealth(math.min(maxHp, hp + healPerSec))
+            end
+
+            local metalRegen = math.max(0, tonumber(dyn.MetalRegenPerSec) or 0)
+            if metalRegen > 0 and ply.AmmoMax and ply.AmmoMax[TF_METAL] then
+                local metal = math.max(0, ply:GetAmmoCount(TF_METAL))
+                local newMetal = math.min(tonumber(ply.AmmoMax[TF_METAL]) or metal, metal + metalRegen)
+                if ply.SetAmmoCount then
+                    ply:SetAmmoCount(newMetal, TF_METAL)
+                else
+                    ply:SetAmmo(newMetal, TF_METAL)
+                end
+            end
         end
     end)
 

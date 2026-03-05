@@ -1,5 +1,20 @@
 ENT.Base = "base_brush"
 ENT.Type = "brush"
+local DEPLOY_ALERT_COOLDOWN = 5.0
+TF_MVM_NextDeployingAlertAt = TF_MVM_NextDeployingAlertAt or 0
+
+local function PlayDeployingAlertThrottled()
+	local now = CurTime()
+	if now < (tonumber(TF_MVM_NextDeployingAlertAt) or 0) then
+		return
+	end
+	TF_MVM_NextDeployingAlertAt = now + DEPLOY_ALERT_COOLDOWN
+	for _, player in ipairs(player.GetAll()) do
+		if IsValid(player) then
+			player:SendLua([[LocalPlayer():EmitSound("Announcer.MVM_Bomb_Alert_Deploying")]])
+		end
+	end
+end
 
 local function TriggerBombDeployOutcome(carrier, captureZone, bombEnt)
 	hook.Run("TF_MVM_BombDeployed", carrier, captureZone, bombEnt)
@@ -134,9 +149,7 @@ function ENT:StartTouch(ply)
 			v:EmitSound("mvm/mvm_deploy_small.wav", 95, 100)
 		end
 
-		for _, player in ipairs(player.GetAll()) do
-			player:SendLua([[LocalPlayer():EmitSound("Announcer.MVM_Bomb_Alert_Deploying")]])
-		end
+		PlayDeployingAlertThrottled()
 
 		carrier:SetNWBool("Taunting", true)
 		carrier:Freeze(true)

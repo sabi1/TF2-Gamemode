@@ -16,6 +16,7 @@ surface.CreateFont("HudFontMediumSmallSecondary", {font = "TF2 Secondary", size 
 
 surface.CreateFont("HudFontSmallestBold", {font = "TF2 Build", size = 11*Scale})
 surface.CreateFont("HudFontSmallBold", {font = "TF2 Build", size = 14*Scale})
+surface.CreateFont("HudFontSmallishBold", {font = "TF2 Build", size = 16*Scale})
 surface.CreateFont("HudFontMediumBold", {font = "TF2 Build", size = 24*Scale})
 surface.CreateFont("HudFontGiantBold", {font = "TF2 Build", size = 44*Scale})
 

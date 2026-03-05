@@ -7,7 +7,6 @@ local cv_ammo_seek_range = CreateConVar("tf_bot_ammo_seek_range", "2600", {FCVAR
 local cv_low_ammo_ratio = CreateConVar("tf_bot_low_ammo_ratio", "0.15", {FCVAR_ARCHIVE, FCVAR_NOTIFY})
 local cv_low_ammo_flee_dist = CreateConVar("tf_bot_low_ammo_flee_dist", "700", {FCVAR_ARCHIVE, FCVAR_NOTIFY})
 local cv_red_respect_blu_spawn = CreateConVar("tf_bot_red_respect_blu_spawn", "1", {FCVAR_ARCHIVE, FCVAR_NOTIFY}, "RED bots do not fire at BLU still inside BLU spawn.")
-local cv_allow_carrier_fight = CreateConVar("tf_mvm_bot_allow_flag_carrier_to_fight", "1", {FCVAR_ARCHIVE, FCVAR_NOTIFY})
 
 local function wepValid(wep)
 	return IsValid(wep) or (istable(wep) and wep.__isFakeWeapon == true)
@@ -212,14 +211,7 @@ function M:Update(bot, cmd, state)
 		return
 	end
 	if mvm and mvm:IsCombatSuppressed(state) then
-		local mvmState = state.mvm or {}
-		local mode = tostring(mvmState.mode or "")
-		local carrierCanFight = mvmState.isCarrier == true
-			and mode == "mvm_deliver_bomb"
-			and cv_allow_carrier_fight:GetBool()
-		if not carrierCanFight then
-			return
-		end
+		return
 	end
 	local threat = state.vision.currentThreat
 	if not IsValid(threat) then return end

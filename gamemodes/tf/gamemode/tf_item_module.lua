@@ -98,6 +98,13 @@ function ITEM:GetAttribute(class)
 	end
 end
 
+function ITEM:GetAttributeValue(class, fallback)
+	local att = self:GetAttribute(class)
+	if not att then return fallback end
+	if att.value == nil then return fallback end
+	return att.value
+end
+
 function ITEM:IsAttributeEnabled(class)
 	local att = self:GetAttribute(class)
 	return att and att.value~=0
@@ -105,6 +112,149 @@ end
 
 function ITEM:GetVisuals()
 	return self:GetItemData().visuals or {}
+end
+
+function ITEM:GetPaintkitID()
+	return tonumber(self:GetAttributeValue("paintkit_proto_def_index", self:GetItemData().static_attrs and self:GetItemData().static_attrs.paintkit_proto_def_index))
+end
+
+function ITEM:GetTextureWear()
+	local wear = self:GetAttributeValue("set_item_texture_wear", nil)
+	if wear == nil then
+		wear = self:GetAttributeValue("texture_wear_default", self:GetItemData().static_attrs and self:GetItemData().static_attrs.texture_wear_default)
+	end
+	return tonumber(wear)
+end
+
+function ITEM:IsFestivized()
+	return (tonumber(self:GetAttributeValue("is_festivized", 0)) or 0) > 0
+end
+
+local WEAR_SUFFIXES = {
+	"_factory_new",
+	"_minimal_wear",
+	"_field_tested",
+	"_feild_tested",
+	"_well_worn",
+	"_battle_scarred",
+}
+
+local function GetPaintkitClassFromItem(item)
+	if not istable(item) then return nil end
+	local prefab = item.prefab
+	if isstring(prefab) and prefab ~= "" then
+		local paintkitPrefab = string.match(prefab, "(paintkit_weapon_[%w_]+)")
+		if paintkitPrefab then
+			if tf_items.PrefabsByName and tf_items.PrefabsByName[paintkitPrefab] then
+				local map = tf_items.PrefabsByName[paintkitPrefab].xifier_class_remap
+				if isstring(map) and map ~= "" then
+					return map
+				end
+			end
+			local fromPrefab = string.gsub(paintkitPrefab, "^paintkit_weapon_", "")
+			if fromPrefab == "shotgun" then
+				return "weapon_shotgun"
+			end
+			return fromPrefab
+		end
+	end
+
+	if isstring(item.item_class) and item.item_class ~= "" then
+		local cls = string.gsub(item.item_class, "^tf_weapon_", "")
+		if cls == "shotgun_multiclass" then
+			return "weapon_shotgun"
+		end
+		return cls
+	end
+end
+
+local function BuildPaintkitVisualLookup()
+	local byProto = {}
+	for _, item in pairs(tf_items.ItemsByID or {}) do
+		if istable(item) and istable(item.static_attrs) then
+			local proto = tonumber(item.static_attrs.paintkit_proto_def_index)
+			if proto then
+				local paintkitClass = GetPaintkitClassFromItem(item)
+				if paintkitClass then
+					byProto[proto] = byProto[proto] or {}
+					local visuals = item.visuals or {}
+					local current = byProto[proto][paintkitClass] or {}
+
+					if isstring(visuals.material_override) and visuals.material_override ~= "" then
+						current.material_override = visuals.material_override
+					end
+					if isstring(visuals.image_inventory) and visuals.image_inventory ~= "" then
+						current.image_inventory = visuals.image_inventory
+					elseif isstring(item.image_inventory) and item.image_inventory ~= "" then
+						current.image_inventory = item.image_inventory
+					end
+					if istable(visuals.attached_models_festive) then
+						current.attached_models_festive = visuals.attached_models_festive
+					end
+
+					byProto[proto][paintkitClass] = current
+				end
+			end
+		end
+	end
+	return byProto
+end
+
+local PaintkitVisualLookup = nil
+
+function ITEM:GetResolvedPaintkitVisuals()
+	local paintkitID = self:GetPaintkitID()
+	if not paintkitID then return nil end
+	if not PaintkitVisualLookup then
+		PaintkitVisualLookup = BuildPaintkitVisualLookup()
+	end
+
+	local defs = PaintkitVisualLookup[paintkitID]
+	if not defs then return nil end
+
+	local itemClass = GetPaintkitClassFromItem(self:GetItemData())
+	if itemClass and defs[itemClass] then
+		return defs[itemClass]
+	end
+
+	if isstring(self:GetClass()) then
+		local classFromSWEP = string.gsub(self:GetClass(), "^tf_weapon_", "")
+		if defs[classFromSWEP] then
+			return defs[classFromSWEP]
+		end
+	end
+
+	for _, def in pairs(defs) do
+		return def
+	end
+end
+
+local function ResolvePaintkitMaterialPath(baseMaterial, owner, wearValue)
+	if not isstring(baseMaterial) or baseMaterial == "" then return nil end
+	if string.find(baseMaterial, "_factory_new", 1, true)
+		or string.find(baseMaterial, "_minimal_wear", 1, true)
+		or string.find(baseMaterial, "_field_tested", 1, true)
+		or string.find(baseMaterial, "_feild_tested", 1, true)
+		or string.find(baseMaterial, "_well_worn", 1, true)
+		or string.find(baseMaterial, "_battle_scarred", 1, true) then
+		return baseMaterial
+	end
+
+	local teamSuffix = "_red"
+	if IsValid(owner) and owner.EntityTeam and (owner:EntityTeam() == TEAM_BLU or owner:EntityTeam() == TF_TEAM_PVE_INVADERS) then
+		teamSuffix = "_blue"
+	end
+
+	local wearSuffix = nil
+	if wearValue ~= nil then
+		local wearIndex = math.Clamp(math.floor((tonumber(wearValue) or 0) * 5), 0, 4) + 1
+		wearSuffix = WEAR_SUFFIXES[wearIndex]
+	end
+
+	if wearSuffix then
+		return baseMaterial .. wearSuffix .. teamSuffix
+	end
+	return baseMaterial .. teamSuffix
 end
 
 function ITEM:GetKillIconName()
@@ -234,6 +384,33 @@ function ITEM:InitVisuals(owner, visuals)
 	if not self:GetItemData() then return end
 	-- Skin and material
 	self.WeaponSkin = visuals.skin
+
+	-- Some weapon variants only expose team skins through visuals.styles.
+	local styles = visuals.styles
+	if istable(styles) then
+		local style = styles[0] or styles["0"]
+		if not istable(style) then
+			for _, candidate in pairs(styles) do
+				if istable(candidate) then
+					style = candidate
+					break
+				end
+			end
+		end
+
+		if istable(style) then
+			local team = IsValid(owner) and owner.EntityTeam and owner:EntityTeam() or nil
+			if team == TEAM_BLU or team == TF_TEAM_PVE_INVADERS then
+				self.WeaponSkin = style.skin_blu or style.skin_blue or style.skin or self.WeaponSkin
+			else
+				self.WeaponSkin = style.skin_red or style.skin or self.WeaponSkin
+			end
+			if isstring(style.image_inventory) and style.image_inventory ~= "" then
+				self.RuntimeImageInventory = style.image_inventory
+			end
+		end
+	end
+
 	if not self.WeaponSkin then
 		if self.HasTeamColouredVModel or not self:IsWeapon() then
 			self.WeaponSkin = (((owner:EntityTeam() == TEAM_BLU or owner:EntityTeam() == TF_TEAM_PVE_INVADERS) and 1) or 0)
@@ -241,9 +418,25 @@ function ITEM:InitVisuals(owner, visuals)
 			self.WeaponSkin = 0
 		end
 	end
-	
-	if visuals.material_override then
-		self.MaterialOverride = string.match(visuals.material_override, "(.-)%.vmt") or visuals.material_override
+
+	local paintkitVisuals = self:GetResolvedPaintkitVisuals()
+	local materialSource = visuals.material_override
+	if (not isstring(materialSource) or materialSource == "") and paintkitVisuals and isstring(paintkitVisuals.material_override) then
+		materialSource = paintkitVisuals.material_override
+	end
+	if isstring(materialSource) and materialSource ~= "" then
+		local materialBase = string.match(materialSource, "(.-)%.vmt") or materialSource
+		local resolved = ResolvePaintkitMaterialPath(materialBase, owner, self:GetTextureWear()) or materialBase
+		self.MaterialOverride = resolved
+		self.WeaponMaterial = resolved
+		self.CustomMaterialOverride2 = resolved
+		if CLIENT then
+			self.CustomMaterialOverride = Material(resolved)
+		end
+	end
+
+	if (not self.RuntimeImageInventory or self.RuntimeImageInventory == "") and paintkitVisuals and isstring(paintkitVisuals.image_inventory) and paintkitVisuals.image_inventory ~= "" then
+		self.RuntimeImageInventory = paintkitVisuals.image_inventory
 	end
 	
 	if self:IsWeapon() then
@@ -272,6 +465,27 @@ function ITEM:InitVisuals(owner, visuals)
 			self.AttachedViewModel = visuals.attached_model_view.model
 		elseif visuals.attached_model and visuals.attached_model.model then
 			self.AttachedViewModel = visuals.attached_model.model
+		end
+
+		-- Festivized weapons use a dedicated attached model payload in schema.
+		local festiveModels = visuals.attached_models_festive
+		if (not istable(festiveModels)) and paintkitVisuals and istable(paintkitVisuals.attached_models_festive) then
+			festiveModels = paintkitVisuals.attached_models_festive
+		end
+		if self:IsFestivized() and istable(festiveModels) then
+			local festive = festiveModels[0] or festiveModels["0"]
+			if not istable(festive) then
+				for _, candidate in pairs(festiveModels) do
+					if istable(candidate) then
+						festive = candidate
+						break
+					end
+				end
+			end
+			if istable(festive) and isstring(festive.model) and festive.model ~= "" then
+				self.AttachedWorldModel = festive.model
+				self.AttachedViewModel = festive.model
+			end
 		end
 	end
 	
@@ -327,6 +541,54 @@ function ITEM:InitVisuals(owner, visuals)
 				self.ActivityTranslate[debug.getregistry()[act]] = debug.getregistry()[rep]
 			end
 		end
+	end
+end
+
+if CLIENT then
+	local WEAR_SUFFIXES = {
+		"_factory_new",
+		"_minimal_wear",
+		"_field_tested",
+		"_feild_tested",
+		"_well_worn",
+		"_battle_scarred",
+	}
+
+	local function MaterialPathExists(path)
+		if not isstring(path) or path == "" then return false end
+		local mat = Material(path)
+		return mat and not mat:IsError()
+	end
+
+	function ITEM:GetResolvedInventoryImage()
+		local item = self:GetItemData() or {}
+		local base = self.RuntimeImageInventory or item.image_inventory
+		if not isstring(base) or base == "" then return nil end
+
+		local candidates = { base }
+
+		if self:IsFestivized() then
+			candidates[#candidates + 1] = base .. "_xmas"
+			candidates[#candidates + 1] = base .. "_festive"
+			candidates[#candidates + 1] = base .. "_festivized"
+		end
+
+		local wear = self:GetTextureWear()
+		if wear ~= nil then
+			local wearIndex = math.Clamp(math.floor((wear * 5)), 0, 4) + 1
+			local wearSuffix = WEAR_SUFFIXES[wearIndex]
+			if wearSuffix then
+				candidates[#candidates + 1] = base .. wearSuffix
+			end
+		end
+
+		for _, candidate in ipairs(candidates) do
+			if MaterialPathExists(candidate) then
+				return candidate
+			end
+		end
+
+		return base
 	end
 end
 

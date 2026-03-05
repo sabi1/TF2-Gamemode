@@ -9,12 +9,48 @@ local mat_MotionBlur	= Material("pp/motionblur")
 local tex_MotionBlur	= render.GetMoBlurTex0()
 local mat_white = Material("models/debug/debugwhite")
 local pp_motionblur = surface.GetTextureID("pp/motionblur")
+
+local function SetupTF2Lighting(ent, spotlight)
+	if TF2LightwarpApplyModelLighting then
+		TF2LightwarpApplyModelLighting(ent:GetPos() + Vector(0, 0, 68))
+		if spotlight then
+			render.SetModelLighting(BOX_TOP, 1, 1, 1)
+		end
+		return
+	end
+
+	render.SetLightingOrigin(ent:GetPos() + Vector(0, 0, 68))
+	render.ResetModelLighting(0.07, 0.07, 0.07)
+
+	-- TF2-like key/fill setup so $lightwarptexture produces readable toon ramps.
+	render.SetModelLighting(BOX_TOP, 0.78, 0.76, 0.72)
+	render.SetModelLighting(BOX_FRONT, 0.60, 0.58, 0.54)
+	render.SetModelLighting(BOX_RIGHT, 0.24, 0.25, 0.28)
+	render.SetModelLighting(BOX_LEFT, 0.15, 0.13, 0.11)
+	render.SetModelLighting(BOX_BACK, 0.06, 0.06, 0.06)
+	render.SetModelLighting(BOX_BOTTOM, 0.02, 0.02, 0.02)
+
+	if spotlight then
+		render.SetModelLighting(BOX_TOP, 1, 1, 1)
+	end
+end
+
+local function SetupLegacyLighting(ent, spotlight)
+	render.SetLightingOrigin(ent:GetPos() + Vector(0, 0, 68))
+	render.ResetModelLighting(0.5, 0.5, 0.5)
+
+	if spotlight then
+		render.SetModelLighting(BOX_TOP, 1, 1, 1)
+	end
+end
+
 function PANEL:Init()
 	self:SetVisible(true)
 	self.Entities = {}
 	
 	self.LastPaint = 0
 	self.FOV = 70
+	self.UseTF2Lightwarp = true
 end
 
 function PANEL:AddModel(id, mdl, keys)
@@ -79,17 +115,12 @@ function PANEL:Paint()
 	end
 	
 	cam.Start3D(Vector(0,0,0), Angle(0,0,0), fov, x, y, w, h)
-	cam.IgnoreZ(true)
 	
 	render.SuppressEngineLighting(true)
-	render.SetLightingOrigin(self.Entities[1]:GetPos() + Vector(0,0,68))
-	
-	render.ResetModelLighting(0.5, 0.5, 0.5)
-	--render.SetColorModulation( self.colColor.r/255, self.colColor.g/255, self.colColor.b/255 )
-	--render.SetBlend( self.colColor.a/255 )
-	
-	if self.spotlight then
-		render.SetModelLighting(BOX_TOP, 1, 1, 1)
+	if self.UseTF2Lightwarp and IsValid(self.Entities[1]) then
+		SetupTF2Lighting(self.Entities[1], self.spotlight)
+	elseif IsValid(self.Entities[1]) then
+		SetupLegacyLighting(self.Entities[1], self.spotlight)
 	end
 	
 	for _,v in pairs(self.Entities) do
@@ -97,7 +128,6 @@ function PANEL:Paint()
 	end
 	
 	render.SuppressEngineLighting(false)
-	cam.IgnoreZ(false)
 	cam.End3D()
 	
 	self.LastPaint = RealTime()

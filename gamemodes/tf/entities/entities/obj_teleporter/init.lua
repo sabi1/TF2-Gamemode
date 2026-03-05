@@ -200,7 +200,7 @@ function ENT:AddMetal(owner, max)
 end
 
 function ENT:Teleport(pl)
-	if not self:IsEntrance() then return end
+	if not self:IsEntrance() and not self.TF_MVM_BidirectionalTeleport then return end
 	local exit = self:GetLinkedTeleporter()
 	if not IsValid(exit) then return end
 	

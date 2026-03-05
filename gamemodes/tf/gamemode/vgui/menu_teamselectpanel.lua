@@ -45,15 +45,21 @@ local function createTeamSceneModelPanel(parent, modelPath, zpos)
 
 		cam.Start3D(self.vCamPos, ang, self.fFOV, x, y, w, h, 5, self.FarZ)
 		render.SuppressEngineLighting(true)
-		render.SetLightingOrigin(self.Entity:GetPos())
-		render.ResetModelLighting(self.colAmbientLight.r / 255, self.colAmbientLight.g / 255, self.colAmbientLight.b / 255)
+		if TF2LightwarpApplyModelLighting then
+			TF2LightwarpApplyModelLighting(self.Entity:GetPos() + Vector(0, 0, 68))
+		else
+			render.SetLightingOrigin(self.Entity:GetPos())
+			render.ResetModelLighting(self.colAmbientLight.r / 255, self.colAmbientLight.g / 255, self.colAmbientLight.b / 255)
+		end
 		render.SetColorModulation(self.colColor.r / 255, self.colColor.g / 255, self.colColor.b / 255)
 		render.SetBlend((self:GetAlpha() / 255) * (self.colColor.a / 255))
 
-		for i = 0, 6 do
-			local col = self.DirectionalLight[i]
-			if col then
-				render.SetModelLighting(i, col.r / 255, col.g / 255, col.b / 255)
+		if not TF2LightwarpApplyModelLighting then
+			for i = 0, 6 do
+				local col = self.DirectionalLight[i]
+				if col then
+					render.SetModelLighting(i, col.r / 255, col.g / 255, col.b / 255)
+				end
 			end
 		end
 

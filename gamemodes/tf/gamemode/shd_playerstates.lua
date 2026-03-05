@@ -2311,6 +2311,26 @@ if SERVER then
 	hook.Add("PlayerSwitchWeapon", "TFCondWeaponRestrictions", function(pl, oldWep, newWep)
 		if not IsValid(pl) or not pl.InCond or not IsValid(newWep) then return end
 
+		if isfunction(newWep.HasUsableAmmoForSelection) and not newWep:HasUsableAmmoForSelection() then
+			local fallbackClass = nil
+			if IsValid(oldWep) and isfunction(oldWep.HasUsableAmmoForSelection) and oldWep:HasUsableAmmoForSelection() then
+				fallbackClass = oldWep:GetClass()
+			elseif isfunction(newWep.FindNextWeaponWithAmmo) then
+				local nextWep = newWep:FindNextWeaponWithAmmo()
+				if IsValid(nextWep) then
+					fallbackClass = nextWep:GetClass()
+				end
+			end
+			if fallbackClass then
+				timer.Simple(0, function()
+					if IsValid(pl) and pl:Alive() then
+						pl:SelectWeapon(fallbackClass)
+					end
+				end)
+			end
+			return true
+		end
+
 		if pl:InCond(TF_COND_MELEE_ONLY) and not is_melee_weapon(newWep) then
 			force_select_melee(pl)
 			return true

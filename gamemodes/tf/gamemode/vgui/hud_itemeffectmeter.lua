@@ -224,6 +224,26 @@ function METER:IsEnabledForPlayer(pl, active)
 	return evalHudFlag(self.Item, "HudItemEffectMeter", active)
 end
 
+local function getMeterLabelText(item)
+	if not IsValid(item) then return "" end
+
+	-- TF2 quirk: Mutated Milk meter title is shown as "Jar".
+	local className = string.lower(tostring(item.GetClass and item:GetClass() or ""))
+	if className == "tf_weapon_jar_milk" and item.GetItemData then
+		local itemData = item:GetItemData()
+		local modelPlayer = string.lower(tostring(itemData and itemData.model_player or ""))
+		if string.find(modelPlayer, "breadmonster_milk", 1, true) then
+			return "Jar"
+		end
+	end
+
+	local meterName = item.GetHUDMeterName and item:GetHUDMeterName() or ""
+	if isstring(meterName) and tf_lang and tf_lang.GetRaw then
+		return tf_lang.GetRaw(meterName) or meterName
+	end
+	return meterName or ""
+end
+
 function METER:GetSortData(active)
 	local item = self.Item
 	return {
@@ -270,13 +290,7 @@ function METER:Paint(w, h)
 		res.bgH * scale
 	)
 
-	local meterName = self.Item:GetHUDMeterName()
-	local localized = meterName
-	if isstring(meterName) and tf_lang and tf_lang.GetRaw then
-		localized = tf_lang.GetRaw(meterName) or meterName
-	end
-
-	MeterLabel.text = localized or ""
+	MeterLabel.text = getMeterLabelText(self.Item)
 	MeterLabel.pos = {
 		res.labelX * scale,
 		res.labelY * scale,

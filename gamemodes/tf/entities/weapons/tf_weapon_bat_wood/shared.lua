@@ -239,6 +239,9 @@ function SWEP:ProcessRechargeTimer()
 	else
 		self.Owner:GiveAmmo(1, self.Primary.Ammo)
 	end
+	if self:Ammo1() >= maxcarry then
+		self.Owner:EmitSoundEx("Recon.Ping", 75)
+	end
 	self:SetSandmanRechargeEndTime(nil)
 end
 

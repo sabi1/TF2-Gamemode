@@ -25,13 +25,9 @@ local tex_bomb_lvl2_dis = surface.GetTextureID("hud/hud_mvm_bomb_upgrade_2_disab
 local tex_bomb_lvl3 = surface.GetTextureID("hud/hud_mvm_bomb_upgrade_3")
 local tex_bomb_lvl3_dis = surface.GetTextureID("hud/hud_mvm_bomb_upgrade_3_disabled")
 local tex_ready_card_bg = surface.GetTextureID("hud/tournament_panel_red")
-local tex_ready_check = surface.GetTextureID("vgui/hud/checkmark")
-if not tex_ready_check or tex_ready_check <= 0 then
-	tex_ready_check = surface.GetTextureID("hud/checkmark")
-end
+local tex_ready_check = surface.GetTextureID("hud/checkmark")
 local tex_ready_square_bg = surface.GetTextureID("hud/tournament_panel_brown")
 local cachedReadyNameFont = nil
-local cachedReadyPromptFont = nil
 
 surface.CreateFont("TF_MVM_ReadyNameFallback", {
 	font = "Tahoma",
@@ -69,72 +65,12 @@ local function GetReadyNameFont()
 	return cachedReadyNameFont
 end
 
-local function GetReadyPromptFont()
-	if cachedReadyPromptFont then
-		return cachedReadyPromptFont
-	end
-	local preferred = MvMRes and MvMRes.readyPromptFont or nil
-	if IsUsableFont(preferred) then
-		cachedReadyPromptFont = preferred
-	elseif IsUsableFont("HudFontSmallBold") then
-		cachedReadyPromptFont = "HudFontSmallBold"
-	elseif IsUsableFont("HudFontSmallestBold") then
-		cachedReadyPromptFont = "HudFontSmallestBold"
-	elseif IsUsableFont("DermaDefaultBold") then
-		cachedReadyPromptFont = "DermaDefaultBold"
-	else
-		cachedReadyPromptFont = "TF_MVM_ReadyNameFallback"
-	end
-	return cachedReadyPromptFont
-end
-
-local function DrawRoundedTexturedRect(texId, x, y, w, h, corner)
-	if not texId or texId <= 0 then return end
-	corner = math.floor(tonumber(corner) or 0)
-	if corner <= 0 then
-		surface.SetTexture(texId)
-		surface.DrawTexturedRect(x, y, w, h)
-		return
-	end
-
-	render.ClearStencil()
-	render.SetStencilEnable(true)
-	render.SetStencilWriteMask(0xFF)
-	render.SetStencilTestMask(0xFF)
-	render.SetStencilReferenceValue(1)
-	render.SetStencilCompareFunction(STENCIL_ALWAYS)
-	render.SetStencilPassOperation(STENCIL_REPLACE)
-	render.SetStencilFailOperation(STENCIL_KEEP)
-	render.SetStencilZFailOperation(STENCIL_KEEP)
-
-	draw.RoundedBox(corner, x, y, w, h, Color(255, 255, 255, 255))
-
-	render.SetStencilCompareFunction(STENCIL_EQUAL)
-	render.SetStencilPassOperation(STENCIL_KEEP)
-	surface.SetTexture(texId)
-	surface.DrawTexturedRect(x, y, w, h)
-	render.SetStencilEnable(false)
-end
-
-local function DrawRoundedBackplate(x, y, w, h, corner, color)
-	corner = math.floor(tonumber(corner) or 0)
-	if corner <= 0 then
-		surface.SetDrawColor(color.r, color.g, color.b, color.a)
-		surface.DrawRect(x, y, w, h)
-		return
-	end
-	draw.RoundedBox(corner, x, y, w, h, color)
-end
-
 local MvMRes = {
 	readySlot = 20,
 	readyGap = 3,
 	readyPad = 4,
 	readyPromptY = 3,
 	readyOffset = 14,
-	readyCardsY = nil,
-	readyPromptAbsY = nil,
-	readyPromptFont = "HudFontSmallishBold",
 	setupPanelW = 180,
 	setupPanelH = 65,
 	setupLabelX = 8,
@@ -244,8 +180,6 @@ do
 	local setupNotReady = FindByFieldNames(tournamentSetupTree, "TournamentNotReadyButton")
 	local setupReady = FindByFieldNames(tournamentSetupTree, "TournamentReadyButton")
 	local readyPanelKV = FindByKeys(tournamentTree, "playerpanels_kv")
-	local tournamentPanel = FindByFieldNames(tournamentTree, "HudTournament")
-	local tournamentInstructionsLabel = FindByFieldNames(tournamentTree, "TournamentInstructionsLabel")
 
 	local function GetNode(node, key)
 		if not istable(node) then return nil end
@@ -400,36 +334,62 @@ do
 				MvMRes.readyCheckY = GetMvMNumber(readyimage, "ypos", MvMRes.readyCheckY)
 				MvMRes.readyCheckW = GetMvMNumber(readyimage, "wide", MvMRes.readyCheckW)
 				MvMRes.readyCheckH = GetMvMNumber(readyimage, "tall", MvMRes.readyCheckH)
-				local checkImage = GetMvMString(readyimage, "image", "vgui/hud/checkmark")
-				tex_ready_check = surface.GetTextureID(TF2Res.NormalizeImagePath(checkImage) or "vgui/hud/checkmark")
-				if not tex_ready_check or tex_ready_check <= 0 then
-					tex_ready_check = surface.GetTextureID("hud/checkmark")
-				end
-			end
-		end
-		if tournamentPanel then
-			-- TF2 puts MvM player cards on team2_player_base_y in HudTournament if_mvm.
-			local cardsY = GetMvMNumber(tournamentPanel, "team2_player_base_y", nil)
-			if cardsY == nil then
-				cardsY = GetMvMNumber(tournamentPanel, "team1_player_base_y", nil)
-			end
-			if isnumber(cardsY) then
-				MvMRes.readyCardsY = cardsY
-			end
-		end
-		if tournamentInstructionsLabel then
-			local promptY = GetMvMNumber(tournamentInstructionsLabel, "ypos", nil)
-			if isnumber(promptY) then
-				MvMRes.readyPromptAbsY = promptY
-			end
-			local promptFont = GetMvMString(tournamentInstructionsLabel, "font", nil)
-			if isstring(promptFont) and promptFont ~= "" and IsUsableFont(promptFont) then
-				MvMRes.readyPromptFont = promptFont
-				cachedReadyPromptFont = nil
+				local checkImage = GetMvMString(readyimage, "image", "hud/checkmark")
+				tex_ready_check = surface.GetTextureID(TF2Res.NormalizeImagePath(checkImage) or "hud/checkmark")
 			end
 		end
 	end
 end
+
+local ICON_PATH = {
+	["scout"] = "hud/leaderboard_class_scout",
+	["scout_giant_fast"] = "hud/leaderboard_class_scout_giant_fast",
+	["scout_giant_stun"] = "hud/leaderboard_class_scout_giant_stun",
+	["scout_stun_giant"] = "hud/leaderboard_class_scout_stun_giant",
+	["scout_bonk_giant"] = "hud/leaderboard_class_scout_bonk_giant",
+	["scout_stun"] = "hud/leaderboard_class_scout_stun",
+	["scout_bonk"] = "hud/leaderboard_class_scout_bonk",
+	["scout_fan"] = "hud/leaderboard_class_scout_fan",
+	["scout_shortstop"] = "hud/leaderboard_class_scout_shortstop",
+	["soldier"] = "hud/leaderboard_class_soldier",
+	["soldier_spammer"] = "hud/leaderboard_class_soldier_spammer",
+	["soldier_burstfire"] = "hud/leaderboard_class_soldier_burstfire",
+	["soldier_libertylauncher_giant"] = "hud/leaderboard_class_soldier_libertylauncher_giant",
+	["soldier_conch_giant"] = "hud/leaderboard_class_soldier_conch_giant",
+	["soldier_barrage"] = "hud/leaderboard_class_soldier_barrage",
+	["soldier_crit"] = "hud/leaderboard_class_soldier_crit",
+	["soldier_blackbox"] = "hud/leaderboard_class_soldier_blackbox",
+	["pyro"] = "hud/leaderboard_class_pyro",
+	["pyro_flare"] = "hud/leaderboard_class_pyro_flare",
+	["pyro_flare_giant"] = "hud/leaderboard_class_pyro_flare_giant",
+	["demoman"] = "hud/leaderboard_class_demo",
+	["demo"] = "hud/leaderboard_class_demo",
+	["demoknight"] = "hud/leaderboard_class_demoknight",
+	["demoknight_giant"] = "hud/leaderboard_class_demoknight_giant",
+	["demoknight_samurai"] = "hud/leaderboard_class_demoknight_samurai",
+	["heavy"] = "hud/leaderboard_class_heavy",
+	["heavy_chief"] = "hud/leaderboard_class_heavy_chief",
+	["heavy_champ"] = "hud/leaderboard_class_heavy_champ",
+	["heavy_deflector"] = "hud/leaderboard_class_heavy_deflector",
+	["heavy_deflector_healonkill"] = "hud/leaderboard_class_heavy_deflector_healonkill",
+	["heavy_shotgun"] = "hud/leaderboard_class_heavy_shotgun",
+	["heavy_shotgun_giant"] = "hud/leaderboard_class_heavy_shotgun_giant",
+	["heavy_heater"] = "hud/leaderboard_class_heavy_heater",
+	["heavy_steelfist"] = "hud/leaderboard_class_heavy_steelfist",
+	["heavy_gru"] = "hud/leaderboard_class_heavy_gru",
+	["heavy_mittens"] = "hud/leaderboard_class_heavy_mittens",
+	["engineer"] = "hud/leaderboard_class_engineer",
+	["teleporter"] = "hud/leaderboard_class_teleporter",
+	["medic"] = "hud/leaderboard_class_medic",
+	["medic_uber"] = "hud/leaderboard_class_medic_uber",
+	["sniper"] = "hud/leaderboard_class_sniper",
+	["sniper_bow"] = "hud/leaderboard_class_sniper_bow",
+	["spy"] = "hud/leaderboard_class_spy",
+	["sentry_buster"] = "hud/leaderboard_class_sentry_buster",
+	["sentrybuster"] = "hud/leaderboard_class_sentry_buster",
+	["sentry_buster"] = "hud/leaderboard_class_sentry_buster",
+	["tank"] = "hud/leaderboard_class_tank",
+}
 
 local function IsMvMMap()
 	if TF_IsMvMMap then
@@ -461,33 +421,14 @@ local function IsReadyEligiblePlayer(ply)
 		and ply:Team() == TEAM_RED
 end
 
-local MaterialExistsForHUDIcon
-
-local PLAYER_CLASS_PORTRAIT = {
-	scout = "scout",
-	soldier = "soldier",
-	pyro = "pyro",
-	demoman = "demoman",
-	demo = "demoman",
-	heavy = "heavy",
-	heavyweapons = "heavy",
-	engineer = "engineer",
-	engi = "engineer",
-	medic = "medic",
-	sniper = "sniper",
-	spy = "spy",
-}
-
-local PLAYER_CLASS_LEADERBOARD_FALLBACK = {
+local PLAYER_CLASS_ICON = {
 	scout = "hud/leaderboard_class_scout",
 	soldier = "hud/leaderboard_class_soldier",
 	pyro = "hud/leaderboard_class_pyro",
 	demoman = "hud/leaderboard_class_demo",
 	demo = "hud/leaderboard_class_demo",
 	heavy = "hud/leaderboard_class_heavy",
-	heavyweapons = "hud/leaderboard_class_heavy",
 	engineer = "hud/leaderboard_class_engineer",
-	engi = "hud/leaderboard_class_engineer",
 	medic = "hud/leaderboard_class_medic",
 	sniper = "hud/leaderboard_class_sniper",
 	spy = "hud/leaderboard_class_spy",
@@ -495,32 +436,7 @@ local PLAYER_CLASS_LEADERBOARD_FALLBACK = {
 
 local function GetPlayerClassIcon(ply)
 	local cls = string.lower(tostring(IsValid(ply) and ply.GetPlayerClass and ply:GetPlayerClass() or "scout"))
-	local portraitClass = PLAYER_CLASS_PORTRAIT[cls] or "scout"
-	local hudClass = PLAYER_CLASS_PORTRAIT[cls] or "scout"
-	if hudClass == "demoman" then hudClass = "demo" end
-	if hudClass == "engineer" then hudClass = "engi" end
-	local teamSuffix = "red"
-	if IsValid(ply) and ply.Team and ply:Team() == TEAM_BLU then
-		teamSuffix = "blue"
-	end
-
-	local classPortraitPath = "vgui/class_portraits/" .. portraitClass
-	if MaterialExistsForHUDIcon(classPortraitPath) then
-		return surface.GetTextureID(classPortraitPath)
-	end
-
-	local classPortraitTeamPath = classPortraitPath .. "_" .. teamSuffix
-	if MaterialExistsForHUDIcon(classPortraitTeamPath) then
-		return surface.GetTextureID(classPortraitTeamPath)
-	end
-
-	local portraitPath = "hud/class_" .. hudClass .. teamSuffix
-	if MaterialExistsForHUDIcon(portraitPath) then
-		return surface.GetTextureID(portraitPath)
-	end
-
-	local fallback = PLAYER_CLASS_LEADERBOARD_FALLBACK[cls] or PLAYER_CLASS_LEADERBOARD_FALLBACK.scout
-	return surface.GetTextureID(fallback)
+	return surface.GetTextureID(PLAYER_CLASS_ICON[cls] or PLAYER_CLASS_ICON.scout)
 end
 
 local function GetWaveText()
@@ -598,7 +514,7 @@ local function NormalizeRobotIconPath(rawIcon)
 	return "hud/leaderboard_class_" .. icon
 end
 
-MaterialExistsForHUDIcon = function(path)
+local function MaterialExistsForHUDIcon(path)
 	if not isstring(path) or path == "" then return false end
 	local matPath = "materials/" .. TF2Res.NormalizeImagePath(path) .. ".vmt"
 	return file.Exists(matPath, "GAME")
@@ -614,25 +530,25 @@ local function GetRobotIconPath(rawClass, giant, rawIcon)
 	if cls == "" then cls = "scout" end
 	if cls == "sentrybuster" then cls = "sentry_buster" end
 	if cls == "heavyweapons" then cls = "heavy" end
-	if cls == "demoman" then cls = "demo" end
 
 	if giant then
-		local giantCandidates = {
-			"hud/leaderboard_class_" .. cls .. "_giant",
-			"hud/leaderboard_class_" .. cls .. " giant",
-		}
-		for _, candidate in ipairs(giantCandidates) do
-			if MaterialExistsForHUDIcon(candidate) then
-				return candidate
-			end
+		local giantKeySpace = cls .. " giant"
+		local giantKeyUnder = cls .. "_giant"
+		if ICON_PATH[giantKeySpace] and MaterialExistsForHUDIcon(ICON_PATH[giantKeySpace]) then return ICON_PATH[giantKeySpace] end
+		if ICON_PATH[giantKeyUnder] and MaterialExistsForHUDIcon(ICON_PATH[giantKeyUnder]) then return ICON_PATH[giantKeyUnder] end
+		if cls == "scout" then
+			if ICON_PATH["scout giant fast"] and MaterialExistsForHUDIcon(ICON_PATH["scout giant fast"]) then return ICON_PATH["scout giant fast"] end
+			if ICON_PATH["scout_giant_fast"] and MaterialExistsForHUDIcon(ICON_PATH["scout_giant_fast"]) then return ICON_PATH["scout_giant_fast"] end
 		end
 	end
 
-	local classCandidate = "hud/leaderboard_class_" .. cls
-	if MaterialExistsForHUDIcon(classCandidate) then
-		return classCandidate
+	if ICON_PATH[cls] and MaterialExistsForHUDIcon(ICON_PATH[cls]) then
+		return ICON_PATH[cls]
 	end
-
+	local baseIcon = "hud/leaderboard_class_" .. cls
+	if MaterialExistsForHUDIcon(baseIcon) then
+		return baseIcon
+	end
 	return "hud/leaderboard_class_scout"
 end
 
@@ -679,17 +595,17 @@ local function ClassifyWaveEntries(entries)
 			e.miniboss = (e.giant == true) or (e.tank == true) or (e.miniboss == true)
 
 			if e.class ~= "" then
-				if e.mission then
-					local includeMission = ((not IsWaveRunning()) and (e.class ~= "sentry_buster" and e.class ~= "sentrybuster" and e.class ~= "teleporter")) or (e.count > 0)
-					if includeMission then
-						mission[#mission + 1] = e
-						nNumEnemyTypes = nNumEnemyTypes + 1
-						nNumNonVerboseTypes = nNumNonVerboseTypes + 1
-					end
-				elseif e.support then
+				if e.support then
 					support[#support + 1] = e
 					nNumEnemyTypes = nNumEnemyTypes + 1
 					if e.support_limited and e.active then
+						nNumNonVerboseTypes = nNumNonVerboseTypes + 1
+					end
+				elseif e.mission then
+					local includeMission = ((not IsWaveRunning()) and (e.class ~= "sentry_buster" and e.class ~= "teleporter")) or (e.count > 0)
+					if includeMission then
+						mission[#mission + 1] = e
+						nNumEnemyTypes = nNumEnemyTypes + 1
 						nNumNonVerboseTypes = nNumNonVerboseTypes + 1
 					end
 				elseif e.miniboss then
@@ -753,19 +669,12 @@ function PANEL:DrawWaveStatus(lp)
 	if self.WaveEnemyWave ~= waveCurrent then
 		self.WaveEnemyWave = waveCurrent
 		self.WaveEnemyMax = math.max(remainingNoSupport, 1)
-		self.WaveSawEnemies = remainingNoSupport > 0
 	else
 		self.WaveEnemyMax = math.max(self.WaveEnemyMax or 1, remainingNoSupport)
-		if remainingNoSupport > 0 then
-			self.WaveSawEnemies = true
-		end
 	end
 
 	local progressFrac = 0
-	if remainingNoSupport <= 0 and not self.WaveSawEnemies then
-		-- TF2-like behavior: at wave start (before first spawn updates), bar appears full.
-		progressFrac = 1
-	elseif (self.WaveEnemyMax or 0) > 0 then
+	if (self.WaveEnemyMax or 0) > 0 then
 		progressFrac = math.Clamp(remainingNoSupport / self.WaveEnemyMax, 0, 1)
 	end
 
@@ -891,42 +800,17 @@ function PANEL:DrawWaveStatus(lp)
 			local e = d.entry
 			local iconTex = surface.GetTextureID(GetRobotIconPath(e.class, e.giant, e.icon))
 
-			local bgInset = math.floor(1 * Scale)
-			local bgSize = math.floor(18 * Scale)
-			local fgInset = math.floor(2 * Scale)
-			local fgSize = math.floor(16 * Scale)
-			-- Keep parent/backplate rounding matched to icon rounding.
-			local iconInnerCorner = math.max(1, math.floor(1.5 * Scale))
-			local iconCorner = math.max(iconInnerCorner, iconInnerCorner + bgInset)
 			if d.flash then
 				local pulse = 160 + ((math.floor(RealTime() * 10) % 10) * 10)
-				DrawRoundedBackplate(
-					ex + bgInset,
-					y + bgInset,
-					bgSize,
-					bgSize,
-					iconCorner,
-					Color(pulse, 0, 0, 235)
-				)
+				surface.SetDrawColor(pulse, 0, 0, 235)
 			else
-				DrawRoundedBackplate(
-					ex + bgInset,
-					y + bgInset,
-					bgSize,
-					bgSize,
-					iconCorner,
-					Color(d.bgMiniBoss and 200 or 231, d.bgMiniBoss and 90 or 226, d.bgMiniBoss and 80 or 206, 235)
-				)
+				surface.SetDrawColor(d.bgMiniBoss and 200 or 231, d.bgMiniBoss and 90 or 226, d.bgMiniBoss and 80 or 206, 235)
 			end
+			surface.DrawRect(ex + math.floor(2 * Scale), y + math.floor(1 * Scale), math.floor(16 * Scale), math.floor(16 * Scale))
+
 			surface.SetDrawColor(255, 255, 255, 255)
-			DrawRoundedTexturedRect(
-				iconTex,
-				ex + fgInset,
-				y + fgInset,
-				fgSize,
-				fgSize,
-				iconInnerCorner
-			)
+			surface.SetTexture(iconTex)
+			surface.DrawTexturedRect(ex + math.floor(3 * Scale), y + math.floor(2 * Scale), math.floor(14 * Scale), math.floor(14 * Scale))
 
 			if d.showCount then
 				draw.Text({
@@ -958,56 +842,43 @@ function PANEL:DrawWaveStatus(lp)
 		local gap = math.floor(MvMRes.readyGap * Scale)
 		local cardsW = (#setupPlayers > 0) and ((#setupPlayers * cardW) + ((#setupPlayers - 1) * gap)) or cardW
 		local cardsX = math.floor((ScrW() - cardsW) * 0.5)
-		local cardsY
-		if isnumber(MvMRes.readyCardsY) then
-			cardsY = math.floor(MvMRes.readyCardsY * Scale)
-		else
-			cardsY = py + panelH + math.floor(math.max(6, MvMRes.readyOffset) * Scale)
-		end
-		local allReady = true
+		local cardsY = py + panelH + math.floor(math.max(6, MvMRes.readyOffset) * Scale)
 
 		for i, ply in ipairs(setupPlayers) do
 			local x = cardsX + ((i - 1) * (cardW + gap))
 			local y = cardsY
 			local ready = ply:GetNWBool("TF_MVM_Ready", false)
-			if not ready then
-				allReady = false
-			end
 
-			local corner = math.max(2, math.floor(4 * Scale))
-			draw.RoundedBox(corner, x, y, cardW, cardH, Color(246, 226, 192, 255))
-			draw.RoundedBox(corner, x + 1, y + 1, math.max(1, cardW - 2), math.max(1, cardH - 2), Color(172, 102, 113, 245))
+			if tf_draw and tf_draw.BorderPanel then
+				tf_draw.BorderPanel(tex_ready_card_bg, x, y, cardW, cardH, 23, 23, 4 * Scale, 4 * Scale)
+			else
+				surface.SetDrawColor(255, 255, 255, 255)
+				surface.SetTexture(tex_ready_card_bg)
+				surface.DrawTexturedRect(x, y, cardW, cardH)
+			end
 
 			local classX = x + math.floor(MvMRes.readyClassX * Scale)
 			local classY = y + math.floor(MvMRes.readyClassY * Scale)
 			local classW = math.floor(MvMRes.readyClassW * Scale)
 			local classH = math.floor(MvMRes.readyClassH * Scale)
-			DrawRoundedBackplate(
-				classX - 1,
-				classY - 1,
-				classW + 2,
-				classH + 2,
-				math.max(1, math.floor(1 * Scale)),
-				Color(0, 0, 0, 210)
-			)
+			surface.SetDrawColor(0, 0, 0, 220)
+			surface.DrawRect(classX, classY, classW, classH)
 			surface.SetDrawColor(255, 255, 255, 255)
-			DrawRoundedTexturedRect(
-				GetPlayerClassIcon(ply),
-				classX,
-				classY,
-				classW,
-				classH,
-				math.max(1, math.floor(1 * Scale))
-			)
+			surface.SetTexture(GetPlayerClassIcon(ply))
+			surface.DrawTexturedRect(classX, classY, classW, classH)
 
 			local sqX = x + math.floor(MvMRes.readySquareX * Scale)
 			local sqY = y + math.floor(MvMRes.readySquareY * Scale)
 			local sqW = math.floor(MvMRes.readySquareW * Scale)
 			local sqH = math.floor(MvMRes.readySquareH * Scale)
-			local sqColor = ready and (MvMRes.readyColorReady or Color(121, 170, 106, 235)) or (MvMRes.readyColorNotReady or Color(86, 67, 67, 230))
-			draw.RoundedBox(math.max(1, math.floor(MvMRes.readySquareCorner * Scale)), sqX, sqY, sqW, sqH, sqColor)
-			surface.SetDrawColor(236, 214, 181, 170)
-			surface.DrawOutlinedRect(sqX, sqY, sqW, sqH, 1)
+			local sqColor = ready and MvMRes.readyColorReady or MvMRes.readyColorNotReady
+			if tf_draw and tf_draw.BorderPanel then
+				surface.SetDrawColor(sqColor.r, sqColor.g, sqColor.b, sqColor.a)
+				tf_draw.BorderPanel(tex_ready_square_bg, sqX, sqY, sqW, sqH, 23, 23, MvMRes.readySquareCorner * Scale, MvMRes.readySquareCorner * Scale)
+			else
+				surface.SetDrawColor(sqColor.r, sqColor.g, sqColor.b, sqColor.a)
+				surface.DrawRect(sqX, sqY, sqW, sqH)
+			end
 			if ready then
 				surface.SetDrawColor(255, 255, 255, 255)
 				surface.SetTexture(tex_ready_check)
@@ -1024,47 +895,18 @@ function PANEL:DrawWaveStatus(lp)
 				GetReadyNameFont(),
 				x + math.floor((MvMRes.readyNameX + (MvMRes.readyNameW * 0.5)) * Scale),
 				y + math.floor(MvMRes.readyNameY * Scale),
-				Color(245, 232, 208, 255),
+				Color(235, 226, 202, 255),
 				TEXT_ALIGN_CENTER,
 				TEXT_ALIGN_TOP
 			)
 		end
 
-		local promptY
-		if isnumber(MvMRes.readyPromptAbsY) then
-			promptY = math.floor(MvMRes.readyPromptAbsY * Scale)
-		else
-			promptY = cardsY + cardH + math.floor(MvMRes.readyPromptY * Scale)
-		end
-
-		local promptBase = Color(255, 242, 214, 245)
-		local promptWarn = Color(255, 162, 78, 250)
-		local promptColor = promptBase
-		if not allReady then
-			local t = (math.sin(RealTime() * 6.5) + 1) * 0.5
-			promptColor = Color(
-				math.floor(Lerp(t, promptBase.r, promptWarn.r)),
-				math.floor(Lerp(t, promptBase.g, promptWarn.g)),
-				math.floor(Lerp(t, promptBase.b, promptWarn.b)),
-				math.floor(Lerp(t, promptBase.a, promptWarn.a))
-			)
-		end
-
 		draw.SimpleText(
-			"F4 = TOGGLE READY",
-			GetReadyPromptFont(),
-			ScrW() * 0.5 + math.floor(1 * Scale),
-			promptY + math.floor(1 * Scale),
-			Color(0, 0, 0, 210),
-			TEXT_ALIGN_CENTER,
-			TEXT_ALIGN_TOP
-		)
-		draw.SimpleText(
-			"F4 = TOGGLE READY",
-			GetReadyPromptFont(),
+			"F4 - TOGGLE READY",
+			"HudFontSmallestBold",
 			ScrW() * 0.5,
-			promptY,
-			promptColor,
+			cardsY + cardH + math.floor(MvMRes.readyPromptY * Scale),
+			Color(255, 242, 214, 245),
 			TEXT_ALIGN_CENTER,
 			TEXT_ALIGN_TOP
 		)
@@ -1136,7 +978,6 @@ function PANEL:Init()
 	self:SetVisible(true)
 	self.WaveEnemyMax = 1
 	self.WaveEnemyWave = 0
-	self.WaveSawEnemies = false
 	self.WaveStatusPanel = vgui.Create("TFMvMWaveStatusPanel", self)
 end
 

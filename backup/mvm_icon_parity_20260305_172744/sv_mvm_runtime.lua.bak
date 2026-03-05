@@ -65,27 +65,6 @@ local function IsReadyEligiblePlayer(ply)
         and ply:Team() == TEAM_RED
 end
 
-local READY_SOUND_COOLDOWN = 4
-local READY_CLASS_SOUND = {
-    scout = "scout.ReadyMvM",
-    soldier = "soldier.ReadyMvM",
-    pyro = "pyro.ReadyMvM",
-    demoman = "demoman.ReadyMvM",
-    demo = "demoman.ReadyMvM",
-    heavy = "heavy.ReadyMvM",
-    heavyweapons = "heavy.ReadyMvM",
-    engineer = "engineer.ReadyMvM",
-    engi = "engineer.ReadyMvM",
-    medic = "medic.ReadyMvM",
-    sniper = "sniper.ReadyMvM",
-    spy = "spy.ReadyMvM",
-}
-
-local function GetPlayerReadyClassSound(ply)
-    local cls = string.lower(tostring(IsValid(ply) and ply.GetPlayerClass and ply:GetPlayerClass() or "scout"))
-    return READY_CLASS_SOUND[cls] or READY_CLASS_SOUND.scout
-end
-
 local function DebugEnabled()
     local c = GetConVar("tf_mvm_debug")
     return c and c:GetBool()
@@ -232,19 +211,11 @@ local function ReadIconName(def)
     return raw
 end
 
-local function ResolveBotDefForRuntime(runtime, def)
-    if not istable(def) then return def end
-    if runtime and TF_MVM and TF_MVM.Spawner and TF_MVM.Spawner.BuildBotDef then
-        return TF_MVM.Spawner:BuildBotDef(runtime, def)
-    end
-    return def
-end
-
 local OBJECTIVE_STATUS_CLASS = {
     spy = "spy",
     sniper = "sniper",
-    destroysentries = "sentry_buster",
-    sentrybuster = "sentry_buster",
+    destroysentries = "sentrybuster",
+    sentrybuster = "sentrybuster",
 }
 
 local function PickRepresentativeBotDef(spawnDef)
@@ -302,14 +273,6 @@ local function BuildSpawnVisualInfo(spawnDef)
         icon = ReadIconName(spawnDef)
     end
     return { class = className, giant = giant, tank = false, icon = icon }
-end
-
-local function PickRepresentativeMissionBotDef(missionDef, runtime)
-    if not istable(missionDef) then return nil end
-    local def = ResolveBotDefForRuntime(runtime, missionDef)
-    local botDef = PickRepresentativeBotDef(def)
-    if not istable(botDef) then return nil end
-    return ResolveBotDefForRuntime(runtime, botDef)
 end
 
 local function BuildSpawnVisualInfos(spawnDef, runtime)
@@ -456,35 +419,19 @@ local function ResolveSupportDisplayCountFromSpawnState(spawnState)
     return math.max(0, math.floor(tonumber(spawnState.MaxActive) or tonumber(spawnState.SpawnCount) or 0))
 end
 
-local function BuildMissionVisualInfo(missionDef, runtime)
+local function BuildMissionVisualInfo(missionDef)
     if not istable(missionDef) then
-        return nil
+        return { class = "scout", giant = false, tank = false, icon = "" }
     end
 
-    local resolvedMissionDef = ResolveBotDefForRuntime(runtime, missionDef)
-    local missionBotDef = PickRepresentativeMissionBotDef(resolvedMissionDef, runtime)
-
-    local icon = ReadIconName(missionBotDef)
-    if icon == "" then
-        icon = ReadIconName(resolvedMissionDef)
-    end
-
-    local explicitClass = ClassAlias(resolvedMissionDef.Class or resolvedMissionDef.class or "")
-    if explicitClass == "" and istable(missionBotDef) then
-        explicitClass = ClassAlias(missionBotDef.Class or missionBotDef.class or "")
-    end
-
+    local explicitClass = ClassAlias(missionDef.Class or missionDef.class or "")
     if explicitClass ~= "" then
-        return { class = explicitClass, giant = false, tank = false, icon = icon }
+        return { class = explicitClass, giant = false, tank = false, icon = ReadIconName(missionDef) }
     end
 
-    local objective = TrimLower(resolvedMissionDef.Objective or resolvedMissionDef.objective or "")
-    if objective == "" and icon == "" then
-        -- Invalid/empty mission definitions should not create fallback scout support icons.
-        return nil
-    end
+    local objective = TrimLower(missionDef.Objective or missionDef.objective or "")
     local cls = OBJECTIVE_STATUS_CLASS[objective] or "scout"
-    return { class = cls, giant = false, tank = false, icon = icon }
+    return { class = cls, giant = false, tank = false, icon = ReadIconName(missionDef) }
 end
 
 local function ResolveMissionDisplayCount(missionDef)
@@ -706,48 +653,9 @@ function RUNTIME:SetPlayerReady(ply, ready)
     return true
 end
 
-function RUNTIME:PlayPlayerReadySound(ply)
-    if not IsValid(ply) or not ply:IsPlayer() then return false end
-    local now = CurTime()
-    ply.TF_MVM_LastReadySoundAt = tonumber(ply.TF_MVM_LastReadySoundAt) or 0
-    if ply.TF_MVM_LastReadySoundAt > now then
-        return false
-    end
-
-    local snd = GetPlayerReadyClassSound(ply)
-    for _, listener in ipairs(player.GetAll()) do
-        if not IsValid(listener) then continue end
-        local t = listener:Team()
-        if t == ply:Team() or t == TEAM_SPECTATOR then
-            listener:EmitSound(snd, 75, 100, 1, CHAN_AUTO)
-        end
-    end
-    ply.TF_MVM_LastReadySoundAt = now + READY_SOUND_COOLDOWN
-    return true
-end
-
-function RUNTIME:IsReadyToggleLocked()
-    if not self.Active or not self.Setup then return false end
-    local setupEnd = tonumber(self.SetupEndTime) or 0
-    if setupEnd <= 0 then return false end
-    return (setupEnd - CurTime()) <= 10
-end
-
 function RUNTIME:TogglePlayerReady(ply)
-    if self:IsReadyToggleLocked() then
-        -- TF2 behavior: during final countdown, F4 still plays class ready voice
-        -- but does not change the ready state.
-        self:PlayPlayerReadySound(ply)
-        return false, "ready_locked_final_countdown"
-    end
-
     local isReady = self.ReadyPlayers[ply] and true or false
-    local nextReady = not isReady
-    local ok, reason = self:SetPlayerReady(ply, nextReady)
-    if ok and nextReady then
-        self:PlayPlayerReadySound(ply)
-    end
-    return ok, reason
+    return self:SetPlayerReady(ply, not isReady)
 end
 
 function RUNTIME:PushState()
@@ -996,14 +904,10 @@ function RUNTIME:BuildWaveMissionStatusItemsFromDefs(wave, waveIndex)
         if IsSentryBusterObjective(entry.def.Objective or entry.def.objective) and not self:HasEligibleSentryBusterTarget() then
             continue
         end
-        local info = BuildMissionVisualInfo(entry.def, self)
-        if not info then
-            continue
-        end
         items[#items + 1] = {
-            info = info,
+            info = BuildMissionVisualInfo(entry.def),
             count = ResolveMissionDisplayCount(entry.def),
-            support = false,
+            support = true,
             mission = true,
             active = false,
             support_limited = false,
@@ -1035,14 +939,10 @@ function RUNTIME:BuildWaveMissionStatusItemsFromStates()
             count = math.min(count, remainingTotal)
         end
 
-        local info = BuildMissionVisualInfo(state.Def, self)
-        if not info then
-            continue
-        end
         items[#items + 1] = {
-            info = info,
+            info = BuildMissionVisualInfo(state.Def),
             count = count,
-            support = false,
+            support = true,
             mission = true,
             active = count > 0,
             support_limited = false,

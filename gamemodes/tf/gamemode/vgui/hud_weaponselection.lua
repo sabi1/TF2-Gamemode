@@ -104,7 +104,7 @@ end
 
 function PANEL:CanSelectSlot(n)
 	for i,l in ipairs(self.Loadout) do
-		if l.slot == n then
+		if l.slot == n and self:CanSelectWeapon(i) then
 			return true
 		end
 	end
@@ -118,6 +118,13 @@ function PANEL:Select(n)
 	
 	for i,l in ipairs(self.Loadout) do
 		if l.slot == n then
+			if not self:CanSelectWeapon(i) then
+				local fallbackSlot = self:GetNextSlot(n)
+				if fallbackSlot ~= n then
+					self:Select(fallbackSlot)
+				end
+				return
+			end
 			self.Current = i
 			self.CurrentSlot = l.slot
 			self.Panels[self.Current].Hover = true
@@ -128,29 +135,39 @@ function PANEL:Select(n)
 end
 
 function PANEL:GetNextSlot(n)
+	if not self.Loadout or #self.Loadout == 0 then return 1 end
+	local startIndex = 1
 	for i,l in ipairs(self.Loadout) do
 		if l.slot == n then
-			if self.Loadout[i+1] then
-				return self.Loadout[i+1].slot
-			else
-				return self.Loadout[1].slot
-			end
+			startIndex = i
+			break
 		end
 	end
-	return 1
+	for offset = 1, #self.Loadout do
+		local idx = ((startIndex - 1 + offset) % #self.Loadout) + 1
+		if self:CanSelectWeapon(idx) then
+			return self.Loadout[idx].slot
+		end
+	end
+	return self.Loadout[startIndex].slot
 end
 
 function PANEL:GetPreviousSlot(n)
+	if not self.Loadout or #self.Loadout == 0 then return 1 end
+	local startIndex = 1
 	for i,l in ipairs(self.Loadout) do
 		if l.slot == n then
-			if self.Loadout[i-1] then
-				return self.Loadout[i-1].slot
-			else
-				return self.Loadout[#self.Loadout].slot
-			end
+			startIndex = i
+			break
 		end
 	end
-	return 1
+	for offset = 1, #self.Loadout do
+		local idx = ((startIndex - 1 - offset) % #self.Loadout) + 1
+		if self:CanSelectWeapon(idx) then
+			return self.Loadout[idx].slot
+		end
+	end
+	return self.Loadout[startIndex].slot
 end
 
 function PANEL:CalcCurrentWeaponSlot()
@@ -171,6 +188,68 @@ specialslots["gmod_tool"] = 6
 
 local physgunIcon = Material("entities/weapon_physgun.png")
 DEFAULT_ICONS["weapon_physgun"] = physgunIcon
+
+local function weaponHasSelectableAmmo(wep)
+	if not IsValid(wep) then return false end
+	if wep.Hidden then return false end
+	if isfunction(wep.HasUsableAmmoForSelection) then
+		return wep:HasUsableAmmoForSelection()
+	end
+
+	local primary = wep.Primary or {}
+	local ammoType = primary.Ammo
+	if isstring(ammoType) then
+		ammoType = string.lower(ammoType)
+		if ammoType == "" or ammoType == "none" then
+			ammoType = nil
+		end
+	end
+
+	local clipSize = tonumber(primary.ClipSize or -1) or -1
+	local clip = tonumber((wep.Clip1 and wep:Clip1()) or -1) or -1
+	local reserve = tonumber((wep.Ammo1 and wep:Ammo1()) or -1) or -1
+	local owner = LocalPlayer()
+
+	-- Throwable Ammo1() can lag while holstered; resolve reserve from all pools.
+	if IsValid(owner) and owner.GetAmmoCount then
+		if ammoType ~= nil then
+			local ownerReserveByName = tonumber(owner:GetAmmoCount(ammoType) or -1) or -1
+			if ownerReserveByName > reserve then
+				reserve = ownerReserveByName
+			end
+		end
+		if isfunction(wep.GetPrimaryAmmoType) then
+			local primaryAmmoType = wep:GetPrimaryAmmoType()
+			if isnumber(primaryAmmoType) and primaryAmmoType >= 0 then
+				local ownerReserveById = tonumber(owner:GetAmmoCount(primaryAmmoType) or -1) or -1
+				if ownerReserveById > reserve then
+					reserve = ownerReserveById
+				end
+			end
+		end
+	end
+
+	-- Throwables can be readiness-driven; trust full meter as selectable.
+	if wep.HasCustomMeleeBehaviour and isfunction(wep.GetHUDMeterValue) then
+		local meter = tonumber(wep:GetHUDMeterValue() or 0) or 0
+		if meter >= 0.999 then
+			return true
+		end
+	end
+
+	if wep.IsPDA then
+		return true
+	end
+	-- Pure melee weapons (ammo type "none") must always remain selectable.
+	if wep.IsMeleeWeapon and ammoType == nil then
+		return true
+	end
+	-- True ammo-less melee/utility remains selectable; throwable melee does not.
+	if clipSize < 0 and ammoType == nil and clip < 0 and reserve < 0 then
+		return true
+	end
+	return clip > 0 or reserve > 0
+end
 
 function PANEL:UpdateLoadout()   
 	self.Loadout = {}
@@ -291,13 +370,9 @@ function PANEL:SetLoadout(tbl)
 end
 
 function PANEL:CanSelectWeapon(n)
-	--[[n = self.Loadout[n or self.Current]
-	for _,v in pairs(LocalPlayer():GetWeapons()) do
-		if v:GetClass()==n then return true end
-	end
-	return false]]
-	
-	return true
+	local entry = self.Loadout[n or self.Current]
+	if not entry then return false end
+	return weaponHasSelectableAmmo(entry.ent)
 end
 
 function PANEL:CurrentWeapon()
@@ -315,3 +390,4 @@ end
 
 if HudWeaponSelection then HudWeaponSelection:Remove() end
 HudWeaponSelection = vgui.CreateFromTable(vgui.RegisterTable(PANEL, "DPanel"))
+

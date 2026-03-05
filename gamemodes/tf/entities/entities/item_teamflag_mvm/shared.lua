@@ -499,6 +499,7 @@ function ENT:Pickup(ply)
 			self:Fire("SetParentAttachment", "chest", 0)
 		end
 		self:TriggerOutput("OnPickup", ply)
+		hook.Run("TF_MVM_BombPickedUp", ply, self)
 
 		for _, ply in pairs(player.GetAll()) do
 			if ply:Team() == self.TeamNum then

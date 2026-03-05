@@ -14,8 +14,6 @@ local cv_sentry_buster_friendly = CreateConVar("tf_bot_suicide_bomb_friendly_fir
 local cv_deploy_delay = CreateConVar("tf_deploying_bomb_delay_time", "0.7", {FCVAR_ARCHIVE, FCVAR_NOTIFY})
 local cv_deploy_time = CreateConVar("tf_deploying_bomb_time", "3.0", {FCVAR_ARCHIVE, FCVAR_NOTIFY})
 local getBombIntel
-local DEPLOY_ALERT_COOLDOWN = 5.0
-TF_MVM_NextDeployingAlertAt = TF_MVM_NextDeployingAlertAt or 0
 
 local function fmtVec(v)
 	if not isvector(v) then return "nil" end
@@ -93,19 +91,6 @@ local function debugLog(bot, key, interval, msg)
 		bot:EntIndex(),
 		tostring(msg)
 	))
-end
-
-local function PlayDeployingAlertThrottled()
-	local now = CurTime()
-	if now < (tonumber(TF_MVM_NextDeployingAlertAt) or 0) then
-		return
-	end
-	TF_MVM_NextDeployingAlertAt = now + DEPLOY_ALERT_COOLDOWN
-	for _, pl in ipairs(player.GetAll()) do
-		if IsValid(pl) then
-			pl:SendLua([[LocalPlayer():EmitSound("Announcer.MVM_Bomb_Alert_Deploying")]])
-		end
-	end
 end
 
 local function playDeployBombAnimation(bot)
@@ -588,10 +573,7 @@ function M:SelectAction(bot, state)
 	local deployPos = getEntGoalPos(deploy, bot:GetPos())
 	local carrier = IsValid(intel) and intel.Carrier or nil
 	local missionObjective = getManagedObjective(bot)
-	-- Only explicit external flags should force ignore-combat.
-	-- Do not feed back state.mvm.ignoreCombat from previous decisions, otherwise
-	-- carrier combat can get latched off after deploy/unstuck phases.
-	local forceIgnoreCombat = bot.TF_MVM_ForceIgnoreCombat == true or bot.TF_MVM_IgnoreEnemies == true
+	local forceIgnoreCombat = bot.TF_MVM_IgnoreCombat == true or bot.TF_MVM_IgnoreEnemies == true
 	local now = CurTime()
 	local setupEnd = state.mvm.setupEndAt or 0
 	local flankWindowOpen = setupEnd > 0 and now <= (setupEnd + math.max(2, cv_mvm_flank_open_time:GetFloat()))
@@ -1133,7 +1115,6 @@ function M:Tick(bot, state)
 			state.mvm.deployState = "animating"
 			state.mvm.deployUntil = now + cv_deploy_time:GetFloat()
 			bot:SetNWBool("Taunting", true)
-			PlayDeployingAlertThrottled()
 		elseif state.mvm.deployState == "animating" then
 			debugLog(bot, "mvm_deploy_complete", 0.15, "deploy_state animating->complete")
 			state.mvm.deployState = "complete"

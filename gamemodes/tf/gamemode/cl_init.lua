@@ -32,6 +32,7 @@ include("cl_camera.lua")
 include("tf_draw_module.lua")
 
 include("cl_materialfix.lua")
+include("cl_lightwarp.lua")
 
 include("cl_pac.lua")
 
@@ -289,6 +290,7 @@ end)
 		panel:NumSlider( "SPECIAL: Voice DSP Type", "tf_special_dsp_type", 1, 135 )
 		panel:CheckBox( "Right Handed", "tf_righthand" )
 		panel:CheckBox( "Fast Weapon Switch", "tf_fastweaponswitch" )
+		panel:CheckBox( "Auto Reload", "tf_autoreload" )
 		panel:Help( "Inspect Weapon Key (hold to inspect, default: I)" )
 		local inspectBinder = vgui.Create("DBinder", panel)
 		local inspectKeyCVar = GetConVar("tf_inspect_key")
@@ -453,6 +455,31 @@ hook.Add("Think", "TF2Gamemode_InspectBind", function()
 			TF2InspectSentReload = false
 		end
 	end
+end)
+
+hook.Add("CreateMove", "TF2Gamemode_AutoReload", function(cmd)
+	local autoReload = GetConVar("tf_autoreload")
+	if not autoReload or not autoReload:GetBool() then return end
+
+	local lp = LocalPlayer()
+	if not IsValid(lp) or not lp:Alive() then return end
+	if gui.IsGameUIVisible() or vgui.CursorVisible() then return end
+
+	if cmd:KeyDown(IN_ATTACK) or cmd:KeyDown(IN_ATTACK2) then return end
+
+	local wep = lp:GetActiveWeapon()
+	if not IsValid(wep) then return end
+
+	local maxClip = tonumber((wep.GetMaxClip1 and wep:GetMaxClip1()) or -1) or -1
+	if maxClip <= 0 then return end
+
+	local clip = tonumber((wep.Clip1 and wep:Clip1()) or -1) or -1
+	if clip < 0 or clip >= maxClip then return end
+
+	local ammo = tonumber((wep.Ammo1 and wep:Ammo1()) or -1) or -1
+	if ammo <= 0 then return end
+
+	cmd:AddKey(IN_RELOAD)
 end)
 
 hook.Add("PlayerBindPress", "TF2Gamemode_InspectBind_BlockOriginalBind", function(ply, bind, pressed, code)
@@ -1131,6 +1158,7 @@ function L4DClassSelection()
 	icon2:SetAnimated(true)
 	icon2:GetEntity():SetParent(icon:GetEntity())
 	icon2:GetEntity():AddEffects(EF_BONEMERGE)
+icon2:GetEntity():AddEffects(EF_PARENT_ANIMATES)
 	
 	
 	local spectate = vgui.Create("DModelPanel", ClassFrame)
@@ -1182,14 +1210,16 @@ function L4DClassSelection()
 	TankButton:SetSize(100, 30)
 	TankButton:SetPos(10, 35)
 	TankButton:SetText("Tank")
-	TankButton.OnCursorEntered = function() icon:SetModel( "models/infected/hulk.mdl" ) icon2:GetEntity():SetParent(icon:GetEntity()) icon2:GetEntity():AddEffects(EF_BONEMERGE) icon2:GetEntity():SetModel("models/props_debris/concrete_chunk01a.mdl") local dance = icon:GetEntity():LookupSequence( "throw_02" ) icon:GetEntity():SetSequence( dance ) icon:GetEntity():SetModelScale(1.2) end
+	TankButton.OnCursorEntered = function() icon:SetModel( "models/infected/hulk.mdl" ) icon2:GetEntity():SetParent(icon:GetEntity()) icon2:GetEntity():AddEffects(EF_BONEMERGE)
+icon2:GetEntity():AddEffects(EF_PARENT_ANIMATES) icon2:GetEntity():SetModel("models/props_debris/concrete_chunk01a.mdl") local dance = icon:GetEntity():LookupSequence( "throw_02" ) icon:GetEntity():SetSequence( dance ) icon:GetEntity():SetModelScale(1.2) end
 	TankButton.DoClick = function()  RunConsoleCommand("changeclass", "tank")  LocalPlayer():EmitSound("music/safe/themonsterswithout.wav") LocalPlayer():StopSound("ClassSelection.ThemeL4D") ClassFrame:Close()  end
 
 	local BoomerButton = vgui.Create("DImageButton", ClassFrame)
 	BoomerButton:SetSize(100, 30)
 	BoomerButton:SetPos(100, 35)
 	BoomerButton:SetText("Boomer") --Set the name of the button
-	BoomerButton.OnCursorEntered = function() icon:SetModel( "models/infected/boomer_l4d.mdl" ) icon2:GetEntity():SetParent(icon:GetEntity()) icon2:GetEntity():AddEffects(EF_BONEMERGE) local dance = icon:GetEntity():LookupSequence( "Run_Upper_KNIFE" ) icon:GetEntity():SetSequence( dance ) icon:GetEntity():SetModelScale(1.2) end
+	BoomerButton.OnCursorEntered = function() icon:SetModel( "models/infected/boomer_l4d.mdl" ) icon2:GetEntity():SetParent(icon:GetEntity()) icon2:GetEntity():AddEffects(EF_BONEMERGE)
+icon2:GetEntity():AddEffects(EF_PARENT_ANIMATES) local dance = icon:GetEntity():LookupSequence( "Run_Upper_KNIFE" ) icon:GetEntity():SetSequence( dance ) icon:GetEntity():SetModelScale(1.2) end
 	BoomerButton.DoClick = function()  RunConsoleCommand("changeclass", "boomer") ClassFrame:Close() LocalPlayer():EmitSound("music/safe/themonsterswithout.wav") LocalPlayer():StopSound("ClassSelection.ThemeL4D") end
 	
 	local L4DZombie = vgui.Create("DImageButton", ClassFrame)
@@ -1198,7 +1228,8 @@ function L4DClassSelection()
 	L4DZombie:SetText("Male Zombie") --Set the name of the button
 	L4DZombie.DoClick = function()  RunConsoleCommand("changeclass", "l4d_zombie") ClassFrame:Close() LocalPlayer():EmitSound("music/safe/themonsterswithout.wav") LocalPlayer():StopSound("ClassSelection.ThemeL4D") LocalPlayer():StopSound("ClassSelection.ThemeNonMVM") LocalPlayer():StopSound("ClassSelection.ThemeMVM") end
 	
-	L4DZombie.OnCursorEntered = function() icon:SetModel( "models/cpthazama/l4d1/common/male_01.mdl" ) icon2:GetEntity():SetParent(icon:GetEntity()) icon2:GetEntity():AddEffects(EF_BONEMERGE)icon2:GetEntity():SetModel("models/empty.mdl")  local dance = icon:GetEntity():LookupSequence( "Run_01" ) icon:GetEntity():SetSequence( dance ) icon:GetEntity():SetModelScale(1.2) end
+	L4DZombie.OnCursorEntered = function() icon:SetModel( "models/cpthazama/l4d1/common/male_01.mdl" ) icon2:GetEntity():SetParent(icon:GetEntity()) icon2:GetEntity():AddEffects(EF_BONEMERGE)
+icon2:GetEntity():AddEffects(EF_PARENT_ANIMATES)icon2:GetEntity():SetModel("models/empty.mdl")  local dance = icon:GetEntity():LookupSequence( "Run_01" ) icon:GetEntity():SetSequence( dance ) icon:GetEntity():SetModelScale(1.2) end
 
 end]]
 function DoorClose()
@@ -1237,17 +1268,9 @@ end
 local function PlayMenuUISound(snd)
 	if not isstring(snd) or snd == "" then return end
 	snd = string.gsub(snd, "^/", "")
-
-	local tries = {snd}
-	if string.StartWith(snd, "music/") then
-		tries[#tries + 1] = "ui/" .. string.sub(snd, 7)
-	end
-
-	for _, path in ipairs(tries) do
-		surface.PlaySound(path)
-		if IsValid(LocalPlayer()) then
-			LocalPlayer():EmitSound(path, 100, 100, 1, CHAN_AUTO)
-		end
+	surface.PlaySound(snd)
+	if IsValid(LocalPlayer()) then
+		LocalPlayer():EmitSound(snd, 100, 100, 1, CHAN_AUTO)
 	end
 end
 
@@ -1368,6 +1391,19 @@ local loadout_solid_line = surface.GetTextureID("vgui/loadout_solid_line")
 local loadout_round_rect = surface.GetTextureID("vgui/loadout_round_rect")
 local loadout_round_rect_selected = surface.GetTextureID("vgui/loadout_round_rect_selected")
 
+-- TF2-like class preview tuning (camera + model scale + studio lighting).
+local TF2_CLASS_MODEL_SCALE = 1.2
+local TF2_CLASS_CAM_POS = Vector(176, 0, 44)
+local TF2_CLASS_LOOK_AT = Vector(-85, 0, -5)
+local TF2_CLASS_LOOK_DOWN_PERCENT = 0.02
+local TF2_CLASS_FOV = 50
+local TF2_CLASS_AMBIENT = Color(110, 110, 110)
+local TF2_CLASS_LIGHT_TOP = Color(255, 255, 255)
+local TF2_CLASS_LIGHT_FRONT = Color(235, 235, 235)
+local TF2_CLASS_LIGHT_RIGHT = Color(210, 210, 210)
+local TF2_CLASS_LIGHT_LEFT = Color(180, 180, 180)
+local TF2_CLASS_EYE_TARGET_OFFSET = Vector(0, 0, 14)
+
 local function PaintPanelLikeClassLoadout(self, w, h)
 	if not IsValid(self.Entity) then return end
 
@@ -1380,20 +1416,46 @@ local function PaintPanelLikeClassLoadout(self, w, h)
 	end
 
 	cam.Start3D(self.vCamPos, ang, self.fFOV, x, y, w, h)
-	cam.IgnoreZ(true)
 
 	render.SuppressEngineLighting(true)
-	render.SetLightingOrigin(self.Entity:GetPos() + Vector(0, 0, 68))
-	render.ResetModelLighting(0.5, 0.5, 0.5)
+	if TF2LightwarpApplyModelLighting then
+		TF2LightwarpApplyModelLighting(self.Entity:GetPos() + Vector(0, 0, 68))
+	else
+		render.SetLightingOrigin(self.Entity:GetPos() + Vector(0, 0, 68))
+		render.ResetModelLighting(
+			self.colAmbientLight.r / 255,
+			self.colAmbientLight.g / 255,
+			self.colAmbientLight.b / 255
+		)
 
-	if self.spotlight then
-		render.SetModelLighting(BOX_TOP, 1, 1, 1)
+		for i = 0, 6 do
+			local col = self.DirectionalLight[i]
+			if col then
+				render.SetModelLighting(i, col.r / 255, col.g / 255, col.b / 255)
+			end
+		end
 	end
 
+	-- Ensure bonemerged children see the parent's latest bones this frame.
+	self.Entity:InvalidateBoneCache()
+	self.Entity:SetupBones()
 	self:DrawModel()
 
+	-- Draw linked wearable/weapon entities in the same 3D pass so depth testing is correct.
+	if istable(self.PreviewLinkedPanels) then
+		for _, pnl in ipairs(self.PreviewLinkedPanels) do
+			if IsValid(pnl) then
+				local linkedEnt = pnl:GetEntity()
+				if IsValid(linkedEnt) and linkedEnt ~= self.Entity then
+					linkedEnt:InvalidateBoneCache()
+					linkedEnt:SetupBones()
+					linkedEnt:DrawModel()
+				end
+			end
+		end
+	end
+
 	render.SuppressEngineLighting(false)
-	cam.IgnoreZ(false)
 	cam.End3D()
 
 	self.LastPaint = RealTime()
@@ -1415,15 +1477,21 @@ function iconC:Paint()
 	cam.Start3D( self.vCamPos, ang, self.fFOV, x, y, w, h, 5, self.FarZ )
 
 	render.SuppressEngineLighting( true )
-	render.SetLightingOrigin( self.Entity:GetPos() )
-	render.ResetModelLighting( self.colAmbientLight.r / 255, self.colAmbientLight.g / 255, self.colAmbientLight.b / 255 )
+	if TF2LightwarpApplyModelLighting then
+		TF2LightwarpApplyModelLighting(self.Entity:GetPos() + Vector(0, 0, 68))
+	else
+		render.SetLightingOrigin( self.Entity:GetPos() )
+		render.ResetModelLighting( self.colAmbientLight.r / 255, self.colAmbientLight.g / 255, self.colAmbientLight.b / 255 )
+	end
 	render.SetColorModulation( self.colColor.r / 255, self.colColor.g / 255, self.colColor.b / 255 )
 	render.SetBlend( ( self:GetAlpha() / 255 ) * ( self.colColor.a / 255 ) ) -- * surface.GetAlphaMultiplier()
 
-	for i = 0, 6 do
-		local col = self.DirectionalLight[ i ]
-		if ( col ) then
-			render.SetModelLighting( i, col.r / 255, col.g / 255, col.b / 255 )
+	if not TF2LightwarpApplyModelLighting then
+		for i = 0, 6 do
+			local col = self.DirectionalLight[ i ]
+			if ( col ) then
+				render.SetModelLighting( i, col.r / 255, col.g / 255, col.b / 255 )
+			end
 		end
 	end
 
@@ -1444,9 +1512,87 @@ function iconC:Paint()
 
 end
 function iconC:LayoutEntity( Entity ) return end
+local function GetClassPreviewPanelBounds()
+	local fallback = {
+		x = ScrW() * 0.012,
+		y = ScrH() * 0.301,
+		w = ScrW() * 0.412,
+		h = ScrH() * 1,
+	}
+
+	if not (TF2Res and TF2Res.Load and TF2Res.FindByFieldName and TF2Res.GetString and TF2Res.ParseCoord) then
+		return fallback
+	end
+
+	local tree = TF2Res.Load("resource/ui/classselection.res")
+	if not tree then return fallback end
+
+	local node = TF2Res.FindByFieldName(tree, "TFPlayerModel")
+	if not node then return fallback end
+
+	local x = TF2Res.ParseCoord(TF2Res.GetString(node, "xpos", nil), ScrW(), fallback.x) or fallback.x
+	local y = TF2Res.ParseCoord(TF2Res.GetString(node, "ypos", nil), ScrH(), fallback.y) or fallback.y
+	local w = TF2Res.ParseCoord(TF2Res.GetString(node, "wide", nil), ScrW(), fallback.w) or fallback.w
+	local h = TF2Res.ParseCoord(TF2Res.GetString(node, "tall", nil), ScrH(), fallback.h) or fallback.h
+
+	return { x = x, y = y, w = w, h = h }
+end
+
+local previewPanelBounds = GetClassPreviewPanelBounds()
+local previewPanelX = previewPanelBounds.x
+local previewPanelY = previewPanelBounds.y
+local previewPanelW = previewPanelBounds.w
+local previewPanelH = previewPanelBounds.h
+
+local function ApplyTF2ClassPreviewProfile(panel)
+	if not IsValid(panel) then return end
+	panel:SetCamPos(TF2_CLASS_CAM_POS)
+	panel:SetFOV(TF2_CLASS_FOV)
+	local lookAt = Vector(TF2_CLASS_LOOK_AT.x, TF2_CLASS_LOOK_AT.y, TF2_CLASS_LOOK_AT.z)
+	lookAt.z = lookAt.z - (math.abs(TF2_CLASS_CAM_POS.z - TF2_CLASS_LOOK_AT.z) * TF2_CLASS_LOOK_DOWN_PERCENT)
+	panel:SetLookAt(lookAt)
+	panel:SetAmbientLight(TF2_CLASS_AMBIENT)
+	panel:SetDirectionalLight(BOX_TOP, TF2_CLASS_LIGHT_TOP)
+	panel:SetDirectionalLight(BOX_FRONT, TF2_CLASS_LIGHT_FRONT)
+	panel:SetDirectionalLight(BOX_RIGHT, TF2_CLASS_LIGHT_RIGHT)
+	panel:SetDirectionalLight(BOX_LEFT, TF2_CLASS_LIGHT_LEFT)
+end
+
+local function UpdatePreviewEyeTarget(panel, ent)
+	if not (IsValid(panel) and IsValid(ent)) then return end
+	if not ent.SetEyeTarget then return end
+	local camPos = panel.vCamPos or TF2_CLASS_CAM_POS
+	local eyeTarget = camPos + TF2_CLASS_EYE_TARGET_OFFSET
+	ent:SetEyeTarget(eyeTarget)
+
+	-- Some class-select scenes override eye behavior; nudge common head/aim poses toward camera.
+	local eyesAttachment = ent.LookupAttachment and ent:LookupAttachment("eyes") or 0
+	if eyesAttachment and eyesAttachment > 0 and ent.GetAttachment then
+		local att = ent:GetAttachment(eyesAttachment)
+		if att and att.Pos then
+			local lookAng = (eyeTarget - att.Pos):Angle()
+			local relYaw = math.AngleDifference(lookAng.y, ent:GetAngles().y)
+			local relPitch = math.AngleDifference(lookAng.p, ent:GetAngles().p)
+
+			local function setPose(name, value)
+				if not ent.LookupPoseParameter or not ent.SetPoseParameter then return end
+				local idx = ent:LookupPoseParameter(name)
+				if idx and idx >= 0 then
+					ent:SetPoseParameter(name, value)
+				end
+			end
+
+			setPose("head_yaw", relYaw)
+			setPose("head_pitch", relPitch)
+			setPose("aim_head_yaw", relYaw)
+			setPose("aim_head_pitch", relPitch)
+		end
+	end
+end
+
 local icon = vgui.Create( "DModelPanel", ClassFrame )
-icon:SetSize(ScrW() * 0.412, ScrH() * 1)
-icon:SetPos(ScrW() * 0.012, ScrH() * 0.301)
+icon:SetSize(previewPanelW, previewPanelH)
+icon:SetPos(previewPanelX, previewPanelY)
 if (LocalPlayer():GetInfoNum("tf_tfc_model_override",0) == 1  and file.Exists("models/player/tfc_"..(c.ModelName or "scout")..".mdl", "WORKSHOP") ) then
 	icon:SetModel( "models/player/tfc_heavy.mdl" ) -- you can only change colors on playermodels
 elseif (LocalPlayer():GetInfoNum("tf_robot",0) == 1) then
@@ -1457,10 +1603,8 @@ else
 	icon:SetModel( "models/player/heavy.mdl" ) -- you can only change colors on playermodels
 end
 PlayMenuUISound("music/class_menu_05.wav")
-icon:GetEntity():SetModelScale(1.2)
-icon:SetCamPos( Vector( 176, 0, 44 ) )
-icon:SetFOV(50)
-icon:SetLookAt(Vector(-85,0,-5))
+icon:GetEntity():SetModelScale(TF2_CLASS_MODEL_SCALE)
+ApplyTF2ClassPreviewProfile(icon)
 icon:SetAnimated(true)
 icon.AutomaticFrameAdvance = true
 icon.spotlight = true
@@ -1468,41 +1612,33 @@ icon.Paint = PaintPanelLikeClassLoadout
 icon:SetZPos(10)
 
 local icon2 = vgui.Create( "DModelPanel", ClassFrame )
-icon2:SetSize(ScrW() * 0.412, ScrH() * 1)
-icon2:SetPos(ScrW() * 0.012, ScrH() * 0.301)
-icon2:SetCamPos( Vector( 176, 0, 44 ) )
-icon2:SetFOV(50)
+icon2:SetSize(previewPanelW, previewPanelH)
+icon2:SetPos(previewPanelX, previewPanelY)
+ApplyTF2ClassPreviewProfile(icon2)
 icon2:SetZPos(12)
-icon2:SetLookAt(Vector(-85,0,-5))
 icon2:SetModel( "models/weapons/w_models/w_minigun.mdl" ) -- you can only change colors on playermodels
-icon2.Paint = PaintPanelLikeClassLoadout
+icon2.Paint = function() end
 local icon3 = vgui.Create( "DModelPanel", ClassFrame )
-icon3:SetSize(ScrW() * 0.412, ScrH() * 1)
-icon3:SetPos(ScrW() * 0.012, ScrH() * 0.301)
-icon3:SetCamPos( Vector( 176, 0, 44 ) )
-icon3:SetFOV(50)
+icon3:SetSize(previewPanelW, previewPanelH)
+icon3:SetPos(previewPanelX, previewPanelY)
+ApplyTF2ClassPreviewProfile(icon3)
 icon3:SetZPos(12)
-icon3:SetLookAt(Vector(-85,0,-5))
 icon3:SetModel( "models/empty.mdl" ) -- you can only change colors on playermodels
-icon3.Paint = PaintPanelLikeClassLoadout
+icon3.Paint = function() end
 local icon4 = vgui.Create( "DModelPanel", ClassFrame )
-icon4:SetSize(ScrW() * 0.412, ScrH() * 1)
-icon4:SetPos(ScrW() * 0.012, ScrH() * 0.301)
-icon4:SetCamPos( Vector( 176, 0, 44 ) )
-icon4:SetFOV(50)
+icon4:SetSize(previewPanelW, previewPanelH)
+icon4:SetPos(previewPanelX, previewPanelY)
+ApplyTF2ClassPreviewProfile(icon4)
 icon4:SetZPos(12)
-icon4:SetLookAt(Vector(-85,0,-5))
 icon4:SetModel( "models/empty.mdl" ) -- you can only change colors on playermodels
-icon4.Paint = PaintPanelLikeClassLoadout
+icon4.Paint = function() end
 local icon5 = vgui.Create( "DModelPanel", ClassFrame )
-icon5:SetSize(ScrW() * 0.412, ScrH() * 1)
-icon5:SetPos(ScrW() * 0.012, ScrH() * 0.301)
-icon5:SetCamPos( Vector( 176, 0, 44 ) )
-icon5:SetFOV(50)
+icon5:SetSize(previewPanelW, previewPanelH)
+icon5:SetPos(previewPanelX, previewPanelY)
+ApplyTF2ClassPreviewProfile(icon5)
 icon5:SetZPos(12)
-icon5:SetLookAt(Vector(-85,0,-5))
 icon5:SetModel( "models/empty.mdl" ) -- you can only change colors on playermodels
-icon5.Paint = PaintPanelLikeClassLoadout
+icon5.Paint = function() end
 local convar = GetConVar("loadout_heavy")
 local split = string.Split(convar:GetString(), ",")
 --print(split[1])
@@ -1513,22 +1649,27 @@ for name, wep in pairs(tf_items.Items) do
 		end
 	end
 end
-icon2:SetAnimated(true)
-icon3:SetAnimated(true)
-icon4:SetAnimated(true)
-icon5:SetAnimated(true)
-icon2:GetEntity():SetNoDraw(false)
+icon2:SetAnimated(false)
+icon3:SetAnimated(false)
+icon4:SetAnimated(false)
+icon5:SetAnimated(false)
+icon2:GetEntity():SetNoDraw(true)
 icon2:GetEntity():SetParent(icon:GetEntity())
 icon2:GetEntity():AddEffects(EF_BONEMERGE)
-icon3:GetEntity():SetNoDraw(false)
+icon2:GetEntity():AddEffects(EF_PARENT_ANIMATES)
+icon3:GetEntity():SetNoDraw(true)
 icon3:GetEntity():SetParent(icon:GetEntity())
 icon3:GetEntity():AddEffects(EF_BONEMERGE)
-icon4:GetEntity():SetNoDraw(false)
+icon3:GetEntity():AddEffects(EF_PARENT_ANIMATES)
+icon4:GetEntity():SetNoDraw(true)
 icon4:GetEntity():SetParent(icon:GetEntity())
 icon4:GetEntity():AddEffects(EF_BONEMERGE)
-icon5:GetEntity():SetNoDraw(false)
+icon4:GetEntity():AddEffects(EF_PARENT_ANIMATES)
+icon5:GetEntity():SetNoDraw(true)
 icon5:GetEntity():SetParent(icon:GetEntity())
 icon5:GetEntity():AddEffects(EF_BONEMERGE)
+icon5:GetEntity():AddEffects(EF_PARENT_ANIMATES)
+icon.PreviewLinkedPanels = { icon2, icon3, icon4, icon5 }
 
 local function getWearablePreviewModel(item, className)
 	if not istable(item) then return nil end
@@ -1591,6 +1732,7 @@ local function applyPreviewWearables(className)
 			p:GetEntity():SetModel("models/empty.mdl")
 			p:GetEntity():SetParent(icon:GetEntity())
 			p:GetEntity():AddEffects(EF_BONEMERGE)
+p:GetEntity():AddEffects(EF_PARENT_ANIMATES)
 			p:GetEntity():SetNoDraw(false)
 		end
 	end
@@ -1606,6 +1748,7 @@ local function applyPreviewWearables(className)
 							panel:GetEntity():SetModel(mdl)
 							panel:GetEntity():SetParent(icon:GetEntity())
 							panel:GetEntity():AddEffects(EF_BONEMERGE)
+panel:GetEntity():AddEffects(EF_PARENT_ANIMATES)
 						end
 					end
 
@@ -1680,7 +1823,8 @@ local loadoutClassToIndex = {
 }
 
 function icon:LayoutEntity( ent )
-    self:RunAnimation()
+	self:RunAnimation()
+	UpdatePreviewEyeTarget(self, ent)
 end
 function icon2:LayoutEntity( ent )
     return
@@ -1993,6 +2137,72 @@ menutext:SetFont( "ChalkboardText" )
 menutext:SetColor( Color(178,178,178,255) )
 menutext:SizeToContents()
 
+local classTipIndexByName = {
+	scout = 1,
+	sniper = 2,
+	soldier = 3,
+	demoman = 4,
+	medic = 5,
+	heavy = 6,
+	pyro = 7,
+	spy = 8,
+	engineer = 9
+}
+
+local function GetClassTipLine(idx, line, suffix)
+	if not tf_lang or not tf_lang.GetRaw then
+		return nil
+	end
+
+	local key = string.format("ClassTips_%d_%d%s", idx, line, suffix or "")
+	local text = tf_lang.GetRaw(key, true)
+	if text == key or text == ("#" .. key) then
+		return nil
+	end
+	return text
+end
+
+local function BuildClassBoardText(className)
+	local idx = classTipIndexByName[className]
+	if not idx then return nil end
+
+	local tips = {}
+	local count = 0
+	if tf_lang and tf_lang.GetRaw then
+		count = tonumber(tf_lang.GetRaw(string.format("ClassTips_%d_Count", idx), true)) or 0
+	end
+	for i = 1, count do
+		local tip = GetClassTipLine(idx, i, "")
+		if tip and tip ~= "" then
+			tips[#tips + 1] = tip
+		end
+	end
+
+	if isMVM then
+		for i = 1, 12 do
+			local tip = GetClassTipLine(idx, i, "_MvM")
+			if tip and tip ~= "" then
+				tips[#tips + 1] = tip
+			end
+		end
+	end
+
+	if #tips == 0 then
+		return nil
+	end
+
+	return table.concat(tips, "\n")
+end
+
+local function ApplyClassBoardText(className, displayName)
+	menuname:SetText(string.upper(displayName or className or ""))
+	menutext:SetText(BuildClassBoardText(className) or "")
+	menuname:SizeToContents()
+	menutext:SizeToContents()
+end
+
+ApplyClassBoardText("heavy", "HEAVY")
+
 local GmodButton
 local gm_img 
 if (!GetConVar("tf_disable_fun_classes"):GetBool()) then
@@ -2019,11 +2229,12 @@ if (!GetConVar("tf_disable_fun_classes"):GetBool()) then
 			icon:SetModel(player_manager.TranslatePlayerModel(GetConVar("cl_playermodel"):GetString())) 
 		end  
 		icon2:GetEntity():SetParent(icon:GetEntity()) 
-		icon2:GetEntity():AddEffects(EF_BONEMERGE) 
+		icon2:GetEntity():AddEffects(EF_BONEMERGE)
+icon2:GetEntity():AddEffects(EF_PARENT_ANIMATES) 
 		LocalPlayer():EmitSound( "ui/buttonrollover.wav", 100, 100, 1, CHAN_VOICE ) 
 		local dance = icon:GetEntity():LookupSequence( "idle_physgun" )
 		icon:GetEntity():SetSequence( dance ) 
-		icon:GetEntity():SetModelScale(1.2) 
+		icon:GetEntity():SetModelScale(TF2_CLASS_MODEL_SCALE) 
 		icon:GetEntity():SetPoseParameter("move_x",1)  
 			
 		scout_img:SetImage( "vgui/class_sel_sm_scout_inactive" )
@@ -2101,7 +2312,8 @@ else
 		icon5:GetEntity():SetModel("models/empty.mdl") 
 		icon:SetModel( "models/class_menu/random_class_icon.mdl" ) 
 		icon2:GetEntity():SetParent(icon:GetEntity()) 
-		icon2:GetEntity():AddEffects(EF_BONEMERGE) 
+		icon2:GetEntity():AddEffects(EF_BONEMERGE)
+icon2:GetEntity():AddEffects(EF_PARENT_ANIMATES) 
 		LocalPlayer():EmitSound( "ui/buttonrollover.wav", 100, 100, 1, CHAN_VOICE ) 
 		local dance = icon:GetEntity():LookupSequence( "selection" )
 		icon:GetEntity():SetSequence( dance )
@@ -2178,13 +2390,10 @@ ScoutButton.OnCursorEntered = function()
 	else
 		icon:SetModel( "models/player/scout.mdl" ) -- you can only change colors on playermodels
 	end
-	menuname:SetText( "SCOUT" ) 
-	menutext:SetText( [[You capture points faster than other classes!
-double jump while in the air!]] ) 
-		menuname:SizeToContents()
-		menutext:SizeToContents()
+	ApplyClassBoardText("scout", "SCOUT")
 	icon2:GetEntity():SetParent(icon:GetEntity()) 
-	icon2:GetEntity():AddEffects(EF_BONEMERGE) 
+	icon2:GetEntity():AddEffects(EF_BONEMERGE)
+icon2:GetEntity():AddEffects(EF_PARENT_ANIMATES) 
 	icon2:GetEntity():SetModel("models/weapons/w_models/w_scattergun.mdl") 
 		
 	local convar = GetConVar("loadout_scout")
@@ -2202,7 +2411,7 @@ double jump while in the air!]] )
 	
       icon:GetEntity():SetSequence("selectionmenu_startpose")
 	icon:StartScene("scenes/player/scout/low/class_select.vcd")
-	icon:GetEntity():SetModelScale(1.2) 
+	icon:GetEntity():SetModelScale(TF2_CLASS_MODEL_SCALE) 
 	if LocalPlayer():Team()==2 or LocalPlayer():Team()==6 then
 		scout_img:SetImage( "vgui/class_sel_sm_scout_red" )
 	elseif LocalPlayer():Team()==TEAM_BLU then
@@ -2240,14 +2449,11 @@ SoldierButton.OnCursorEntered = function()
 	else
 		icon:SetModel( "models/player/soldier.mdl" ) -- you can only change colors on playermodels
 	end
-	menuname:SetText( "SOLDIER" ) 
-	menutext:SetText( [[Shoot your rocket launcher at enemy's feet!
-Use your rocket launcher to rocket jump!]] ) 
-	menuname:SizeToContents()
-	menutext:SizeToContents()
-	icon:GetEntity():SetModelScale(1.23)
+	ApplyClassBoardText("soldier", "SOLDIER")
+	icon:GetEntity():SetModelScale(TF2_CLASS_MODEL_SCALE)
 	icon2:GetEntity():SetParent(icon:GetEntity()) 
-	icon2:GetEntity():AddEffects(EF_BONEMERGE) 
+	icon2:GetEntity():AddEffects(EF_BONEMERGE)
+icon2:GetEntity():AddEffects(EF_PARENT_ANIMATES) 
 	icon2:GetEntity():SetModel("models/weapons/w_models/w_rocketlauncher.mdl") 
 	local convar = GetConVar("loadout_soldier")
 	local split = string.Split(convar:GetString(), ",")
@@ -2301,7 +2507,8 @@ PyroButton.OnCursorEntered = function()
 		icon:SetModel( "models/player/pyro.mdl" ) -- you can only change colors on playermodels
 	end
 	icon2:GetEntity():SetParent(icon:GetEntity()) 
-	icon2:GetEntity():AddEffects(EF_BONEMERGE) 
+	icon2:GetEntity():AddEffects(EF_BONEMERGE)
+icon2:GetEntity():AddEffects(EF_PARENT_ANIMATES) 
 	icon2:GetEntity():SetModel("models/weapons/c_models/c_flamethrower/c_flamethrower.mdl") 
 	local convar = GetConVar("loadout_pyro")
 	local split = string.Split(convar:GetString(), ",")
@@ -2315,16 +2522,11 @@ PyroButton.OnCursorEntered = function()
 	end
 	PlayClassHoverSound(3)
 	applyPreviewWearables("pyro")
-	menuname:SetText( "PYRO" ) 
-	menutext:SetText( [[Ambush enemies at corners!
-Your flamethrower is more effective the 
-closer you are to your target!]] ) 
-		menuname:SizeToContents()
-		menutext:SizeToContents()
+	ApplyClassBoardText("pyro", "PYRO")
 		
       icon:GetEntity():SetSequence("selectionmenu_startpose")
 	icon:StartScene("scenes/player/pyro/low/class_select.vcd")
-	icon:GetEntity():SetModelScale(1.2) 
+	icon:GetEntity():SetModelScale(TF2_CLASS_MODEL_SCALE) 
 	if LocalPlayer():Team()==2 or LocalPlayer():Team()==6 then
 		py_img:SetImage( "vgui/class_sel_sm_pyro_red" )
 	elseif LocalPlayer():Team()==TEAM_BLU then
@@ -2361,15 +2563,10 @@ DemomanButton.OnCursorEntered = function()
 	else
 		icon:SetModel( "models/player/demo.mdl" ) -- you can only change colors on playermodels
 	end
-	menuname:SetText( "DEMOMAN" ) 
-	menutext:SetText( [[Remote detonate your stickybombs 
-when enemies are near them!
-Stickybomb jump by standing on 
-a stickybomb and jumping as you detonate it!]] ) 
-		menuname:SizeToContents()
-		menutext:SizeToContents()
+	ApplyClassBoardText("demoman", "DEMOMAN")
 	icon2:GetEntity():SetParent(icon:GetEntity()) 
-	icon2:GetEntity():AddEffects(EF_BONEMERGE) 
+	icon2:GetEntity():AddEffects(EF_BONEMERGE)
+icon2:GetEntity():AddEffects(EF_PARENT_ANIMATES) 
 	icon2:GetEntity():SetModel("models/weapons/c_models/c_grenadelauncher/c_grenadelauncher.mdl") 
 	local convar = GetConVar("loadout_demoman")
 	local split = string.Split(convar:GetString(), ",")
@@ -2386,7 +2583,7 @@ a stickybomb and jumping as you detonate it!]] )
 	
       icon:GetEntity():SetSequence("selectionmenu_startpose")
 	icon:StartScene("scenes/player/demoman/low/class_select.vcd")
-	icon:GetEntity():SetModelScale(1.2) 
+	icon:GetEntity():SetModelScale(TF2_CLASS_MODEL_SCALE) 
 	scout_img:SetImage( "vgui/class_sel_sm_scout_inactive" )
 	sol_img:SetImage( "vgui/class_sel_sm_soldier_inactive" )
 	py_img:SetImage( "vgui/class_sel_sm_pyro_inactive" )
@@ -2424,7 +2621,8 @@ HeavyButton.OnCursorEntered = function()
 		icon:SetModel( "models/player/heavy.mdl" ) -- you can only change colors on playermodels
 	end
 	icon2:GetEntity():SetParent(icon:GetEntity()) 
-	icon2:GetEntity():AddEffects(EF_BONEMERGE) 
+	icon2:GetEntity():AddEffects(EF_BONEMERGE)
+icon2:GetEntity():AddEffects(EF_PARENT_ANIMATES) 
 	icon2:GetEntity():SetModel("models/weapons/c_models/c_minigun/c_minigun.mdl") 
 	
     local convar = GetConVar("loadout_heavy")
@@ -2443,12 +2641,8 @@ HeavyButton.OnCursorEntered = function()
 	
       icon:GetEntity():SetSequence("selectionmenu_startpose")
 	icon:StartScene("scenes/player/heavy/low/class_select.vcd")
-	icon:GetEntity():SetModelScale(1.2) 
-	menuname:SetText( "HEAVY" ) 
-	menutext:SetText( [[Spin your minigun without firing to be ready 
-for approaching enemies!]] ) 
-		menuname:SizeToContents()
-		menutext:SizeToContents()
+	icon:GetEntity():SetModelScale(TF2_CLASS_MODEL_SCALE) 
+	ApplyClassBoardText("heavy", "HEAVY")
 	scout_img:SetImage( "vgui/class_sel_sm_scout_inactive" )
 	sol_img:SetImage( "vgui/class_sel_sm_soldier_inactive" )
 	py_img:SetImage( "vgui/class_sel_sm_pyro_inactive" )
@@ -2487,18 +2681,10 @@ EngineerButton.OnCursorEntered = function()
 	else
 		icon:SetModel( "models/player/engineer.mdl" ) -- you can only change colors on playermodels
 	end
-	menuname:SetText( "ENGINEER" ) 
-	menutext:SetText( [[Collect metal from fallen weapons to build with!
-Build sentryguns to defend your base! 
-Upgrade them to level 3!
-Build dispensers to supply your 
-teammates with health & ammo!
-Build teleporters to help 
-team mates get to the front lines!]] ) 
-		menuname:SizeToContents()
-		menutext:SizeToContents()
+	ApplyClassBoardText("engineer", "ENGINEER")
 	icon2:GetEntity():SetParent(icon:GetEntity()) 
-	icon2:GetEntity():AddEffects(EF_BONEMERGE) 
+	icon2:GetEntity():AddEffects(EF_BONEMERGE)
+icon2:GetEntity():AddEffects(EF_PARENT_ANIMATES) 
 	icon2:GetEntity():SetModel("models/weapons/c_models/c_wrench/c_wrench.mdl") 
 	local convar = GetConVar("loadout_engineer")
 	local split = string.Split(convar:GetString(), ",")
@@ -2518,7 +2704,7 @@ team mates get to the front lines!]] )
 	
       icon:GetEntity():SetSequence("selectionmenu_startpose")
 	icon:StartScene("scenes/player/engineer/low/class_select.vcd")
-	icon:GetEntity():SetModelScale(1.2) 
+	icon:GetEntity():SetModelScale(TF2_CLASS_MODEL_SCALE) 
 	scout_img:SetImage( "vgui/class_sel_sm_scout_inactive" )
 	sol_img:SetImage( "vgui/class_sel_sm_soldier_inactive" )
 	py_img:SetImage( "vgui/class_sel_sm_pyro_inactive" )
@@ -2558,7 +2744,8 @@ MedicButton.OnCursorEntered = function()
 		icon:SetModel( "models/player/medic.mdl" ) -- you can only change colors on playermodels
 	end
 	icon2:GetEntity():SetParent(icon:GetEntity()) 
-	icon2:GetEntity():AddEffects(EF_BONEMERGE) 
+	icon2:GetEntity():AddEffects(EF_BONEMERGE)
+icon2:GetEntity():AddEffects(EF_PARENT_ANIMATES) 
 	icon2:GetEntity():SetModel("models/weapons/c_models/c_medigun/c_medigun.mdl") 
 	
 	local convar = GetConVar("loadout_medic")
@@ -2573,18 +2760,11 @@ MedicButton.OnCursorEntered = function()
 	end
 	PlayClassHoverSound(7)
 	applyPreviewWearables("medic")
-	menuname:SetText( "MEDIC" ) 
-	menutext:SetText( [[Fill your ÜberCharge by 
-	healing your team mates!
-Use a full ÜberCharge to 
-gain invulnerability for you and 
-your medi gun target!]] ) 
-		menuname:SizeToContents()
-		menutext:SizeToContents()
+    ApplyClassBoardText("medic", "MEDIC")
 		
       icon:GetEntity():SetSequence("selectionmenu_startpose")
 	icon:StartScene("scenes/player/medic/low/class_select.vcd")
-	icon:GetEntity():SetModelScale(1.2) 
+	icon:GetEntity():SetModelScale(TF2_CLASS_MODEL_SCALE) 
 	scout_img:SetImage( "vgui/class_sel_sm_scout_inactive" )
 	sol_img:SetImage( "vgui/class_sel_sm_soldier_inactive" )
 	py_img:SetImage( "vgui/class_sel_sm_pyro_inactive" )
@@ -2624,7 +2804,8 @@ SniperButton.OnCursorEntered = function()
 		icon:SetModel( "models/player/sniper.mdl" ) -- you can only change colors on playermodels
 	end
 	icon2:GetEntity():SetParent(icon:GetEntity()) 
-	icon2:GetEntity():AddEffects(EF_BONEMERGE) 
+	icon2:GetEntity():AddEffects(EF_BONEMERGE)
+icon2:GetEntity():AddEffects(EF_PARENT_ANIMATES) 
 	icon2:GetEntity():SetModel("models/weapons/c_models/c_sniperrifle/c_sniperrifle.mdl") 
 	local convar = GetConVar("loadout_sniper")
 	local split = string.Split(convar:GetString(), ",")
@@ -2641,13 +2822,8 @@ SniperButton.OnCursorEntered = function()
 	
       icon:GetEntity():SetSequence("selectionmenu_startpose")
 	icon:StartScene("scenes/player/sniper/low/class_select.vcd")
-	icon:GetEntity():SetModelScale(1.2) 
-	menuname:SetText( "SNIPER" ) 
-	menutext:SetText( [[Your sniper rifle will power up 
-	to do more damage while you are zoomed in!
-aim for the head to do critical hits!]] ) 
-		menuname:SizeToContents()
-		menutext:SizeToContents()
+	icon:GetEntity():SetModelScale(TF2_CLASS_MODEL_SCALE) 
+	ApplyClassBoardText("sniper", "SNIPER")
 	scout_img:SetImage( "vgui/class_sel_sm_scout_inactive" )
 	sol_img:SetImage( "vgui/class_sel_sm_soldier_inactive" )
 	py_img:SetImage( "vgui/class_sel_sm_pyro_inactive" )
@@ -2685,7 +2861,8 @@ SpyButton.OnCursorEntered = function()
 		icon:SetModel( "models/player/spy.mdl" ) -- you can only change colors on playermodels
 	end
 	icon2:GetEntity():SetParent(icon:GetEntity()) 
-	icon2:GetEntity():AddEffects(EF_BONEMERGE) 
+	icon2:GetEntity():AddEffects(EF_BONEMERGE)
+icon2:GetEntity():AddEffects(EF_PARENT_ANIMATES) 
 	icon2:GetEntity():SetModel("models/weapons/c_models/c_knife/c_knife.mdl") 
 	local convar = GetConVar("loadout_spy")
 	local split = string.Split(convar:GetString(), ",")
@@ -2702,17 +2879,8 @@ SpyButton.OnCursorEntered = function()
 	
       icon:GetEntity():SetSequence("selectionmenu_startpose")
 	icon:StartScene("scenes/player/spy/low/class_select.vcd")
-	icon:GetEntity():SetModelScale(1.2) 
-	menuname:SetText( "SPY" ) 
-	menutext:SetText( [[Disguise yourself as a enemy and 
-infiltrate the enemy base!
-cloak yourself to avoid being seen!
-Backstab your enemies with 
-your knife for an instant kill!
-Plant sappers on enemy sentryguns 
-to destroy them!]] ) 
-		menuname:SizeToContents()
-		menutext:SizeToContents()
+	icon:GetEntity():SetModelScale(TF2_CLASS_MODEL_SCALE) 
+	ApplyClassBoardText("spy", "SPY")
 	scout_img:SetImage( "vgui/class_sel_sm_scout_inactive" )
 	sol_img:SetImage( "vgui/class_sel_sm_soldier_inactive" )
 	py_img:SetImage( "vgui/class_sel_sm_pyro_inactive" )
@@ -3673,6 +3841,102 @@ hook.Add( "SpawnMenuOpen", "BlockThisShit", function(  )
 	end
 end )   
 
+local function GetConfiguredSteamAPIKey()
+	local keyFromFile = "BD3C029DC2F1F21A87F7D9FCEB9D0E84"
+	if isstring(keyFromFile) then
+		keyFromFile = string.Trim(keyFromFile)
+		if keyFromFile ~= "" then
+			return keyFromFile
+		end
+	end
+
+	local keyFromConvar = "BD3C029DC2F1F21A87F7D9FCEB9D0E84"
+	if isstring(keyFromConvar) then
+		keyFromConvar = string.Trim(keyFromConvar)
+		if keyFromConvar ~= "" then
+			return keyFromConvar
+		end
+	end
+
+	return nil
+end
+
+local function DecodeSteamInventoryJSON(raw)
+	if not isstring(raw) then return nil, nil end
+	raw = string.gsub(raw, "^\239\187\191", "")
+	raw = string.Trim(raw)
+	if raw == "" then return nil, nil end
+
+	local parsed = util.JSONToTable(raw)
+	if istable(parsed) then
+		return parsed, raw
+	end
+
+	local wrapped = string.match(raw, "(%b{})")
+	if isstring(wrapped) and wrapped ~= "" then
+		parsed = util.JSONToTable(wrapped)
+		if istable(parsed) then
+			return parsed, wrapped
+		end
+	end
+
+	return nil, nil
+end
+
+	local function BuildSteamItemProperties(itemData)
+	if not istable(itemData) then return nil end
+
+	local props = {}
+	local defindex = tonumber(itemData.defindex)
+	if defindex then
+		props.defindex = defindex
+	end
+	local quality = tonumber(itemData.quality)
+	if quality then
+		props.quality = quality
+	end
+
+	local level = tonumber(itemData.level)
+	if level then
+		props.level = level
+	end
+
+	if isstring(itemData.custom_name) and itemData.custom_name ~= "" then
+		props.custom_name = itemData.custom_name
+	end
+	if isstring(itemData.custom_desc) and itemData.custom_desc ~= "" then
+		props.custom_desc = itemData.custom_desc
+	end
+
+		if istable(itemData.attributes) then
+			local attrs = {}
+			for _, att in ipairs(itemData.attributes) do
+				if istable(att) then
+					local id = tonumber(att.defindex or att.attribute_class or att.id)
+					local rawFloat = tonumber(att.float_value)
+					local rawValue = tonumber(att.value)
+					local value = nil
+					-- Steam's item API mixes int-backed and float-backed attributes.
+					-- For int-backed attrs (e.g. paintkit id), float_value is tiny garbage.
+					if rawFloat ~= nil and (rawFloat == 0 or math.abs(rawFloat) > 0.000001) then
+						value = rawFloat
+					else
+						value = rawValue or rawFloat
+					end
+					if id and value then
+						attrs[#attrs + 1] = { id, value }
+					end
+				end
+			end
+		if #attrs > 0 then
+			props.attributes = attrs
+		end
+	end
+
+	if next(props) == nil then return nil end
+	return props
+end
+
 local function MergeSteamInventory(ply)
 	if not IsValid(ply) then
 		ply = LocalPlayer()
@@ -3689,49 +3953,7 @@ local function MergeSteamInventory(ply)
 		}, true)
 	end
 
-	local function getConfiguredSteamAPIKey()
-		local keyFromFile = "BD3C029DC2F1F21A87F7D9FCEB9D0E84"
-		if isstring(keyFromFile) then
-			keyFromFile = string.Trim(keyFromFile)
-			if keyFromFile ~= "" then
-				return keyFromFile
-			end
-		end
-
-		local keyFromConvar = "BD3C029DC2F1F21A87F7D9FCEB9D0E84"
-		if isstring(keyFromConvar) then
-			keyFromConvar = string.Trim(keyFromConvar)
-			if keyFromConvar ~= "" then
-				return keyFromConvar
-			end
-		end
-
-		return nil
-	end
-
-	local function decodeSteamInventoryJSON(raw)
-		if not isstring(raw) then return nil, nil end
-		raw = string.gsub(raw, "^\239\187\191", "")
-		raw = string.Trim(raw)
-		if raw == "" then return nil, nil end
-
-		local parsed = util.JSONToTable(raw)
-		if istable(parsed) then
-			return parsed, raw
-		end
-
-		local wrapped = string.match(raw, "(%b{})")
-		if isstring(wrapped) and wrapped ~= "" then
-			parsed = util.JSONToTable(wrapped)
-			if istable(parsed) then
-				return parsed, wrapped
-			end
-		end
-
-		return nil, nil
-	end
-
-	local steamAPIKey = getConfiguredSteamAPIKey()
+	local steamAPIKey = GetConfiguredSteamAPIKey()
 	if not steamAPIKey then
 		chat.AddText(Color(220, 120, 80), "[TF2-Gamemode] Steam inventory sync skipped: no API key configured. Use: tf_set_steam_api_key <your_key>")
 		if TFDebugBridge and TFDebugBridge.Emit then
@@ -3747,7 +3969,7 @@ local function MergeSteamInventory(ply)
 		, steamAPIKey
 	), 
 	function(body)
-		local decoded, normalizedJSON = decodeSteamInventoryJSON(body)
+		local decoded, normalizedJSON = DecodeSteamInventoryJSON(body)
 		if not istable(decoded) then
 			file.Write("tf_loadout_last_response.txt", tostring(body or ""))
 			local bodyStr = tostring(body or "")
@@ -3801,6 +4023,17 @@ local function MergeSteamInventory(ply)
 					sniper = {-1, -1, -1, -1, -1, -1, -1, -1},
 					spy = {-1, -1, -1, -1, -1, -1, -1, -1},
 				}
+				local loadoutProperties = {
+					scout = {},
+					soldier = {},
+					pyro = {},
+					demoman = {},
+					heavy = {},
+					engineer = {},
+					medic = {},
+					sniper = {},
+					spy = {},
+				}
 
 				local classSlots = {
 					[1] = {name = "scout", slots = {[0] = 1, [1] = 2, [2] = 3, [7] = 4, [8] = 5, [9] = 7, [10] = 6}},
@@ -3827,6 +4060,7 @@ local function MergeSteamInventory(ply)
 				if (json.result) then
 					local items = json.result.items or {}
 					for _, v in ipairs(items) do
+						local itemProperties = BuildSteamItemProperties(v)
 						if (v["equipped"]) then
 							for _, equippedData in ipairs(v["equipped"]) do
 								PrintTable(equippedData)
@@ -3861,6 +4095,9 @@ local function MergeSteamInventory(ply)
 										end
 										if targetIndex then
 											loadouts[className][targetIndex] = defindex
+											if itemProperties then
+												loadoutProperties[className][targetIndex] = itemProperties
+											end
 										end
 									end
 								end
@@ -3886,12 +4123,17 @@ local function MergeSteamInventory(ply)
 							local convar = GetConVar("loadout_" .. className)
 							if convar then
 								local split = {-1, -1, -1, -1, -1, -1, -1}
+								local propSplit = {}
 								local source = loadouts[className]
+								local propSource = loadoutProperties[className] or {}
 								local mapping = outputSlotMap[className]
 								for i = 1, 7 do
-									split[i] = source[mapping[i]] or -1
+									local sourceIndex = mapping[i]
+									split[i] = source[sourceIndex] or -1
+									propSplit[i] = propSource[sourceIndex]
 								end
 								convar:SetString(table.concat(split, ","))
+								loadoutProperties[className] = propSplit
 							end
 							local tauntConvar = GetConVar("loadout_taunts_" .. className)
 							if tauntConvar then
@@ -3904,7 +4146,13 @@ local function MergeSteamInventory(ply)
 							end
 						end
 
-						RunConsoleCommand("loadout_update")
+						net.Start("TF_UpdateLoadoutProperties")
+							net.WriteTable(loadoutProperties)
+						net.SendToServer()
+
+						timer.Simple(0.15, function()
+							RunConsoleCommand("loadout_update")
+						end)
 						hook.Run("TFInventoryCacheUpdated")
 						if TFDebugBridge and TFDebugBridge.Emit then
 							local nItems = 0
@@ -4191,3 +4439,5 @@ hook.Add("CalcView", "TF2_DeathCamView", function(ply, pos, angles, fov)
         fov = ply:GetFOV()
     }
 end)
+
+

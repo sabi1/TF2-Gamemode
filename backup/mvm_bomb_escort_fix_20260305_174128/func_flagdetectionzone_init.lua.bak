@@ -18,25 +18,11 @@ local function GetActiveBombCarrier()
 	return nil, nil
 end
 
-local function IsCarrierInsideAnyDetectionZone(carrier)
-	if not IsValid(carrier) then return false end
-	for _, zone in ipairs(ents.FindByClass("func_flagdetectionzone")) do
-		if IsValid(zone) and istable(zone.Players) and zone.Players[carrier] ~= nil then
-			return true
-		end
-	end
-	return false
-end
-
 local function StartBombWarningLoop()
 	if timer.Exists(WARN_TIMER) then return end
 	timer.Create(WARN_TIMER, 3, 0, function()
 		local carrier = GetActiveBombCarrier()
 		if not IsValid(carrier) then
-			timer.Remove(WARN_TIMER)
-			return
-		end
-		if not IsCarrierInsideAnyDetectionZone(carrier) then
 			timer.Remove(WARN_TIMER)
 			return
 		end
@@ -46,25 +32,6 @@ local function StartBombWarningLoop()
 			end
 		end
 	end)
-end
-
-local function PlayBombAlertAndWarning(carrier)
-	if not IsValid(carrier) then return end
-	if not IsCarrierInsideAnyDetectionZone(carrier) then return end
-	local now = CurTime()
-	if now >= (tonumber(TF_MVM_BombWarnNextAnnounceAt) or 0) then
-		TF_MVM_BombWarnNextAnnounceAt = now + ANNOUNCE_COOLDOWN
-		for _, ply in ipairs(player.GetAll()) do
-			if IsValid(ply) then
-				ply:SendLua([[surface.PlaySound("vo/mvm_bomb_alerts0"..math.random(4,5)..".mp3")]])
-				ply:SendLua([[surface.PlaySound("mvm/mvm_bomb_warning.wav")]])
-				if (ply.TFBot and !ply:IsFriendly(carrier)) then
-					ply.TargetEnt = carrier
-				end
-			end
-		end
-	end
-	StartBombWarningLoop()
 end
 
 function ENT:Initialize()
@@ -103,7 +70,17 @@ function ENT:StartTouch(ent)
 			if v.Carrier == ent then
 				if IsMvMMap() then
 					self.Opened = true
-					PlayBombAlertAndWarning(ent)
+					local now = CurTime()
+					if now >= (tonumber(TF_MVM_BombWarnNextAnnounceAt) or 0) then
+						TF_MVM_BombWarnNextAnnounceAt = now + ANNOUNCE_COOLDOWN
+						for _,ply in ipairs(player.GetAll()) do
+							ply:SendLua([[surface.PlaySound("vo/mvm_bomb_alerts0"..math.random(4,5)..".mp3")]])
+							if (ply.TFBot and !ply:IsFriendly(ent)) then
+								ply.TargetEnt = ent
+							end
+						end
+					end
+					StartBombWarningLoop()
 				end
 			end
 		end
@@ -133,16 +110,6 @@ hook.Add("TF_MVM_MissionStarted", "TF_MVM_ResetGateDetectionZones", function()
 	end
 	timer.Remove(WARN_TIMER)
 	TF_MVM_BombWarnNextAnnounceAt = 0
-end)
-
-hook.Add("TF_MVM_BombPickedUp", "TF_MVM_BombWarn_OnPickup", function(carrier, bombEnt)
-	if not IsMvMMap() then return end
-	if not IsValid(carrier) then
-		carrier = GetActiveBombCarrier()
-	end
-	if not IsValid(carrier) then return end
-	if not IsCarrierInsideAnyDetectionZone(carrier) then return end
-	PlayBombAlertAndWarning(carrier)
 end)
 
 hook.Add("TF_MVM_MissionFailed", "TF_MVM_StopBombWarningLoop_Failed", function()

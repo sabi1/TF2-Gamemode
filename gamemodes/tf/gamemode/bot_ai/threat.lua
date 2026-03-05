@@ -7,6 +7,7 @@ local cv_unreach_z = CreateConVar("tf_bot_unreachable_target_z_diff", "240", {FC
 local cv_unreach_xy = CreateConVar("tf_bot_unreachable_target_xy", "700", {FCVAR_ARCHIVE, FCVAR_NOTIFY})
 local cv_unreach_persist = CreateConVar("tf_bot_unreachable_target_persist", "1.0", {FCVAR_ARCHIVE, FCVAR_NOTIFY})
 local cv_red_respect_blu_spawn = CreateConVar("tf_bot_red_respect_blu_spawn", "1", {FCVAR_ARCHIVE, FCVAR_NOTIFY}, "RED bots ignore BLU targets in BLU spawn areas.")
+local cv_allow_carrier_fight = CreateConVar("tf_mvm_bot_allow_flag_carrier_to_fight", "1", {FCVAR_ARCHIVE, FCVAR_NOTIFY})
 
 local function className(ply)
 	return string.lower(tostring((ply.GetPlayerClass and ply:GetPlayerClass()) or ply.playerclass or ""))
@@ -101,8 +102,17 @@ function M:SelectTarget(bot, state)
 	end
 	local mvm = TFBotValveAI.MvM
 	if mvm and mvm:IsCombatSuppressed(state) then
+		local mvmState = state.mvm or {}
+		local mode = tostring(mvmState.mode or "")
+		local carrierCanFight = mvmState.isCarrier == true
+			and mode == "mvm_deliver_bomb"
+			and cv_allow_carrier_fight:GetBool()
+		if carrierCanFight then
+			-- Allow bomb-carrier threat acquisition while delivering the bomb.
+		else
 		state.vision.currentThreat = nil
 		return nil
+		end
 	end
 	local now = CurTime()
 	state.vision.unreachableUntil = state.vision.unreachableUntil or {}
