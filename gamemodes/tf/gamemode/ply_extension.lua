@@ -343,6 +343,24 @@ local function getItemTextBlob(item)
 	return string.lower(table.concat(parts, " "))
 end
 
+local function itemHasSchemaTaunt(item)
+	return istable(item) and istable(item.taunt) and istable(item.taunt.custom_taunt_scene_per_class)
+end
+
+local specialManualTauntCommands = {
+	["tf_taunt_laugh"] = true,
+	["tf_taunt_conga_start"] = true,
+	["tf_taunt_russian_start"] = true,
+	["tf_taunt_squaredance_intro"] = true,
+	["tf_taunt_rockpaperscissors_intro"] = true,
+	["tf_taunt_flipping_intro"] = true,
+	["tf_taunt_highfive"] = true,
+	["tf_taunt_highfive_success"] = true,
+	["tf_taunt_highfive_fail"] = true,
+	["tf_taunt_skullcracker"] = true,
+	["tf_taunt_moped"] = true,
+}
+
 local function resolveTauntCommandForItem(item)
 	if not istable(item) then return nil end
 	local defindex = tonumber(item.id)
@@ -350,6 +368,11 @@ local function resolveTauntCommandForItem(item)
 		return tauntCommandByDefindex[defindex]
 	end
 	local mappedCmd = commandFromItemToken(item)
+	if itemHasSchemaTaunt(item) and (not isstring(mappedCmd) or mappedCmd == "" or string.StartWith(mappedCmd, "tf_taunt_token ") or not specialManualTauntCommands[mappedCmd]) then
+		if defindex then
+			return "tf_taunt_schema " .. tostring(defindex)
+		end
+	end
 	if isstring(mappedCmd) and mappedCmd ~= "" then
 		return mappedCmd
 	end
@@ -1143,6 +1166,21 @@ local old_group_translate = {
 	[4] = {3,0},
 }
 
+local function CountOwnedSentries(ply)
+	local regular = 0
+	local disposable = 0
+	for _, ent in ipairs(ents.FindByClass("obj_sentrygun")) do
+		if not IsValid(ent) then continue end
+		if ent:GetOwner() ~= ply and ent:GetBuilder() ~= ply and ent.Player ~= ply then continue end
+		if ent.TF_MVM_DisposableSentry then
+			disposable = disposable + 1
+		else
+			regular = regular + 1
+		end
+	end
+	return regular, disposable
+end
+
 function meta:Build(number1,number2)
 	local args
 	local group = tonumber(number1)
@@ -1152,8 +1190,19 @@ function meta:Build(number1,number2)
 	
 	if builds[group] and (!GetConVar("tf_unlimited_buildings"):GetBool()) then
 		local tab = ents.FindByClass(builds[group])
+		local disposableLimit = 0
+		if builds[group] == "obj_sentrygun" and self.TF_MVM_Dynamic then
+			disposableLimit = math.max(0, math.floor(tonumber(self.TF_MVM_Dynamic.DisposableSentryCount) or 0))
+		end
 		for k, v in pairs(tab) do
-			if v.Player == self and builds[group] ~= "obj_teleporter" then
+			if builds[group] == "obj_sentrygun" then
+				local regularCount, disposableCount = CountOwnedSentries(self)
+				local allowDisposable = disposableLimit > 0 and regularCount >= 1 and disposableCount < disposableLimit
+				if regularCount >= 1 and not allowDisposable then
+					return
+				end
+				break
+			elseif v.Player == self and builds[group] ~= "obj_teleporter" then
 				return
 			elseif v.Player == self and builds[group] == "obj_teleporter" then
 				for i, o in pairs(tab) do

@@ -32,6 +32,18 @@ end
 local tex_ready_square_bg = surface.GetTextureID("hud/tournament_panel_brown")
 local cachedReadyNameFont = nil
 local cachedReadyPromptFont = nil
+local readyNameFontCandidates = {
+	"HudFontSmallestBold",
+	"HudFontSmallBold",
+	"DermaDefaultBold",
+	"TF_MVM_ReadyNameFallback",
+}
+local readyPromptFontCandidates = {
+	"HudFontSmallBold",
+	"HudFontSmallestBold",
+	"DermaDefaultBold",
+	"TF_MVM_ReadyNameFallback",
+}
 
 surface.CreateFont("TF_MVM_ReadyNameFallback", {
 	font = "Tahoma",
@@ -57,15 +69,13 @@ local function GetReadyNameFont()
 	if cachedReadyNameFont then
 		return cachedReadyNameFont
 	end
-	if IsUsableFont("PlayerPanelPlayerName") then
-		cachedReadyNameFont = "PlayerPanelPlayerName"
-	elseif IsUsableFont("HudFontSmallestBold") then
-		cachedReadyNameFont = "HudFontSmallestBold"
-	elseif IsUsableFont("DermaDefaultBold") then
-		cachedReadyNameFont = "DermaDefaultBold"
-	else
-		cachedReadyNameFont = "TF_MVM_ReadyNameFallback"
+	for _, fontName in ipairs(readyNameFontCandidates) do
+		if IsUsableFont(fontName) then
+			cachedReadyNameFont = fontName
+			break
+		end
 	end
+	cachedReadyNameFont = cachedReadyNameFont or "TF_MVM_ReadyNameFallback"
 	return cachedReadyNameFont
 end
 
@@ -76,15 +86,15 @@ local function GetReadyPromptFont()
 	local preferred = MvMRes and MvMRes.readyPromptFont or nil
 	if IsUsableFont(preferred) then
 		cachedReadyPromptFont = preferred
-	elseif IsUsableFont("HudFontSmallBold") then
-		cachedReadyPromptFont = "HudFontSmallBold"
-	elseif IsUsableFont("HudFontSmallestBold") then
-		cachedReadyPromptFont = "HudFontSmallestBold"
-	elseif IsUsableFont("DermaDefaultBold") then
-		cachedReadyPromptFont = "DermaDefaultBold"
 	else
-		cachedReadyPromptFont = "TF_MVM_ReadyNameFallback"
+		for _, fontName in ipairs(readyPromptFontCandidates) do
+			if IsUsableFont(fontName) then
+				cachedReadyPromptFont = fontName
+				break
+			end
+		end
 	end
+	cachedReadyPromptFont = cachedReadyPromptFont or "TF_MVM_ReadyNameFallback"
 	return cachedReadyPromptFont
 end
 
@@ -215,10 +225,15 @@ do
 		return nil
 	end
 
-	local waveTree = TF2Res and TF2Res.Load and TF2Res.Load("resource/ui/wavestatuspanel.res")
-	local statusTree = TF2Res and TF2Res.Load and TF2Res.Load("resource/ui/hudmannvsmachinestatus.res")
-	local tournamentSetupTree = TF2Res and TF2Res.Load and TF2Res.Load("resource/ui/hudtournamentsetup.res")
-	local tournamentTree = TF2Res and TF2Res.Load and TF2Res.Load("resource/ui/hudtournament.res")
+	local waveResPath = (TF_GetHudResPath and TF_GetHudResPath("mvm", "wave", "resource/ui/wavestatuspanel.res")) or "resource/ui/wavestatuspanel.res"
+	local statusResPath = (TF_GetHudResPath and TF_GetHudResPath("mvm", "status", "resource/ui/hudmannvsmachinestatus.res")) or "resource/ui/hudmannvsmachinestatus.res"
+	local tournamentSetupResPath = (TF_GetHudResPath and TF_GetHudResPath("mvm", "tournamentSetup", "resource/ui/hudtournamentsetup.res")) or "resource/ui/hudtournamentsetup.res"
+	local tournamentResPath = (TF_GetHudResPath and TF_GetHudResPath("mvm", "tournament", "resource/ui/hudtournament.res")) or "resource/ui/hudtournament.res"
+
+	local waveTree = TF2Res and TF2Res.Load and TF2Res.Load(waveResPath)
+	local statusTree = TF2Res and TF2Res.Load and TF2Res.Load(statusResPath)
+	local tournamentSetupTree = TF2Res and TF2Res.Load and TF2Res.Load(tournamentSetupResPath)
+	local tournamentTree = TF2Res and TF2Res.Load and TF2Res.Load(tournamentResPath)
 
 	local wavePanel = FindByFieldNames(waveTree, "WaveStatusPanel")
 	if not wavePanel then

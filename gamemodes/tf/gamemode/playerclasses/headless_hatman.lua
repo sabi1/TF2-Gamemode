@@ -1,4 +1,4 @@
-CLASS.Name = "Demoman"
+CLASS.Name = "Horseless Headless Horsemann"
 CLASS.Speed = 520
 CLASS.Health = 920
 
@@ -13,9 +13,9 @@ if CLIENT then
 	}
 end
 
-CLASS.Loadout = {"tf_weapon_grenadelauncher", "tf_weapon_pipebomblauncher", "tf_weapon_bottle"}
-CLASS.DefaultLoadout = {"Hidden Big Axe"}
-CLASS.ModelName = "demo"
+CLASS.Loadout = {}
+CLASS.DefaultLoadout = {}
+CLASS.ModelName = "headless_hatman"
 
 CLASS.Gibs = {
 	[GIB_LEFTLEG]		= GIBS_DEMOMAN_START,
@@ -29,32 +29,19 @@ CLASS.Gibs = {
 
 CLASS.Sounds = {
 	paincrticialdeath = {
-		Sound("vo/demoman_paincrticialdeath01.wav"),
-		Sound("vo/demoman_paincrticialdeath02.wav"),
-		Sound("vo/demoman_paincrticialdeath03.wav"),
-		Sound("vo/demoman_paincrticialdeath04.wav"),
-		Sound("vo/demoman_paincrticialdeath05.wav"),
+		Sound("Halloween.HeadlessBossPain"),
 	},
 	painsevere = {
-		Sound("vo/demoman_painsevere01.wav"),
-		Sound("vo/demoman_painsevere02.wav"),
-		Sound("vo/demoman_painsevere03.wav"),
-		Sound("vo/demoman_painsevere04.wav"),
+		Sound("Halloween.HeadlessBossPain"),
 	},
 	painsharp = {
-		Sound("vo/demoman_painsharp01.wav"),
-		Sound("vo/demoman_painsharp02.wav"),
-		Sound("vo/demoman_painsharp03.wav"),
-		Sound("vo/demoman_painsharp04.wav"),
-		Sound("vo/demoman_painsharp05.wav"),
-		Sound("vo/demoman_painsharp06.wav"),
-		Sound("vo/demoman_painsharp07.wav"),
+		Sound("Halloween.HeadlessBossPain"),
 	},
 }
 
 CLASS.AmmoMax = {
-	[TF_PRIMARY]	= 16,		-- primary
-	[TF_SECONDARY]	= 24,		-- secondary
+	[TF_PRIMARY]	= 0,		-- primary
+	[TF_SECONDARY]	= 0,		-- secondary
 	[TF_METAL]		= 100,		-- metal
 	[TF_GRENADES1]	= 0,		-- grenades1
 	[TF_GRENADES2]	= 0,		-- grenades2

@@ -162,8 +162,43 @@ function meta:GiveHealth(c, is_fraction, allow_overheal)
 end
 
 -- Team related functions
+local function is_reprogrammed(ent)
+	return TF_COND_REPROGRAMMED and ent.InCond and ent:InCond(TF_COND_REPROGRAMMED)
+end
+
+local function get_disguise_visible_team(ent, observerTeam)
+	if not IsValid(ent) or not ent:IsPlayer() then
+		return nil
+	end
+	if not ent.GetNWBool or not ent:GetNWBool("Disguised", false) then
+		return nil
+	end
+	if ent:GetNWBool("Cloaked", false) then
+		return nil
+	end
+	local disguiseTeam = ent:GetNWInt("TFSpyDisguiseTeam", -1)
+	if disguiseTeam < 0 then
+		return nil
+	end
+	if observerTeam and disguiseTeam == observerTeam then
+		return disguiseTeam
+	end
+	return nil
+end
+
 function meta:IsFriendly(target)
 	local t1, t2 = self:EntityTeam(), target:EntityTeam()
+
+	-- TF2 behavior: disguised spies appear friendly only to entities on the disguise team.
+	local selfVisibleTeam = get_disguise_visible_team(self, t2)
+	if selfVisibleTeam then
+		t1 = selfVisibleTeam
+	end
+	local targetVisibleTeam = get_disguise_visible_team(target, t1)
+	if targetVisibleTeam then
+		t2 = targetVisibleTeam
+	end
+
 	if t1 == TEAM_FRIENDLY || t2 == TEAM_FRIENDLY then
 		return true
 	end
@@ -173,6 +208,14 @@ function meta:IsFriendly(target)
 	if target:IsPlayer() and target:EntityTeam() == TEAM_SPECTATOR and t1~=t2 then
 		return true
 	end
+
+	-- REPROGRAMMED allegiance: affected entities become friendly to each other and hostile to non-reprogrammed entities.
+	local self_reprogrammed = is_reprogrammed(self)
+	local target_reprogrammed = is_reprogrammed(target)
+	if self_reprogrammed or target_reprogrammed then
+		return self_reprogrammed and target_reprogrammed
+	end
+
 	return (self:HasNPCFlag(NPC_ALWAYSFRIENDLY) or
 			target:HasNPCFlag(NPC_ALWAYSFRIENDLY) or
 			(t1==TEAM_RED or t1==TEAM_BLU or t1==TEAM_YELLOW or t1==TEAM_GREEN or t1==TF_TEAM_PVE_INVADERS or t1==TEAM_INFECTED) and t1==t2)

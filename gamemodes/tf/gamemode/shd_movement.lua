@@ -1,3 +1,6 @@
+local cv_tf_clamp_back_speed = CreateConVar("tf_clamp_back_speed", "0.9", {FCVAR_REPLICATED, FCVAR_ARCHIVE}, "TF2 backpedal speed clamp multiplier.")
+local cv_tf_clamp_back_speed_min = CreateConVar("tf_clamp_back_speed_min", "100", {FCVAR_REPLICATED, FCVAR_ARCHIVE}, "Minimum speed before TF2 backpedal clamp is enforced.")
+
 hook.Add("Move", "TFMove", function(pl, move)
 	if CLIENT and not pl.TempAttributes then
 		pl.TempAttributes = {}
@@ -37,17 +40,76 @@ hook.Add("Move", "TFMove", function(pl, move)
 		move:SetMaxClientSpeed(math.max(move:GetMaxClientSpeed(), driveSpeed))
 		return
 	end
+
+	local schemaState = pl.__SchemaTauntState
+	if istable(schemaState) and schemaState.active and (pl:GetNWBool("TauntingSchemaMove", false) or schemaState.moveSpeed > 0 or schemaState.turnSpeed > 0 or schemaState.forceForward) then
+		local moveSpeed = math.max(tonumber(schemaState.moveSpeed) or 0, 0)
+		local turnSpeed = math.max(tonumber(schemaState.turnSpeed) or 0, 0)
+		local turnAccelTime = math.max(tonumber(schemaState.turnAccel) or 0.2, 0.01)
+		local steerInput = math.Clamp(tonumber(pl.__SchemaTauntMoveInput) or 0, -1, 1)
+		local driveInput = math.Clamp(tonumber(pl.__SchemaTauntDriveInput) or 0, -1, 1)
+		local dt = engine.TickInterval()
+
+		pl.__SchemaTauntTurnRate = pl.__SchemaTauntTurnRate or 0
+		pl.__SchemaTauntDriveRate = pl.__SchemaTauntDriveRate or 0
+
+		if turnSpeed > 0 then
+			local targetTurn = steerInput * turnSpeed
+			local turnDelta = (turnSpeed / turnAccelTime) * dt
+			pl.__SchemaTauntTurnRate = math.Approach(pl.__SchemaTauntTurnRate, targetTurn, turnDelta)
+
+			local ea = pl:EyeAngles()
+			ea.y = math.NormalizeAngle(ea.y + pl.__SchemaTauntTurnRate * dt)
+			pl:SetEyeAngles(ea)
+		else
+			pl.__SchemaTauntTurnRate = 0
+		end
+
+		local targetDrive = 0
+		if schemaState.forceForward then
+			targetDrive = moveSpeed
+		elseif moveSpeed > 0 then
+			targetDrive = driveInput * moveSpeed
+		end
+
+		if moveSpeed > 0 then
+			local driveDelta = (moveSpeed / turnAccelTime) * dt
+			pl.__SchemaTauntDriveRate = math.Approach(pl.__SchemaTauntDriveRate, targetDrive, driveDelta)
+		else
+			pl.__SchemaTauntDriveRate = 0
+		end
+
+		local forward = pl:GetForward()
+		forward.z = 0
+		forward:Normalize()
+
+		local vel = move:GetVelocity()
+		local planar = forward * pl.__SchemaTauntDriveRate
+		vel.x = planar.x
+		vel.y = planar.y
+		move:SetVelocity(vel)
+		move:SetForwardSpeed(pl.__SchemaTauntDriveRate)
+		move:SetSideSpeed(0)
+		move:SetUpSpeed(0)
+		move:SetMaxSpeed(math.max(move:GetMaxSpeed(), math.abs(pl.__SchemaTauntDriveRate)))
+		move:SetMaxClientSpeed(math.max(move:GetMaxClientSpeed(), math.abs(pl.__SchemaTauntDriveRate)))
+		return
+	end
+
+	pl.__SchemaTauntTurnRate = 0
+	pl.__SchemaTauntDriveRate = 0
 	
-	-- Players run 10% slower when moving backwards
+	-- Mirror TF2 tf_clamp_back_speed / tf_clamp_back_speed_min behavior.
 	local fwd = move:GetForwardSpeed()
-	if fwd<0 and not pl:IsHL2() then
-		local sp = -pl:GetRunSpeed() * 0.9
-		if fwd<sp then
-			--move:SetForwardSpeed(sp)
-  			if not pl:Crouching() then 
-  				move:SetMaxSpeed(math.abs(-pl:GetRunSpeed() * 0.9 ))
-  				move:SetMaxClientSpeed(math.abs(-pl:GetRunSpeed() * 0.9 ))
-  			end
+	if fwd < 0 and not pl:IsHL2() then
+		local clampScale = cv_tf_clamp_back_speed:GetFloat()
+		local clampMin = cv_tf_clamp_back_speed_min:GetFloat()
+		if clampScale < 1 and move:GetVelocity():Length() > clampMin then
+			local maxBackSpeed = pl:GetRunSpeed() * clampScale
+			if math.abs(fwd) > maxBackSpeed and not pl:Crouching() then
+				move:SetMaxSpeed(maxBackSpeed)
+				move:SetMaxClientSpeed(maxBackSpeed)
+			end
 		end
 	end
 	

@@ -73,8 +73,10 @@ local VGUIFiles = {
 	
 	"hud_cptest";
 	"hud_roundtimer";
+	"hud_halloweenboss";
 	"hud_menuengybuild";
 	"hud_menuengydestroy";
+	"hud_menuspydisguise";
 	"hud_menutaunt";
 	"hud_voicemenu";
 	
@@ -404,7 +406,8 @@ function GM:HUDDrawTargetID()
 		-- The fonts internal drop shadow looks lousy with AA on
 		draw.SimpleText( text, font, x + 1, y + 1, Color( 0, 0, 0, 120 ) )
 		draw.SimpleText( text, font, x + 2, y + 2, Color( 0, 0, 0, 50 ) )
-		draw.SimpleText( text, font, x, y, team.GetColor( GAMEMODE:EntityTeam(trace.Entity) ) )
+		local targetTeam = GAMEMODE.GetEntityVisibleTeamForViewer and GAMEMODE:GetEntityVisibleTeamForViewer(trace.Entity, LocalPlayer()) or GAMEMODE:EntityTeam(trace.Entity)
+		draw.SimpleText( text, font, x, y, team.GetColor(targetTeam) )
 		
 		y = y + h + 5
 		
@@ -417,7 +420,8 @@ function GM:HUDDrawTargetID()
 		
 		draw.SimpleText( text, font, x + 1, y + 1, Color( 0, 0, 0, 120 ) )
 		draw.SimpleText( text, font, x + 2, y + 2, Color( 0, 0, 0, 50 ) )
-		draw.SimpleText( text, font, x, y, team.GetColor( GAMEMODE:EntityTeam(trace.Entity) ) )
+		local targetTeam = GAMEMODE.GetEntityVisibleTeamForViewer and GAMEMODE:GetEntityVisibleTeamForViewer(trace.Entity, LocalPlayer()) or GAMEMODE:EntityTeam(trace.Entity)
+		draw.SimpleText( text, font, x, y, team.GetColor(targetTeam) )
 
 	else
     	return false
@@ -426,7 +430,11 @@ end
 
 local function targetid_trace_condition(tr,ply)
 	ply = ply or LocalPlayer()
-	return !ply:IsHL2() and IsValid(tr.Entity) and (tr.Entity:IsTFPlayer() ) and (GAMEMODE:EntityTeam(tr.Entity)==LocalPlayer():Team()) and tr.Entity:GetMaterial() != "color" and tr.Entity:GetMaterial() != "models/shadertest/shader3" and tr.Entity:GetMaterial() != "models/props_combine/tprings_globe"
+	if ply:IsHL2() then return false end
+	if not IsValid(tr.Entity) or not tr.Entity:IsTFPlayer() then return false end
+
+	local targetTeam = GAMEMODE.GetEntityVisibleTeamForViewer and GAMEMODE:GetEntityVisibleTeamForViewer(tr.Entity, ply) or GAMEMODE:EntityTeam(tr.Entity)
+	return targetTeam == ply:Team() and tr.Entity:GetMaterial() != "color" and tr.Entity:GetMaterial() != "models/shadertest/shader3" and tr.Entity:GetMaterial() != "models/props_combine/tprings_globe"
 end
 
 function GM:TargetIDThink()

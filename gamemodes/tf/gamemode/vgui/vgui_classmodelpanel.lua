@@ -10,6 +10,14 @@ local tex_MotionBlur	= render.GetMoBlurTex0()
 local mat_white = Material("models/debug/debugwhite")
 local pp_motionblur = surface.GetTextureID("pp/motionblur")
 
+local function ClearPreviewParticle(ent)
+	if not IsValid(ent) then return end
+	if ent.StopParticles then
+		ent:StopParticles()
+	end
+	ent.PreviewParticleSystem = nil
+end
+
 local function SetupTF2Lighting(ent, spotlight)
 	if TF2LightwarpApplyModelLighting then
 		TF2LightwarpApplyModelLighting(ent:GetPos() + Vector(0, 0, 68))
@@ -72,17 +80,51 @@ function PANEL:AddModel(id, mdl, keys)
 		ent.ColorType = keys.Color
 		--print("Yes!")
 	end
+
+	if isnumber(keys.Skin) then
+		ent:SetSkin(math.max(0, math.floor(keys.Skin)))
+	end
+
+	if isstring(keys.MaterialOverride) and keys.MaterialOverride ~= "" then
+		ent:SetMaterial(keys.MaterialOverride)
+	end
+
+	if istable(keys.TintColor) then
+		ent:SetRenderMode(RENDERMODE_TRANSCOLOR)
+		ent:SetColor(Color(
+			math.Clamp(tonumber(keys.TintColor.r) or 255, 0, 255),
+			math.Clamp(tonumber(keys.TintColor.g) or 255, 0, 255),
+			math.Clamp(tonumber(keys.TintColor.b) or 255, 0, 255),
+			math.Clamp(tonumber(keys.TintColor.a) or 255, 0, 255)
+		))
+	end
+
+	if isstring(keys.ParticleSystem) and keys.ParticleSystem ~= "" then
+		ParticleEffectAttach(keys.ParticleSystem, PATTACH_ABSORIGIN_FOLLOW, ent, 0)
+		ent.PreviewParticleSystem = keys.ParticleSystem
+	end
 	
 	if keys.LayoutEntity then
 		ent.LayoutEntity = keys.LayoutEntity
 	end
 	
 	if IsValid(self.Entities[id]) then
+		ClearPreviewParticle(self.Entities[id])
 		self.Entities[id]:Remove()
 	end
 	
 	self.Entities[id] = ent
 	return ent
+end
+
+function PANEL:OnRemove()
+	for _, ent in pairs(self.Entities or {}) do
+		if IsValid(ent) then
+			ClearPreviewParticle(ent)
+			ent:Remove()
+		end
+	end
+	self.Entities = {}
 end
 
 function PANEL:GetModelEntity(id)

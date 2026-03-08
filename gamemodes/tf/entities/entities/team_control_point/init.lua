@@ -2,17 +2,41 @@ include("shared.lua")
 AddCSLuaFile("shared.lua")
 AddCSLuaFile("cl_init.lua")
 
+local DEFAULT_CP_MODEL = "models/props_gameplay/cap_point_base.mdl"
+
+local function GetPointID(ent)
+	return tonumber(ent.ID or (ent.Properties and ent.Properties.point_index))
+end
+
+local function GetOwnerTeam(ent)
+	return tonumber(ent.OwnerTeam or (ent.Properties and ent.Properties.point_default_owner) or 0) or 0
+end
+
 function ENT:Initialize()
-	self.ID = self.Properties.point_index
-	self.OwnerTeam = self.Properties.point_default_owner
+	self.Properties = self.Properties or {}
+	self.ID = GetPointID(self)
+	self.OwnerTeam = GetOwnerTeam(self)
 	self.Locked = false
 	self:SetNWInt("Team", self.OwnerTeam)
 	self:UpdateModel()
 end
 
 function ENT:UpdateModel()
-	self:SetModel(self.Properties["team_model_"..self.OwnerTeam])
-	self:SetBodygroup(0, self.OwnerTeam)
+	local model = self.Properties and self.Properties["team_model_" .. tostring(self.OwnerTeam)]
+	if not isstring(model) or model == "" then
+		model = self:GetModel()
+	end
+	if not isstring(model) or model == "" or model == "models/error.mdl" then
+		model = DEFAULT_CP_MODEL
+	end
+
+	self:SetModel(model)
+
+	local bodygroupCount = self:GetNumBodyGroups() or 0
+	if bodygroupCount > 0 then
+		local maxValue = math.max(0, self:GetBodygroupCount(0) - 1)
+		self:SetBodygroup(0, math.Clamp(self.OwnerTeam, 0, maxValue))
+	end
 	self:ResetSequence(self:SelectWeightedSequence(ACT_IDLE))
 	self:DrawShadow(false)
 end
@@ -22,8 +46,6 @@ function ENT:InitPostEntity()
 		return
 	end
 	
-	--print(self)
-	
 	self.Properties.team_previouspoint_2_0 = ents.FindByName(self.Properties.team_previouspoint_2_0 or "")[1] or NULL
 	self.Properties.team_previouspoint_2_1 = ents.FindByName(self.Properties.team_previouspoint_2_1 or "")[1] or NULL
 	self.Properties.team_previouspoint_2_2 = ents.FindByName(self.Properties.team_previouspoint_2_2 or "")[1] or NULL
@@ -31,16 +53,17 @@ function ENT:InitPostEntity()
 	self.Properties.team_previouspoint_3_1 = ents.FindByName(self.Properties.team_previouspoint_3_1 or "")[1] or NULL
 	self.Properties.team_previouspoint_3_2 = ents.FindByName(self.Properties.team_previouspoint_3_2 or "")[1] or NULL
 	
-	PrintTable(self.Properties or {}) 
-	
 	self:SendData()
 	self.Ready = true
 end
 
 function ENT:SendData(pl)
+	local pointID = GetPointID(self)
+	if not pointID then return end
+
 	umsg.Start("TF_AddControlPoint", pl)
-		umsg.Char(self.Properties.point_index)
-		umsg.String(self.Properties.point_printname)
+		umsg.Char(pointID)
+		umsg.String(self.Properties.point_printname or "")
 		
 		umsg.String(self.Properties.team_icon_0 or "")
 		umsg.String(self.Properties.team_icon_2 or "")
@@ -50,17 +73,20 @@ function ENT:SendData(pl)
 		umsg.String(self.Properties.team_overlay_2 or "")
 		umsg.String(self.Properties.team_overlay_3 or "")
 		
-		umsg.Char(self.Properties.point_default_owner)
+		umsg.Char(GetOwnerTeam(self))
 	umsg.End()
 end
 
 function ENT:SetOwnerTeam(o)
 	self.OwnerTeam = o
 	self:SetNWInt("Team", self.OwnerTeam)
-	umsg.Start("TF_SetControlPointTeam")
-		umsg.Char(self.ID)
-		umsg.Char(self.OwnerTeam)
-	umsg.End()
+	self.ID = GetPointID(self)
+	if self.ID then
+		umsg.Start("TF_SetControlPointTeam")
+			umsg.Char(self.ID)
+			umsg.Char(self.OwnerTeam)
+		umsg.End()
+	end
 	self:UpdateModel()
 end
 function ENT:GetOwnerTeam()
@@ -69,16 +95,22 @@ end
 
 function ENT:Open()
 	self.Locked = false
-	umsg.Start("TF_OpenControlPoint")
-		umsg.Char(self.ID)
-	umsg.End()
+	self.ID = GetPointID(self)
+	if self.ID then
+		umsg.Start("TF_OpenControlPoint")
+			umsg.Char(self.ID)
+		umsg.End()
+	end
 end
 
 function ENT:Lock()
 	self.Locked = true
-	umsg.Start("TF_LockControlPoint")
-		umsg.Char(self.ID)
-	umsg.End()
+	self.ID = GetPointID(self)
+	if self.ID then
+		umsg.Start("TF_LockControlPoint")
+			umsg.Char(self.ID)
+		umsg.End()
+	end
 end
 
 function ENT:SetLocked(b)

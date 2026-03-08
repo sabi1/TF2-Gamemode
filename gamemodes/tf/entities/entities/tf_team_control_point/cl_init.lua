@@ -1,6 +1,14 @@
 include("shared.lua")
 
 ENT.RenderGroup = RENDERGROUP_TRANSLUCENT
+local function ToCPIndex(rawId)
+	return (tonumber(rawId) or 0) + 1
+end
+
+local function GetControlPoints()
+	GAMEMODE.ControlPoints = GAMEMODE.ControlPoints or {}
+	return GAMEMODE.ControlPoints
+end
 
 local function UpdateControlPointTexture(cp)	
 	local str
@@ -47,9 +55,9 @@ usermessage.Hook("TF_SetControlPointLayout", function(msg)
 end)
 
 usermessage.Hook("TF_AddControlPoint", function(msg)
-	if not GAMEMODE.ControlPoints then GAMEMODE.ControlPoints = {} end
+	local controlPoints = GetControlPoints()
 	
-	local id = msg:ReadChar()
+	local id = ToCPIndex(msg:ReadChar())
 	local cp = {}
 	
 	cp.name 			= msg:ReadString()
@@ -75,16 +83,12 @@ usermessage.Hook("TF_AddControlPoint", function(msg)
 	cp.locked			= false
 	
 	UpdateControlPointTexture(cp)
-	
-	--MsgN("Control point "..id)
-	PrintTable(cp)
-	
-	GAMEMODE.ControlPoints[id] = cp
+	controlPoints[id] = cp
 end)
 
 usermessage.Hook("TF_SetControlPointTeam", function(msg)
-	local id = msg:ReadChar()
-	local cp = GAMEMODE.ControlPoints[id]
+	local id = ToCPIndex(msg:ReadChar())
+	local cp = GetControlPoints()[id]
 	
 	if not cp then return end
 	
@@ -93,18 +97,27 @@ usermessage.Hook("TF_SetControlPointTeam", function(msg)
 end)
 
 usermessage.Hook("TF_LockControlPoint", function(msg)
-	local id = msg:ReadChar()
-	local cp = GAMEMODE.ControlPoints[id]
+	local id = ToCPIndex(msg:ReadChar())
+	local cp = GetControlPoints()[id]
 	
 	if not cp then return end
 	
 	cp.locked = true
 	UpdateControlPointTexture(cp)
 end)
+usermessage.Hook("TF_UnLockControlPoint", function(msg)
+	local id = ToCPIndex(msg:ReadChar())
+	local cp = GetControlPoints()[id]
+
+	if not cp then return end
+
+	cp.locked = false
+	UpdateControlPointTexture(cp)
+end)
 
 usermessage.Hook("TF_OpenControlPoint", function(msg)
-	local id = msg:ReadChar()
-	local cp = GAMEMODE.ControlPoints[id]
+	local id = ToCPIndex(msg:ReadChar())
+	local cp = GetControlPoints()[id]
 	
 	if not cp then return end
 	
@@ -113,7 +126,7 @@ usermessage.Hook("TF_OpenControlPoint", function(msg)
 end)
 
 usermessage.Hook("TF_EnterControlPoint", function(msg)
-	LocalPlayer().CurrentControlPoint = msg:ReadChar()
+	LocalPlayer().CurrentControlPoint = ToCPIndex(msg:ReadChar())
 end)
 
 usermessage.Hook("TF_ExitControlPoint", function(msg)

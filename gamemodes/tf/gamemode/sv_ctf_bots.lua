@@ -530,6 +530,8 @@ cvars.AddChangeCallback("tf_bot_include_legacy_names", RebuildNameBag, "TFBotNam
 cvars.AddChangeCallback("tf_bot_name_file", RebuildNameBag, "TFBotNamesRebuildFile")
 
 local function IsValidTarget(bot,target)
+	local className = IsValid(target) and string.lower(tostring(target:GetClass() or "")) or ""
+	local isHalloweenBoss = className == "headless_hatman" or className == "eyeball_boss" or className == "merasmus"
 
 	if (IsValid(target)) then
 		if (target:EntIndex() == bot:EntIndex()) then
@@ -561,6 +563,9 @@ local function IsValidTarget(bot,target)
 				return false
 			end
 		else
+			if isHalloweenBoss then
+				return true
+			end
 			local et = target.EntityTeam and target:EntityTeam() or nil
 			if et and et ~= TEAM_RED and et ~= TEAM_BLU and et ~= TF_TEAM_PVE_INVADERS then
 				return false
@@ -570,6 +575,29 @@ local function IsValidTarget(bot,target)
 	end
 	return false
 
+end
+
+local tf_bot_halloween_boss_focus_time = CreateConVar(
+	"tf_bot_halloween_boss_focus_time",
+	"8",
+	{ FCVAR_ARCHIVE, FCVAR_NOTIFY },
+	"How long bots should hard-focus a newly spawned Halloween boss."
+)
+
+local function IsHalloweenBossEnt(ent)
+	if not IsValid(ent) or not ent.GetClass then return false end
+	local className = string.lower(tostring(ent:GetClass() or ""))
+	return className == "headless_hatman" or className == "eyeball_boss" or className == "merasmus"
+end
+
+local function FindActiveHalloweenBoss()
+	for _, className in ipairs({ "headless_hatman", "eyeball_boss", "merasmus" }) do
+		local ent = ents.FindByClass(className)[1]
+		if IsValid(ent) then
+			return ent
+		end
+	end
+	return nil
 end
 
 local function GetVisionRecognizeTime(bot)
@@ -642,6 +670,11 @@ local function CanTrackTarget(bot, target)
 		return false
 	end
 
+	if IsHalloweenBossEnt(target) then
+		-- Bosses are giant/obvious and should be reacted to immediately.
+		return bot:Visible(target)
+	end
+
 	local visible = bot:Visible(target)
 	local info = UpdateVisionMemory(bot, target, visible)
 	if not info then return false end
@@ -701,6 +734,9 @@ local function ScoreThreat(bot, target)
 	-- Source-inspired "fear sentry in range" behavior.
 	if class == "obj_sentrygun" and dist <= 1100 then
 		score = score + 5000
+	end
+	if class == "headless_hatman" or class == "eyeball_boss" or class == "merasmus" then
+		score = score + 4200
 	end
 	local isMvM = string.find(string.lower(game.GetMap() or ""), "mvm_", 1, true) ~= nil
 	local isMvMInvader = bot:Team() == TEAM_BLU or bot:Team() == TF_TEAM_PVE_INVADERS or bot.IsMVMRobot == true
@@ -782,6 +818,15 @@ local function AcquireEnemyTarget(bot)
 	if not IsValid(bot) then return nil end
 	local now = CurTime()
 
+	if bot._forceBossTargetUntil and now < bot._forceBossTargetUntil and IsValid(bot._forceBossTarget) and CanTrackTarget(bot, bot._forceBossTarget) then
+		return bot._forceBossTarget
+	end
+
+	local activeBoss = FindActiveHalloweenBoss()
+	if IsValid(activeBoss) and CanTrackTarget(bot, activeBoss) then
+		return activeBoss
+	end
+
 	if IsValid(bot.TargetEnt) and CanTrackTarget(bot, bot.TargetEnt) and bot._nextTargetReselectTime and now < bot._nextTargetReselectTime then
 		return bot.TargetEnt
 	end
@@ -797,7 +842,14 @@ local function AcquireEnemyTarget(bot)
 		for _, v in ipairs(GetNearbyEntities(bot, range, GetAdaptiveInterval(CVFloat(tf_bot_sense_interval, 0.25), 0.05))) do
 			if IsValidTarget(bot, v) and CanTrackTarget(bot, v) then
 				local className = v:GetClass()
-				if v:IsPlayer() or className == "obj_sentrygun" or className == "obj_dispenser" or className == "obj_teleporter" then
+				if v:IsPlayer()
+					or className == "obj_sentrygun"
+					or className == "obj_dispenser"
+					or className == "obj_teleporter"
+					or className == "headless_hatman"
+					or className == "eyeball_boss"
+					or className == "merasmus"
+				then
 					local score = ScoreThreat(bot, v)
 					if score > bestScore then
 						bestScore = score
@@ -815,6 +867,22 @@ local function AcquireEnemyTarget(bot)
 	end
 	return nil
 end
+
+hook.Add("TF_HalloweenBossSpawned", "TFBot_ReactToHalloweenBossSpawn", function(boss, scenario)
+	if not IsValid(boss) then return end
+	local now = CurTime()
+	local focusDuration = math.max(1, tf_bot_halloween_boss_focus_time:GetFloat())
+	for _, bot in ipairs(player.GetBots()) do
+		if not IsValid(bot) or not bot.TFBot or not bot:Alive() then continue end
+		if not IsValidTarget(bot, boss) then continue end
+		bot._forceBossTarget = boss
+		bot._forceBossTargetUntil = now + focusDuration
+		bot._nextTargetReselectTime = 0
+		if not IsValid(bot.TargetEnt) or not IsHalloweenBossEnt(bot.TargetEnt) then
+			bot.TargetEnt = boss
+		end
+	end
+end)
 
 function lookForClosestFriendlyHumanLookingAtMe(bot)
 	if not IsValid(bot) then return nil end
@@ -990,6 +1058,41 @@ local function GetObjectivePos(ent)
 	end
 
 	return pos
+end
+
+local function GetControlPointObjectiveForBot(bot)
+	if not IsValid(bot) then return nil, nil end
+
+	local bestEnt = nil
+	local bestPos = nil
+	local bestDist = nil
+	local origin = bot:GetPos()
+
+	for _, point in ipairs(ents.FindByClass("team_control_point")) do
+		if not IsValid(point) then continue end
+		local pos = GetObjectivePos(point)
+		if not isvector(pos) then continue end
+		local d = origin:DistToSqr(pos)
+		if not bestDist or d < bestDist then
+			bestDist = d
+			bestEnt = point
+			bestPos = pos
+		end
+	end
+
+	if IsValid(bestEnt) and isvector(bestPos) then
+		return bestEnt, bestPos
+	end
+
+	for _, area in ipairs(GetCachedEntities("trigger_capture_area")) do
+		if not IsValid(area) then continue end
+		local pos = GetObjectivePos(area)
+		if isvector(pos) then
+			return area, pos
+		end
+	end
+
+	return nil, nil
 end
 
 local function IsMvMGateBot(bot)
@@ -1881,6 +1984,116 @@ local function IsBotCosmeticItem(item)
 	return false
 end
 
+local function CollectEquipRegionsForItem(item)
+	if not istable(item) then return {} end
+
+	local regions = {}
+	local function addRegion(regionValue)
+		if not isstring(regionValue) then return end
+		local trimmed = string.Trim(string.lower(regionValue))
+		if trimmed == "" then return end
+		for token in string.gmatch(trimmed, "[^,%s;|]+") do
+			if token ~= "" then
+				regions[token] = true
+			end
+		end
+	end
+
+	local function walkRegions(value)
+		if isstring(value) then
+			addRegion(value)
+		elseif istable(value) then
+			for k, v in pairs(value) do
+				if isstring(k) then
+					addRegion(k)
+				end
+				walkRegions(v)
+			end
+		end
+	end
+
+	walkRegions(item.equip_region)
+	walkRegions(item.equip_regions)
+	return regions
+end
+
+local function HasCosmeticRegionConflict(savedBySlot)
+	local seenByRegion = {}
+	for _, slot in ipairs(BOT_COSMETIC_SLOTS) do
+		local itemName = savedBySlot[slot]
+		if not isstring(itemName) or itemName == "" then continue end
+		local item = ResolveItemByName(itemName)
+		local regions = CollectEquipRegionsForItem(item)
+		for regionName in pairs(regions) do
+			if seenByRegion[regionName] and seenByRegion[regionName] ~= slot then
+				return true
+			end
+			seenByRegion[regionName] = slot
+		end
+	end
+	return false
+end
+
+local function CosmeticChoiceConflicts(slot, candidateName, savedBySlot)
+	local item = ResolveItemByName(candidateName)
+	local candidateRegions = CollectEquipRegionsForItem(item)
+	if next(candidateRegions) == nil then return false end
+
+	for _, otherSlot in ipairs(BOT_COSMETIC_SLOTS) do
+		if otherSlot == slot then continue end
+		local otherName = savedBySlot[otherSlot]
+		if not isstring(otherName) or otherName == "" then continue end
+		local otherItem = ResolveItemByName(otherName)
+		local otherRegions = CollectEquipRegionsForItem(otherItem)
+		for regionName in pairs(candidateRegions) do
+			if otherRegions[regionName] then
+				return true
+			end
+		end
+	end
+
+	return false
+end
+
+local function ResolveSavedCosmeticConflicts(savedBySlot, candidates)
+	if not istable(savedBySlot) then return end
+	if not HasCosmeticRegionConflict(savedBySlot) then return end
+
+	for _ = 1, 8 do
+		local resolvedThisPass = false
+		for _, slot in ipairs(BOT_COSMETIC_SLOTS) do
+			local chosen = savedBySlot[slot]
+			if not isstring(chosen) or chosen == "" then continue end
+			if not CosmeticChoiceConflicts(slot, chosen, savedBySlot) then continue end
+
+			local foundReplacement = false
+			local slotCandidates = candidates and candidates[slot] or nil
+			if istable(slotCandidates) and #slotCandidates > 0 then
+				local attempts = math.min(#slotCandidates * 2, 24)
+				for _ = 1, attempts do
+					local pick = table.Random(slotCandidates)
+					if isstring(pick) and pick ~= "" and pick ~= chosen and not CosmeticChoiceConflicts(slot, pick, savedBySlot) then
+						savedBySlot[slot] = pick
+						foundReplacement = true
+						resolvedThisPass = true
+						break
+					end
+				end
+			end
+
+			if not foundReplacement then
+				-- Better to have one free slot than two overlapping cosmetics.
+				savedBySlot[slot] = nil
+				resolvedThisPass = true
+			end
+		end
+
+		if not resolvedThisPass or not HasCosmeticRegionConflict(savedBySlot) then
+			break
+		end
+	end
+end
+
 local function BuildLoadoutSlotMap(bot)
 	local bySlot = {}
 	if not IsValid(bot) or not istable(bot.ItemLoadout) then return bySlot end
@@ -2040,6 +2253,35 @@ local function IsGmodPlayerBotClass(bot, className)
 	return legacy == "gmodplayer"
 end
 
+local function ClearBotSpawnInvulnerability(bot)
+	if not IsValid(bot) then return end
+
+	if bot.HasGodMode and bot:HasGodMode() and bot.GodDisable then
+		bot:GodDisable()
+	end
+
+	local invulnConds = {
+		TF_COND_INVULNERABLE,
+		TF_COND_INVULNERABLE_USER_BUFF,
+		TF_COND_INVULNERABLE_CARD_EFFECT,
+		TF_COND_INVULNERABLE_HIDE_UNLESS_DAMAGED,
+		TF_COND_INVULNERABLE_WEARINGOFF,
+	}
+
+	for _, cond in ipairs(invulnConds) do
+		if cond and bot.InCond and bot:InCond(cond) then
+			bot:RemoveCond(cond, true)
+		end
+	end
+
+	if bot.SetNWBool then
+		bot:SetNWBool("Invulnerable", false)
+	end
+	if bot.SetMaterial then
+		bot:SetMaterial("")
+	end
+end
+
 function TFBot_ApplyRandomLoadout(bot, opts)
 	if not IsValid(bot) or not bot.TFBot or bot.IsL4DZombie then return false end
 	if bot.TF_MVMManaged or bot.IsMVMRobot then return false end
@@ -2096,9 +2338,9 @@ function TFBot_ApplyRandomLoadout(bot, opts)
 	else
 		MaybeMutateSavedLoadout(bot._savedRandomLoadout, candidates)
 	end
+	ResolveSavedCosmeticConflicts(bot._savedRandomLoadout, candidates)
 
 	local changed = false
-	--[[
 	for _, slot in ipairs(BOT_LOADOUT_SLOTS) do
 		local chosen = bot._savedRandomLoadout[slot]
 		if isstring(chosen) and chosen ~= "" then
@@ -2115,7 +2357,7 @@ function TFBot_ApplyRandomLoadout(bot, opts)
 				end
 			end
 		end
-	end]]
+	end
 	if not changed then
 		SetLoadoutReason(bot, "no_changed_slots")
 		BotLoadoutDebug(bot, "abort: no slot changed")
@@ -2536,6 +2778,7 @@ end
 hook.Add("PlayerSpawn", "LeadBot_S_PlayerSpawn", function(bot)
 	if (IsValid(bot)) then
 		if bot.TFBot then
+				ClearBotSpawnInvulnerability(bot)
 				if bot.TF_MVMManaged or bot.IsMVMRobot then
 					-- Popfile runtime controls class/loadout for managed MvM bots.
 					bot:SetFOV(75, 0)
@@ -3207,25 +3450,11 @@ hook.Add("SetupMove", "LeadBot_Control", function(bot, mv, cmd)
 				bot.botPos = targetpos
 				
 				--bot.LastSegmented = CurTime() + math.Rand(0.5, 1)
-			--[[
-			elseif string.find(game.GetMap(), "cp_") then -- CP AI
-
-
-				for k, v in pairs(ents.FindByClass("trigger_capture_area")) do
-					if GAMEMODE:EntityTeam(v.CapturePoint) ~= bot:Team() then
-						intelcap = v.CapturePoint
-					else
-						fintelcap = v.CapturePoint
-					end
+			elseif not IsMvMMap() then -- CP/KOTH objective selector
+				local cpEnt, cpPos = GetControlPointObjectiveForBot(bot)
+				if IsValid(cpEnt) and isvector(cpPos) then
+					bot.botPos = cpPos
 				end
-
-				if GAMEMODE:EntityTeam(intelcap) != ent:Team() then -- or if friendly intelligence has capture
-					targetpos = intelcap.Pos -- goto friendly cap spot
-					ignoreback = true
-				end
-
-				bot.botPos = targetpos
-			]]
 			elseif bombAvailable(bot) and IsMvMMap() and !GAMEMODE.RoundHasWinner then -- MvM objective selector (Phase 1)
 				local mvmDecision = SelectMvMAction(bot, controller, ShouldFollowIntelCarrier)
 				if mvmDecision then
@@ -4452,7 +4681,15 @@ hook.Add( "StartCommand", "TFBot_Movement", function( ply, cmd )
 		ply._stuckSince = nil
 	end
 
-	if (ply:GetNWBool("Taunting",false) == true) then
+	local stunned = false
+	if ply.HasPlayerState and _G.PLAYERSTATE_STUNNED then
+		stunned = ply:HasPlayerState(PLAYERSTATE_STUNNED) and true or false
+	end
+	if not stunned and ply.InCond and _G.TF_COND_STUNNED then
+		stunned = ply:InCond(TF_COND_STUNNED) and true or false
+	end
+
+	if stunned or (ply:GetNWBool("Taunting",false) == true) then
 		cmd:SetForwardMove(0)
 		cmd:SetSideMove(0)
 		cmd:SetUpMove(0)

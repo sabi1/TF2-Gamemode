@@ -4,6 +4,29 @@ AddCSLuaFile("cl_init.lua")
 
 include("shared.lua")
 
+local function CountOwnedSentries(ply)
+	local regular = 0
+	local disposable = 0
+	for _, ent in ipairs(ents.FindByClass("obj_sentrygun")) do
+		if not IsValid(ent) then continue end
+		if ent:GetOwner() ~= ply and ent:GetBuilder() ~= ply and ent.Player ~= ply then continue end
+		if ent.TF_MVM_DisposableSentry then
+			disposable = disposable + 1
+		else
+			regular = regular + 1
+		end
+	end
+	return regular, disposable
+end
+
+local function ShouldBuildDisposableSentry(ply)
+	if not IsValid(ply) or not ply.TF_MVM_Dynamic then return false end
+	local limit = math.max(0, math.floor(tonumber(ply.TF_MVM_Dynamic.DisposableSentryCount) or 0))
+	if limit <= 0 then return false end
+	local regular, disposable = CountOwnedSentries(ply)
+	return regular >= 1 and disposable < limit
+end
+
 function ENT:Initialize()
 	local owner = self:GetOwner()
 	if not IsValid(owner) then
@@ -44,6 +67,8 @@ function ENT:Initialize()
 		self:SetModel("models/buildables/repair_level1.mdl")
 	elseif obj.class_name == "obj_sentrygun" and self.Player:GetWeapons()[3]:GetClass() == "tf_weapon_engi_fist" then
 		self:SetModel("models/combine_turrets/floor_turret.mdl")
+	elseif obj.class_name == "obj_sentrygun" and ShouldBuildDisposableSentry(self.Player) then
+		self.dt.Scale = 0.75
 	end
 	self.CurrentYaw = 0
 	self.TargetYaw = 0
@@ -67,6 +92,7 @@ function ENT:Build()
 	
 	local obj = self:GetOwner():GetBuilding()
 	if not obj then return end
+	local buildDisposableSentry = obj.class_name == "obj_sentrygun" and ShouldBuildDisposableSentry(self.Player)
 	
 	local ent = ents.Create(obj.class_name)   
 	if not IsValid(ent) then return end
@@ -145,6 +171,9 @@ function ENT:Build()
 	end
 	if obj.class_name == "obj_sentrygun" and self.Player.TempAttributes.BuildsMiniSentries then
 		ent:SetBuildingType(1)
+	elseif buildDisposableSentry then
+		ent:SetBuildingType(1)
+		ent.TF_MVM_DisposableSentry = true
 	elseif obj.class_name == "obj_dispenser" and self.Player.TempAttributes.BuildsMiniDispensers then
 		ent:SetBuildingType(1)
 	elseif obj.class_name == "obj_dispenser" and self.Player:GetWeapons()[3]:GetClass() == "tf_weapon_engi_fist" then

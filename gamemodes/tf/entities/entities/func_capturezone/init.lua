@@ -26,6 +26,41 @@ local function TriggerBombDeployOutcome(carrier, captureZone, bombEnt)
 	end
 end
 
+function ENT:Capture(ply)
+	if not IsValid(ply) then return false end
+	if not ply:IsPlayer() then return false end
+	if self.TeamNum and self.TeamNum ~= 0 and ply:Team() ~= self.TeamNum then return false end
+
+	local flag = nil
+	for _, v in pairs(ents.FindByClass("item_teamflag_mvm")) do
+		if not IsValid(v) then continue end
+		if v.Carrier ~= ply then continue end
+		local linked = nil
+		if v.GetCaptureZone then
+			linked = v:GetCaptureZone()
+		elseif v.CaptureZone then
+			linked = v.CaptureZone
+		end
+		if IsValid(linked) and linked ~= self then continue end
+		flag = v
+		break
+	end
+	if not IsValid(flag) then return false end
+
+	if flag.Capture then
+		flag:Capture(ply, self)
+	end
+
+	self:TriggerOutput("OnCapture", ply)
+	if ply:Team() == TEAM_RED then
+		self:TriggerOutput("OnCapTeam1", ply)
+	elseif ply:Team() == TEAM_BLU then
+		self:TriggerOutput("OnCapTeam2", ply)
+	end
+
+	return true
+end
+
 function ENT:Initialize()
 	local pos = self:GetPos()
 	local mins, maxs = self:WorldSpaceAABB() -- https://forum.facepunch.com/gmoddev/lmcw/Brush-entitys-ent-GetPos/1/#postdwfmq
@@ -156,8 +191,8 @@ function ENT:StartTouch(ply)
 		carrier:GodEnable()
 
 		local playedDeployAnim = false
-		if carrier.DoAnimationEvent and PLAYERANIMEVENT_CUSTOM then
-			carrier:DoAnimationEvent(PLAYERANIMEVENT_CUSTOM, "primary_deploybomb")
+		if carrier.DoAnimationEvent and PLAYERANIMEVENT_CUSTOM_GESTURE then
+			carrier:DoAnimationEvent(PLAYERANIMEVENT_CUSTOM_GESTURE, "primary_deploybomb")
 			playedDeployAnim = true
 		end
 
@@ -191,7 +226,11 @@ function ENT:StartTouch(ply)
 				effectPos = carrier:GetPos()
 			end
 
-			v:Capture(carrier, captureZone)
+			if IsValid(captureZone) and captureZone.Capture then
+				captureZone:Capture(carrier)
+			else
+				v:Capture(carrier, captureZone)
+			end
 
 			ParticleEffect("fluidSmokeExpl_ring_mvm", effectPos + Vector(0, 0, 24), Angle(0, 0, 0))
 			ParticleEffect("fireSmoke_Collumn_mvmAcres_sm", effectPos + Vector(0, 0, 24), Angle(0, 0, 0))

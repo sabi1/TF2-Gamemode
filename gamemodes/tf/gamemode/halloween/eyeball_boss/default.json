@@ -1,0 +1,22 @@
+{
+  "speed": 250,
+  "hover_height": 200,
+  "acceleration": 500,
+  "horiz_damping": 2,
+  "vert_damping": 1,
+  "attack_range": 750,
+  "health_base": 8000,
+  "health_per_player": 400,
+  "min_players": 10,
+  "emerge_time": 1.4,
+  "notice_time": 0.9,
+  "stun_time": 3.0,
+  "stun_burst_window": 2.0,
+  "stun_burst_damage": 500,
+  "teleport_interval_min": 10.0,
+  "teleport_interval_max": 18.0,
+  "volley_count": 3,
+  "volley_interval": 0.35,
+  "projectile_class": "tf_projectile_rocket",
+  "projectile_speed": 1100
+}

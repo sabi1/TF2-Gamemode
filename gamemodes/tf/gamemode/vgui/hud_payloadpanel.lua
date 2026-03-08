@@ -64,6 +64,7 @@ local function ShouldDrawPayloadHUD()
 	if not GAMEMODE then return false end
 	if GetConVarNumber("cl_drawhud") == 0 then return false end
 	if GAMEMODE.ShowScoreboard then return false end
+	if TF_IsPayloadHudMode and not TF_IsPayloadHudMode() then return false end
 
 	local forceHL2 = GetConVar("tf_forcehl2hud")
 	local override = GetConVar("tf_payload_hud_override")

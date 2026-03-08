@@ -15,8 +15,8 @@ PLAYERSTATE_STUNNED		= 512
 PLAYERSTATE_PUKEDON		= 1024
 PLAYERSTATE_MARKED		= 2048
 PLAYERSTATE_SPEED		= 4096
+PLAYERSTATE_REPROGRAMMED = 8192
 --[[
-= 8192
 = 16384
 = 32768
 ]]
@@ -264,7 +264,7 @@ function meta:UpdateStateParticles(state_override)
 					att
 				)
 			end
-			if v.particle2 and self:HasPlayerState(k, state_override) and GetConVar("tf_pyrovision"):GetBool() then
+			if v.particle2 and self:HasPlayerState(k, state_override) and TF2_IsPyrovisionEnabled(CLIENT and LocalPlayer() or self) then
 				local f = v.particlenamefunc or DefaultParticleNameFunc
 				local att = v.particleattachment or 0
 				if type(att)=="string" then
@@ -409,6 +409,11 @@ PlayerStates = {
 	[PLAYERSTATE_MILK] = {
 		particle = "peejar_drips_milk",
 	},
+	[PLAYERSTATE_REPROGRAMMED] = {
+		particle = "bot_radio_waves",
+		particleattachtype = PATTACH_POINT_FOLLOW,
+		particleattachment = "head",
+	},
 }
 
 PrecacheParticleSystem("burningplayer_red")
@@ -435,6 +440,7 @@ PrecacheParticleSystem("eye_powerup_red_lvl_4")
 PrecacheParticleSystem("eye_powerup_blue_lvl_4")
 PrecacheParticleSystem("mark_for_death")
 PrecacheParticleSystem("speed_boost_trail")
+PrecacheParticleSystem("bot_radio_waves")
 
 -- TF2 condition API (Source SDK 2013 style): AddCond/RemoveCond/InCond.
 PERMANENT_CONDITION = PERMANENT_CONDITION or -1
@@ -919,15 +925,53 @@ function meta:GetConditionProvider(eCond)
 	return (self:InCond(cond) and IsValid(data.m_pProvider)) and data.m_pProvider or NULL
 end
 
+local function tf_disguise_cond_debug_enabled()
+	if not SERVER then return false end
+	local cvar = GetConVar("tf_debug_spy_disguise")
+	return cvar and cvar:GetBool() or false
+end
+
+local function tf_disguise_cond_name(cond)
+	if cond == TF_COND_DISGUISED then return "TF_COND_DISGUISED" end
+	if cond == TF_COND_DISGUISING then return "TF_COND_DISGUISING" end
+	return tostring(cond)
+end
+
+local function tf_disguise_cond_should_log(ent, cond)
+	if not tf_disguise_cond_debug_enabled() then return false end
+	if cond ~= TF_COND_DISGUISED and cond ~= TF_COND_DISGUISING then return false end
+	return IsValid(ent) and ent:IsPlayer()
+end
+
+local function tf_disguise_cond_debug(ent, cond, msg, includeTrace)
+	if not tf_disguise_cond_should_log(ent, cond) then return end
+	local nick = isfunction(ent.Nick) and ent:Nick() or "unknown"
+	local className = isfunction(ent.GetPlayerClass) and ent:GetPlayerClass() or "?"
+	print(string.format("[tf_debug_spy_disguise] t=%.3f ply=%s<%d> class=%s cond=%s %s",
+		CurTime(),
+		tostring(nick),
+		ent:EntIndex(),
+		tostring(className),
+		tf_disguise_cond_name(cond),
+		tostring(msg)
+	))
+	if includeTrace and debug and debug.traceback then
+		print(debug.traceback("[tf_debug_spy_disguise] cond stack", 3))
+	end
+end
+
 function meta:AddCond(eCond, flDuration, pProvider)
 	local cond = resolve_cond(eCond)
 	if cond == nil or cond < 0 or cond >= (TF_COND_LAST or 0) then return false end
 
+	local providerStr = IsValid(pProvider) and string.format("%s<%d>", pProvider:GetClass(), pProvider:EntIndex()) or tostring(pProvider)
+	tf_disguise_cond_debug(self, cond, string.format("AddCond called duration=%s provider=%s", tostring(flDuration), providerStr), false)
+
 	-- Match TF2: dead players do not take new conditions.
 	if self:IsPlayer() and not self:Alive() then
+		tf_disguise_cond_debug(self, cond, "AddCond blocked: player is dead", true)
 		return false
 	end
-
 	ensure_condition_core(self)
 
 	local duration = flDuration
@@ -937,6 +981,12 @@ function meta:AddCond(eCond, flDuration, pProvider)
 	-- list-managed conditions (mirrors CTFConditionList behavior for selected conds)
 	local list_handled, list_added_new = cond_list_add(self, cond, duration, pProvider)
 	if list_handled then
+		tf_disguise_cond_debug(
+			self,
+			cond,
+			string.format("AddCond list-managed handled added_new=%s was_active=%s", tostring(list_added_new), tostring(was_active)),
+			not list_added_new
+		)
 		if list_added_new then
 			self._tf_cond_to_state_bridge = true
 			self:OnConditionAdded(cond)
@@ -969,6 +1019,9 @@ function meta:AddCond(eCond, flDuration, pProvider)
 		self._tf_cond_to_state_bridge = true
 		self:OnConditionAdded(cond)
 		self._tf_cond_to_state_bridge = false
+		tf_disguise_cond_debug(self, cond, "AddCond applied (was inactive -> active)", false)
+	else
+		tf_disguise_cond_debug(self, cond, "AddCond refreshed (already active)", false)
 	end
 
 	sync_cond_bits_network(self)
@@ -978,11 +1031,15 @@ end
 function meta:RemoveCond(eCond, ignore_duration)
 	local cond = resolve_cond(eCond)
 	if cond == nil or cond < 0 or cond >= (TF_COND_LAST or 0) then return false end
-	if not self:InCond(cond) then return false end
+	if not self:InCond(cond) then
+		tf_disguise_cond_debug(self, cond, string.format("RemoveCond ignored: not active (ignore_duration=%s)", tostring(ignore_duration)), true)
+		return false
+	end
 
 	ensure_condition_core(self)
 	local list_handled, list_removed = cond_list_remove(self, cond, ignore_duration)
 	if list_handled then
+		tf_disguise_cond_debug(self, cond, string.format("RemoveCond list-managed handled removed=%s ignore_duration=%s", tostring(list_removed), tostring(ignore_duration)), not list_removed)
 		if list_removed then
 			self._tf_cond_to_state_bridge = true
 			self:OnConditionRemoved(cond)
@@ -994,6 +1051,7 @@ function meta:RemoveCond(eCond, ignore_duration)
 
 	local data = get_cond_data(self, cond)
 	if not ignore_duration and data.m_flExpireTime and data.m_flExpireTime ~= PERMANENT_CONDITION and data.m_flExpireTime > 0 then
+		tf_disguise_cond_debug(self, cond, string.format("RemoveCond blocked by duration expire=%s (use ignore_duration=true to force)", tostring(data.m_flExpireTime)), true)
 		return false
 	end
 
@@ -1012,6 +1070,8 @@ function meta:RemoveCond(eCond, ignore_duration)
 	data.m_pProvider = NULL
 	data.m_bPrevActive = false
 
+	tf_disguise_cond_debug(self, cond, string.format("RemoveCond applied ignore_duration=%s", tostring(ignore_duration)), true)
+
 	sync_cond_bits_network(self)
 	return true
 end
@@ -1028,6 +1088,53 @@ end
 function meta:ConditionGameRulesThink()
 	if not SERVER then return end
 	ensure_condition_core(self)
+
+	-- TF2 server think: spy with the dispenser crouch attribute continually refreshes this cond.
+	if self:IsPlayer() and self:Alive() and self.GetPlayerClass and self:GetPlayerClass() == "spy" and self.Crouching and self:Crouching() then
+		local ground = self.GetGroundEntity and self:GetGroundEntity() or NULL
+		if ground ~= nil and ground ~= NULL then
+			local has_dispenser_attr = false
+			local function has_attr(ent)
+				if not IsValid(ent) then return false end
+				if ent.GetAttributeValue then
+					local v = tonumber(ent:GetAttributeValue("disguise_as_dispenser_on_crouch", 0)) or 0
+					if v ~= 0 then return true end
+				end
+				if ent.GetAttribute then
+					local att = ent:GetAttribute("disguise_as_dispenser_on_crouch")
+					if att and (tonumber(att.value) or 0) ~= 0 then
+						return true
+					end
+				end
+				return false
+			end
+
+			local active = self.GetActiveWeapon and self:GetActiveWeapon() or NULL
+			has_dispenser_attr = has_attr(active)
+
+			if not has_dispenser_attr and self.GetWeapons then
+				for _, wep in ipairs(self:GetWeapons()) do
+					if has_attr(wep) then
+						has_dispenser_attr = true
+						break
+					end
+				end
+			end
+
+			if not has_dispenser_attr and istable(self.PlayerItemList) then
+				for _, item in pairs(self.PlayerItemList) do
+					if has_attr(item) then
+						has_dispenser_attr = true
+						break
+					end
+				end
+			end
+
+			if has_dispenser_attr then
+				self:AddCond(TF_COND_DISGUISED_AS_DISPENSER, 0.5, self)
+			end
+		end
+	end
 
 	local healer_count = 0
 	if self.GetNumHealers then
@@ -1274,6 +1381,14 @@ local function get_invuln_fallback_material(ent)
 	return "models/effects/invulnfx_red2"
 end
 
+local function has_full_invuln_cond(ent)
+	return has_any_cond(ent, {
+		TF_COND_INVULNERABLE,
+		TF_COND_INVULNERABLE_USER_BUFF,
+		TF_COND_INVULNERABLE_CARD_EFFECT,
+	})
+end
+
 function meta:OnAddInvulnerable()
 	if self.SetNWBool then
 		self:SetNWBool("Invulnerable", true)
@@ -1292,6 +1407,23 @@ function meta:OnAddInvulnerable()
 	self:RemoveCond(TF_COND_PLAGUE, true)
 end
 
+-- Respawn-room visualizer protection should not force the full uber material.
+function meta:OnAddInvulnerableHideUnlessDamaged()
+	if has_full_invuln_cond(self) then
+		if self.SetNWBool then
+			self:SetNWBool("Invulnerable", true)
+		end
+		return
+	end
+
+	if self.SetNWBool then
+		self:SetNWBool("Invulnerable", false)
+	end
+	if CLIENT and self:IsPlayer() and not matproxy and self.SetMaterial then
+		self:SetMaterial("")
+	end
+end
+
 function meta:OnRemoveInvulnerable()
 	if has_any_cond(self, {
 		TF_COND_INVULNERABLE,
@@ -1299,6 +1431,22 @@ function meta:OnRemoveInvulnerable()
 		TF_COND_INVULNERABLE_CARD_EFFECT,
 		TF_COND_INVULNERABLE_HIDE_UNLESS_DAMAGED,
 	}) then
+		return
+	end
+
+	if self.SetNWBool then
+		self:SetNWBool("Invulnerable", false)
+	end
+	if CLIENT and self:IsPlayer() and not matproxy and self.SetMaterial then
+		self:SetMaterial("")
+	end
+end
+
+function meta:OnRemoveInvulnerableHideUnlessDamaged()
+	if has_full_invuln_cond(self) then
+		if self.SetNWBool then
+			self:SetNWBool("Invulnerable", true)
+		end
 		return
 	end
 
@@ -1955,6 +2103,176 @@ function meta:OnRemoveTmpDamageBonus()
 	self:OnRemoveOffenseBuff()
 end
 
+local function refresh_speed_from_conditions(self)
+	if self.TeamFortress_SetSpeed then
+		self:TeamFortress_SetSpeed()
+		return
+	end
+	if SERVER and self.ResetClassSpeed then
+		self:ResetClassSpeed()
+	end
+end
+
+function meta:OnAddReprogrammed()
+	self:AddPlayerState(PLAYERSTATE_REPROGRAMMED, true)
+	if self.SetNWBool then
+		self:SetNWBool("Reprogrammed", true)
+	end
+end
+
+function meta:OnRemoveReprogrammed()
+	self:RemovePlayerState(PLAYERSTATE_REPROGRAMMED, true)
+	if self.SetNWBool then
+		self:SetNWBool("Reprogrammed", false)
+	end
+end
+
+function meta:OnAddDisguisedAsDispenser()
+	refresh_speed_from_conditions(self)
+	if self.SetNWBool then
+		self:SetNWBool("DisguisedAsDispenser", true)
+	end
+end
+
+function meta:OnRemoveDisguisedAsDispenser()
+	refresh_speed_from_conditions(self)
+	if self.SetNWBool then
+		self:SetNWBool("DisguisedAsDispenser", false)
+	end
+end
+
+local function set_cond_flag(self, name, enabled)
+	if self.SetNWBool then
+		self:SetNWBool(name, enabled and true or false)
+	end
+end
+
+local function update_healing_received_mult(self)
+	if not self.SetNWFloat or not self.InCond then return end
+
+	local mult = 1
+	if TF_COND_MEDIGUN_DEBUFF and self:InCond(TF_COND_MEDIGUN_DEBUFF) then
+		mult = mult * 0.75
+	end
+	if TF_COND_HEALING_DEBUFF and self:InCond(TF_COND_HEALING_DEBUFF) then
+		mult = mult * 0.5
+	end
+
+	self:SetNWFloat("TFCondHealingMult", mult)
+end
+
+function meta:OnAddAiming()
+	set_cond_flag(self, "Aiming", true)
+	refresh_speed_from_conditions(self)
+end
+
+function meta:OnRemoveAiming()
+	set_cond_flag(self, "Aiming", false)
+	refresh_speed_from_conditions(self)
+end
+
+function meta:OnAddStealthedBlink() set_cond_flag(self, "StealthedBlink", true) end
+function meta:OnRemoveStealthedBlink() set_cond_flag(self, "StealthedBlink", false) end
+function meta:OnAddSelectedToTeleport() set_cond_flag(self, "SelectedToTeleport", true) end
+function meta:OnRemoveSelectedToTeleport() set_cond_flag(self, "SelectedToTeleport", false) end
+function meta:OnAddHealthBuff() set_cond_flag(self, "HealthBuff", true) end
+function meta:OnRemoveHealthBuff() set_cond_flag(self, "HealthBuff", false) end
+function meta:OnAddInvulnerableWearingOff() set_cond_flag(self, "InvulnerableWearingOff", true) end
+function meta:OnRemoveInvulnerableWearingOff() set_cond_flag(self, "InvulnerableWearingOff", false) end
+function meta:OnAddDisguiseWearingOff() set_cond_flag(self, "DisguiseWearingOff", true) end
+function meta:OnRemoveDisguiseWearingOff() set_cond_flag(self, "DisguiseWearingOff", false) end
+function meta:OnAddMedigunDebuff()
+	set_cond_flag(self, "MedigunDebuff", true)
+	update_healing_received_mult(self)
+end
+function meta:OnRemoveMedigunDebuff()
+	set_cond_flag(self, "MedigunDebuff", false)
+	update_healing_received_mult(self)
+end
+function meta:OnAddPreventDeath() set_cond_flag(self, "PreventDeath", true) end
+function meta:OnRemovePreventDeath() set_cond_flag(self, "PreventDeath", false) end
+function meta:OnAddHalloweenInHell() set_cond_flag(self, "HalloweenInHell", true) end
+function meta:OnRemoveHalloweenInHell() set_cond_flag(self, "HalloweenInHell", false) end
+function meta:OnAddObscuredSmoke() set_cond_flag(self, "ObscuredSmoke", true) end
+function meta:OnRemoveObscuredSmoke() set_cond_flag(self, "ObscuredSmoke", false) end
+function meta:OnAddBlastJumping() set_cond_flag(self, "BlastJumping", true) end
+function meta:OnRemoveBlastJumping() set_cond_flag(self, "BlastJumping", false) end
+function meta:OnAddGrapplingHook() set_cond_flag(self, "GrapplingHook", true) end
+function meta:OnRemoveGrapplingHook() set_cond_flag(self, "GrapplingHook", false) end
+function meta:OnAddGrapplingHookSafeFall() set_cond_flag(self, "GrapplingHookSafeFall", true) end
+function meta:OnRemoveGrapplingHookSafeFall() set_cond_flag(self, "GrapplingHookSafeFall", false) end
+function meta:OnAddGrapplingHookBleeding()
+	set_cond_flag(self, "GrapplingHookBleeding", true)
+	self:OnAddBleeding()
+end
+function meta:OnRemoveGrapplingHookBleeding()
+	set_cond_flag(self, "GrapplingHookBleeding", false)
+	if not self:InCond(TF_COND_BLEEDING) then
+		self:OnRemoveBleeding()
+	end
+end
+function meta:OnAddAfterburnImmune() set_cond_flag(self, "AfterburnImmune", true) end
+function meta:OnRemoveAfterburnImmune() set_cond_flag(self, "AfterburnImmune", false) end
+function meta:OnAddSwimmingNoEffects() set_cond_flag(self, "SwimmingNoEffects", true) end
+function meta:OnRemoveSwimmingNoEffects() set_cond_flag(self, "SwimmingNoEffects", false) end
+function meta:OnAddTeamGlows() set_cond_flag(self, "TeamGlows", true) end
+function meta:OnRemoveTeamGlows() set_cond_flag(self, "TeamGlows", false) end
+function meta:OnAddKnockedIntoAir() set_cond_flag(self, "KnockedIntoAir", true) end
+function meta:OnRemoveKnockedIntoAir() set_cond_flag(self, "KnockedIntoAir", false) end
+function meta:OnAddHealingDebuff()
+	set_cond_flag(self, "HealingDebuff", true)
+	update_healing_received_mult(self)
+end
+function meta:OnRemoveHealingDebuff()
+	set_cond_flag(self, "HealingDebuff", false)
+	update_healing_received_mult(self)
+end
+function meta:OnAddGrappledToPlayer() set_cond_flag(self, "GrappledToPlayer", true) end
+function meta:OnRemoveGrappledToPlayer() set_cond_flag(self, "GrappledToPlayer", false) end
+function meta:OnAddGrappledByPlayer() set_cond_flag(self, "GrappledByPlayer", true) end
+function meta:OnRemoveGrappledByPlayer() set_cond_flag(self, "GrappledByPlayer", false) end
+function meta:OnAddLostFooting() set_cond_flag(self, "LostFooting", true) end
+function meta:OnRemoveLostFooting() set_cond_flag(self, "LostFooting", false) end
+function meta:OnAddAirCurrent() set_cond_flag(self, "AirCurrent", true) end
+function meta:OnRemoveAirCurrent() set_cond_flag(self, "AirCurrent", false) end
+function meta:OnAddPowerupModeDominant() set_cond_flag(self, "PowerupDominant", true) end
+function meta:OnRemovePowerupModeDominant() set_cond_flag(self, "PowerupDominant", false) end
+function meta:OnAddImmuneToPushback() set_cond_flag(self, "ImmuneToPushback", true) end
+function meta:OnRemoveImmuneToPushback() set_cond_flag(self, "ImmuneToPushback", false) end
+function meta:OnAddDoNotUse0() end
+function meta:OnRemoveDoNotUse0() end
+
+function meta:OnAddFeignDeath() set_cond_flag(self, "FeignDeath", true) end
+function meta:OnRemoveFeignDeath() set_cond_flag(self, "FeignDeath", false) end
+function meta:OnAddDisguising() set_cond_flag(self, "Disguising", true) end
+function meta:OnRemoveDisguising() set_cond_flag(self, "Disguising", false) end
+function meta:OnAddDisguised() set_cond_flag(self, "Disguised", true) end
+function meta:OnRemoveDisguised() set_cond_flag(self, "Disguised", false) end
+function meta:OnAddDemoBuff() set_cond_flag(self, "DemoBuff", true) end
+function meta:OnRemoveDemoBuff() set_cond_flag(self, "DemoBuff", false) end
+function meta:OnAddSapped() set_cond_flag(self, "Sapped", true) end
+function meta:OnRemoveSapped() set_cond_flag(self, "Sapped", false) end
+function meta:OnAddHalloweenBombHead() set_cond_flag(self, "HalloweenBombHead", true) end
+function meta:OnRemoveHalloweenBombHead() set_cond_flag(self, "HalloweenBombHead", false) end
+function meta:OnAddHalloweenThriller() set_cond_flag(self, "HalloweenThriller", true) end
+function meta:OnRemoveHalloweenThriller() set_cond_flag(self, "HalloweenThriller", false) end
+function meta:OnAddMVMBotRadiowave() self:OnAddStunned() end
+function meta:OnRemoveMVMBotRadiowave() self:OnRemoveStunned() end
+function meta:OnAddHalloweenGhostMode() set_cond_flag(self, "HalloweenGhostMode", true) end
+function meta:OnRemoveHalloweenGhostMode() set_cond_flag(self, "HalloweenGhostMode", false) end
+function meta:OnAddHalloweenKartDash() set_cond_flag(self, "HalloweenKartDash", true) end
+function meta:OnRemoveHalloweenKartDash() set_cond_flag(self, "HalloweenKartDash", false) end
+function meta:OnAddBalloonHead() set_cond_flag(self, "BalloonHead", true) end
+function meta:OnRemoveBalloonHead() set_cond_flag(self, "BalloonHead", false) end
+function meta:OnAddSwimmingCurse() set_cond_flag(self, "SwimmingCurse", true) end
+function meta:OnRemoveSwimmingCurse() set_cond_flag(self, "SwimmingCurse", false) end
+function meta:OnAddHalloweenKartCage() set_cond_flag(self, "HalloweenKartCage", true) end
+function meta:OnRemoveHalloweenKartCage() set_cond_flag(self, "HalloweenKartCage", false) end
+function meta:OnAddGrapplingHookLatched() set_cond_flag(self, "GrapplingHookLatched", true) end
+function meta:OnRemoveGrapplingHookLatched() set_cond_flag(self, "GrapplingHookLatched", false) end
+function meta:OnAddInPurgatory() set_cond_flag(self, "InPurgatory", true) end
+function meta:OnRemoveInPurgatory() set_cond_flag(self, "InPurgatory", false) end
+
 local noop = function() end
 for _, fn in ipairs({
 	"OnAddFeignDeath", "OnRemoveFeignDeath",
@@ -1978,7 +2296,6 @@ for _, fn in ipairs({
 end
 
 function meta:OnConditionAdded(eCond)
-	if eCond == TF_COND_HEALTH_BUFF then return end
 	if eCond == TF_COND_CRITBOOSTED_FIRST_BLOOD then
 		self:SetFirstBloodBoosted(true)
 		self:OnAddCritBoost()
@@ -1986,14 +2303,18 @@ function meta:OnConditionAdded(eCond)
 	end
 
 	local cond_handlers = {
+		[TF_COND_AIMING] = "OnAddAiming",
 		[TF_COND_ZOOMED] = "OnAddZoomed",
 		[TF_COND_TMPDAMAGEBONUS] = "OnAddTmpDamageBonus",
 		[TF_COND_HEALTH_OVERHEALED] = "OnAddOverhealed",
 		[TF_COND_FEIGN_DEATH] = "OnAddFeignDeath",
 		[TF_COND_STEALTHED] = "OnAddStealthed",
+		[TF_COND_STEALTHED_BLINK] = "OnAddStealthedBlink",
 		[TF_COND_STEALTHED_USER_BUFF] = "OnAddStealthed",
+		[TF_COND_SELECTED_TO_TELEPORT] = "OnAddSelectedToTeleport",
 		[TF_COND_INVULNERABLE] = "OnAddInvulnerable",
-		[TF_COND_INVULNERABLE_HIDE_UNLESS_DAMAGED] = "OnAddInvulnerable",
+		[TF_COND_INVULNERABLE_WEARINGOFF] = "OnAddInvulnerableWearingOff",
+		[TF_COND_INVULNERABLE_HIDE_UNLESS_DAMAGED] = "OnAddInvulnerableHideUnlessDamaged",
 		[TF_COND_INVULNERABLE_USER_BUFF] = "OnAddInvulnerable",
 		[TF_COND_INVULNERABLE_CARD_EFFECT] = "OnAddInvulnerable",
 		[TF_COND_TELEPORTED] = "OnAddTeleported",
@@ -2023,6 +2344,7 @@ function meta:OnConditionAdded(eCond)
 		[TF_COND_DEFENSEBUFF_NO_CRIT_BLOCK] = "OnAddDefenseBuff",
 		[TF_COND_DEFENSEBUFF_HIGH] = "OnAddDefenseBuff",
 		[TF_COND_REGENONDAMAGEBUFF] = "OnAddOffenseHealthRegenBuff",
+		[TF_COND_HEALTH_BUFF] = "OnAddHealthBuff",
 		[TF_COND_NOHEALINGDAMAGEBUFF] = "OnAddNoHealingDamageBuff",
 		[TF_COND_SHIELD_CHARGE] = "OnAddShieldCharge",
 		[TF_COND_DEMO_BUFF] = "OnAddDemoBuff",
@@ -2033,6 +2355,7 @@ function meta:OnConditionAdded(eCond)
 		[TF_COND_SPEED_BOOST] = "OnAddSpeedBoost",
 		[TF_COND_SAPPED] = "OnAddSapped",
 		[TF_COND_REPROGRAMMED] = "OnAddReprogrammed",
+		[TF_COND_DISGUISE_WEARINGOFF] = "OnAddDisguiseWearingOff",
 		[TF_COND_PASSTIME_PENALTY_DEBUFF] = "OnAddMarkedForDeathSilent",
 		[TF_COND_MARKEDFORDEATH_SILENT] = "OnAddMarkedForDeathSilent",
 		[TF_COND_DISGUISED_AS_DISPENSER] = "OnAddDisguisedAsDispenser",
@@ -2045,18 +2368,24 @@ function meta:OnConditionAdded(eCond)
 		[TF_COND_MEDIGUN_SMALL_BULLET_RESIST] = "OnAddMedEffectSmallBulletResist",
 		[TF_COND_MEDIGUN_SMALL_BLAST_RESIST] = "OnAddMedEffectSmallBlastResist",
 		[TF_COND_MEDIGUN_SMALL_FIRE_RESIST] = "OnAddMedEffectSmallFireResist",
+		[TF_COND_MEDIGUN_DEBUFF] = "OnAddMedigunDebuff",
 		[TF_COND_STEALTHED_USER_BUFF_FADING] = "OnAddStealthedUserBuffFade",
 		[TF_COND_BULLET_IMMUNE] = "OnAddBulletImmune",
 		[TF_COND_BLAST_IMMUNE] = "OnAddBlastImmune",
 		[TF_COND_FIRE_IMMUNE] = "OnAddFireImmune",
+		[TF_COND_AFTERBURN_IMMUNE] = "OnAddAfterburnImmune",
+		[TF_COND_PREVENT_DEATH] = "OnAddPreventDeath",
 		[TF_COND_MVM_BOT_STUN_RADIOWAVE] = "OnAddMVMBotRadiowave",
 		[TF_COND_HALLOWEEN_SPEED_BOOST] = "OnAddHalloweenSpeedBoost",
 		[TF_COND_HALLOWEEN_QUICK_HEAL] = "OnAddHalloweenQuickHeal",
 		[TF_COND_HALLOWEEN_GIANT] = "OnAddHalloweenGiant",
 		[TF_COND_HALLOWEEN_TINY] = "OnAddHalloweenTiny",
 		[TF_COND_HALLOWEEN_GHOST_MODE] = "OnAddHalloweenGhostMode",
+		[TF_COND_HALLOWEEN_IN_HELL] = "OnAddHalloweenInHell",
+		[TF_COND_OBSCURED_SMOKE] = "OnAddObscuredSmoke",
 		[TF_COND_PARACHUTE_ACTIVE] = "OnAddCondParachute",
 		[TF_COND_PARACHUTE_DEPLOYED] = "OnAddCondParachute",
+		[TF_COND_BLASTJUMPING] = "OnAddBlastJumping",
 		[TF_COND_HALLOWEEN_KART_DASH] = "OnAddHalloweenKartDash",
 		[TF_COND_HALLOWEEN_KART] = "OnAddHalloweenKart",
 		[TF_COND_BALLOON_HEAD] = "OnAddBalloonHead",
@@ -2076,6 +2405,9 @@ function meta:OnConditionAdded(eCond)
 		[TF_COND_RUNE_KNOCKOUT] = "OnAddRuneKnockout",
 		[TF_COND_RUNE_IMBALANCE] = "OnAddRuneImbalance",
 		[TF_COND_GRAPPLINGHOOK_LATCHED] = "OnAddGrapplingHookLatched",
+		[TF_COND_GRAPPLINGHOOK] = "OnAddGrapplingHook",
+		[TF_COND_GRAPPLINGHOOK_SAFEFALL] = "OnAddGrapplingHookSafeFall",
+		[TF_COND_GRAPPLINGHOOK_BLEEDING] = "OnAddGrapplingHookBleeding",
 		[TF_COND_PASSTIME_INTERCEPTION] = "OnAddPasstimeInterception",
 		[TF_COND_RUNE_KING] = "OnAddRuneKing",
 		[TF_COND_KING_BUFFED] = "OnAddKingBuff",
@@ -2083,13 +2415,24 @@ function meta:OnConditionAdded(eCond)
 		[TF_COND_RUNE_PLAGUE] = "OnAddRunePlague",
 		[TF_COND_PLAGUE] = "OnAddPlague",
 		[TF_COND_PURGATORY] = "OnAddInPurgatory",
+		[TF_COND_SWIMMING_NO_EFFECTS] = "OnAddSwimmingNoEffects",
+		[TF_COND_TEAM_GLOWS] = "OnAddTeamGlows",
+		[TF_COND_KNOCKED_INTO_AIR] = "OnAddKnockedIntoAir",
+		[TF_COND_HEALING_DEBUFF] = "OnAddHealingDebuff",
+		[TF_COND_GRAPPLED_TO_PLAYER] = "OnAddGrappledToPlayer",
+		[TF_COND_GRAPPLED_BY_PLAYER] = "OnAddGrappledByPlayer",
 		[TF_COND_COMPETITIVE_WINNER] = "OnAddCompetitiveWinner",
 		[TF_COND_COMPETITIVE_LOSER] = "OnAddCompetitiveLoser",
 		[TF_COND_GAS] = "OnAddCondGas",
 		[TF_COND_BURNING_PYRO] = "OnAddBurningPyro",
 		[TF_COND_MINICRITBOOSTED_ON_KILL] = "OnAddOffenseBuff",
 		[TF_COND_ROCKETPACK] = "OnAddRocketPack",
+		[TF_COND_LOST_FOOTING] = "OnAddLostFooting",
+		[TF_COND_AIR_CURRENT] = "OnAddAirCurrent",
 		[TF_COND_HALLOWEEN_HELL_HEAL] = "OnAddHalloweenHellHeal",
+		[TF_COND_POWERUPMODE_DOMINANT] = "OnAddPowerupModeDominant",
+		[TF_COND_IMMUNE_TO_PUSHBACK] = "OnAddImmuneToPushback",
+		[TF_COND_DONOTUSE_0] = "OnAddDoNotUse0",
 	}
 	local fn = cond_handlers[eCond]
 	if fn and self[fn] then
@@ -2105,6 +2448,7 @@ function meta:OnConditionRemoved(eCond)
 	end
 
 	local cond_handlers = {
+		[TF_COND_AIMING] = "OnRemoveAiming",
 		[TF_COND_ZOOMED] = "OnRemoveZoomed",
 		[TF_COND_BURNING] = "OnRemoveBurning",
 		[TF_COND_CRITBOOSTED] = "OnRemoveCritBoost",
@@ -2123,13 +2467,16 @@ function meta:OnConditionRemoved(eCond)
 		[TF_COND_HEALTH_OVERHEALED] = "OnRemoveOverhealed",
 		[TF_COND_FEIGN_DEATH] = "OnRemoveFeignDeath",
 		[TF_COND_STEALTHED] = "OnRemoveStealthed",
+		[TF_COND_STEALTHED_BLINK] = "OnRemoveStealthedBlink",
 		[TF_COND_STEALTHED_USER_BUFF] = "OnRemoveStealthed",
+		[TF_COND_SELECTED_TO_TELEPORT] = "OnRemoveSelectedToTeleport",
 		[TF_COND_DISGUISED] = "OnRemoveDisguised",
 		[TF_COND_DISGUISING] = "OnRemoveDisguising",
 		[TF_COND_INVULNERABLE] = "OnRemoveInvulnerable",
-		[TF_COND_INVULNERABLE_HIDE_UNLESS_DAMAGED] = "OnRemoveInvulnerable",
+		[TF_COND_INVULNERABLE_HIDE_UNLESS_DAMAGED] = "OnRemoveInvulnerableHideUnlessDamaged",
 		[TF_COND_INVULNERABLE_USER_BUFF] = "OnRemoveInvulnerable",
 		[TF_COND_INVULNERABLE_CARD_EFFECT] = "OnRemoveInvulnerable",
+		[TF_COND_INVULNERABLE_WEARINGOFF] = "OnRemoveInvulnerableWearingOff",
 		[TF_COND_TELEPORTED] = "OnRemoveTeleported",
 		[TF_COND_STUNNED] = "OnRemoveStunned",
 		[TF_COND_PHASE] = "OnRemovePhase",
@@ -2142,6 +2489,7 @@ function meta:OnConditionRemoved(eCond)
 		[TF_COND_DEFENSEBUFF_NO_CRIT_BLOCK] = "OnRemoveDefenseBuff",
 		[TF_COND_DEFENSEBUFF_HIGH] = "OnRemoveDefenseBuff",
 		[TF_COND_REGENONDAMAGEBUFF] = "OnRemoveOffenseHealthRegenBuff",
+		[TF_COND_HEALTH_BUFF] = "OnRemoveHealthBuff",
 		[TF_COND_NOHEALINGDAMAGEBUFF] = "OnRemoveNoHealingDamageBuff",
 		[TF_COND_SHIELD_CHARGE] = "OnRemoveShieldCharge",
 		[TF_COND_DEMO_BUFF] = "OnRemoveDemoBuff",
@@ -2153,6 +2501,7 @@ function meta:OnConditionRemoved(eCond)
 		[TF_COND_SPEED_BOOST] = "OnRemoveSpeedBoost",
 		[TF_COND_SAPPED] = "OnRemoveSapped",
 		[TF_COND_REPROGRAMMED] = "OnRemoveReprogrammed",
+		[TF_COND_DISGUISE_WEARINGOFF] = "OnRemoveDisguiseWearingOff",
 		[TF_COND_PASSTIME_PENALTY_DEBUFF] = "OnRemoveMarkedForDeathSilent",
 		[TF_COND_MARKEDFORDEATH_SILENT] = "OnRemoveMarkedForDeathSilent",
 		[TF_COND_DISGUISED_AS_DISPENSER] = "OnRemoveDisguisedAsDispenser",
@@ -2165,18 +2514,24 @@ function meta:OnConditionRemoved(eCond)
 		[TF_COND_MEDIGUN_SMALL_BULLET_RESIST] = "OnRemoveMedEffectSmallBulletResist",
 		[TF_COND_MEDIGUN_SMALL_BLAST_RESIST] = "OnRemoveMedEffectSmallBlastResist",
 		[TF_COND_MEDIGUN_SMALL_FIRE_RESIST] = "OnRemoveMedEffectSmallFireResist",
+		[TF_COND_MEDIGUN_DEBUFF] = "OnRemoveMedigunDebuff",
 		[TF_COND_STEALTHED_USER_BUFF_FADING] = "OnRemoveStealthedUserBuffFade",
 		[TF_COND_BULLET_IMMUNE] = "OnRemoveBulletImmune",
 		[TF_COND_BLAST_IMMUNE] = "OnRemoveBlastImmune",
 		[TF_COND_FIRE_IMMUNE] = "OnRemoveFireImmune",
+		[TF_COND_AFTERBURN_IMMUNE] = "OnRemoveAfterburnImmune",
+		[TF_COND_PREVENT_DEATH] = "OnRemovePreventDeath",
 		[TF_COND_MVM_BOT_STUN_RADIOWAVE] = "OnRemoveMVMBotRadiowave",
 		[TF_COND_HALLOWEEN_SPEED_BOOST] = "OnRemoveHalloweenSpeedBoost",
 		[TF_COND_HALLOWEEN_QUICK_HEAL] = "OnRemoveHalloweenQuickHeal",
 		[TF_COND_HALLOWEEN_GIANT] = "OnRemoveHalloweenGiant",
 		[TF_COND_HALLOWEEN_TINY] = "OnRemoveHalloweenTiny",
 		[TF_COND_HALLOWEEN_GHOST_MODE] = "OnRemoveHalloweenGhostMode",
+		[TF_COND_HALLOWEEN_IN_HELL] = "OnRemoveHalloweenInHell",
+		[TF_COND_OBSCURED_SMOKE] = "OnRemoveObscuredSmoke",
 		[TF_COND_PARACHUTE_ACTIVE] = "OnRemoveCondParachute",
 		[TF_COND_PARACHUTE_DEPLOYED] = "OnRemoveCondParachute",
+		[TF_COND_BLASTJUMPING] = "OnRemoveBlastJumping",
 		[TF_COND_HALLOWEEN_KART_DASH] = "OnRemoveHalloweenKartDash",
 		[TF_COND_HALLOWEEN_KART] = "OnRemoveHalloweenKart",
 		[TF_COND_BALLOON_HEAD] = "OnRemoveBalloonHead",
@@ -2196,10 +2551,19 @@ function meta:OnConditionRemoved(eCond)
 		[TF_COND_RUNE_KNOCKOUT] = "OnRemoveRuneKnockout",
 		[TF_COND_RUNE_IMBALANCE] = "OnRemoveRuneImbalance",
 		[TF_COND_GRAPPLINGHOOK_LATCHED] = "OnRemoveGrapplingHookLatched",
+		[TF_COND_GRAPPLINGHOOK] = "OnRemoveGrapplingHook",
+		[TF_COND_GRAPPLINGHOOK_SAFEFALL] = "OnRemoveGrapplingHookSafeFall",
+		[TF_COND_GRAPPLINGHOOK_BLEEDING] = "OnRemoveGrapplingHookBleeding",
 		[TF_COND_PASSTIME_INTERCEPTION] = "OnRemovePasstimeInterception",
 		[TF_COND_RUNE_PLAGUE] = "OnRemoveRunePlague",
 		[TF_COND_PLAGUE] = "OnRemovePlague",
 		[TF_COND_PURGATORY] = "OnRemoveInPurgatory",
+		[TF_COND_SWIMMING_NO_EFFECTS] = "OnRemoveSwimmingNoEffects",
+		[TF_COND_TEAM_GLOWS] = "OnRemoveTeamGlows",
+		[TF_COND_KNOCKED_INTO_AIR] = "OnRemoveKnockedIntoAir",
+		[TF_COND_HEALING_DEBUFF] = "OnRemoveHealingDebuff",
+		[TF_COND_GRAPPLED_TO_PLAYER] = "OnRemoveGrappledToPlayer",
+		[TF_COND_GRAPPLED_BY_PLAYER] = "OnRemoveGrappledByPlayer",
 		[TF_COND_RUNE_KING] = "OnRemoveRuneKing",
 		[TF_COND_KING_BUFFED] = "OnRemoveKingBuff",
 		[TF_COND_RUNE_SUPERNOVA] = "OnRemoveRuneSupernova",
@@ -2209,7 +2573,12 @@ function meta:OnConditionRemoved(eCond)
 		[TF_COND_ROCKETPACK] = "OnRemoveRocketPack",
 		[TF_COND_BURNING_PYRO] = "OnRemoveBurningPyro",
 		[TF_COND_MINICRITBOOSTED_ON_KILL] = "OnRemoveOffenseBuff",
+		[TF_COND_LOST_FOOTING] = "OnRemoveLostFooting",
+		[TF_COND_AIR_CURRENT] = "OnRemoveAirCurrent",
 		[TF_COND_HALLOWEEN_HELL_HEAL] = "OnRemoveHalloweenHellHeal",
+		[TF_COND_POWERUPMODE_DOMINANT] = "OnRemovePowerupModeDominant",
+		[TF_COND_IMMUNE_TO_PUSHBACK] = "OnRemoveImmuneToPushback",
+		[TF_COND_DONOTUSE_0] = "OnRemoveDoNotUse0",
 	}
 	local fn = cond_handlers[eCond]
 	if fn and self[fn] then
@@ -2238,8 +2607,20 @@ end
 
 hook.Add("Move", "TFCondMoveAdjust", function(pl, move)
 	if not IsValid(pl) or not pl.InCond then return end
+	local allowTauntMotion = pl:GetNWBool("TauntingMoped", false) or pl:GetNWBool("TauntingSchemaMove", false)
 
-	if pl:InCond(TF_COND_FREEZE_INPUT) or (pl:InCond(TF_COND_TAUNTING) and not pl:GetNWBool("TauntingMoped", false)) then
+	-- TF2 speed logic: dispenser disguise locks movement unless cloaked.
+	if pl:InCond(TF_COND_DISGUISED_AS_DISPENSER)
+		and not pl:InCond(TF_COND_STEALTHED)
+		and not pl:InCond(TF_COND_STEALTHED_USER_BUFF)
+		and not pl:InCond(TF_COND_STEALTHED_USER_BUFF_FADING) then
+		move:SetForwardSpeed(0)
+		move:SetSideSpeed(0)
+		move:SetUpSpeed(0)
+		return
+	end
+
+	if pl:InCond(TF_COND_FREEZE_INPUT) or (pl:InCond(TF_COND_TAUNTING) and not allowTauntMotion) then
 		move:SetForwardSpeed(0)
 		move:SetSideSpeed(0)
 		move:SetUpSpeed(0)
@@ -2296,12 +2677,68 @@ if SERVER then
 			pl.__MopedTurnInput = 0
 		end
 
-		if pl:InCond(TF_COND_FREEZE_INPUT) or (pl:InCond(TF_COND_TAUNTING) and not pl:GetNWBool("TauntingMoped", false)) then
+		local schemaState = pl.__SchemaTauntState
+		if istable(schemaState) and schemaState.active then
+			local wantsDirectionalMove = cmd:KeyDown(IN_FORWARD) or cmd:KeyDown(IN_BACK) or cmd:KeyDown(IN_MOVERIGHT) or cmd:KeyDown(IN_MOVELEFT)
+			local steer = 0
+			if cmd:KeyDown(IN_MOVERIGHT) then
+				steer = 1
+			elseif cmd:KeyDown(IN_MOVELEFT) then
+				steer = -1
+			end
+			pl.__SchemaTauntMoveInput = steer
+			local drive = 0
+			if cmd:KeyDown(IN_FORWARD) then
+				drive = 1
+			elseif cmd:KeyDown(IN_BACK) then
+				drive = -1
+			end
+			pl.__SchemaTauntDriveInput = drive
+
+			if schemaState.stopIfMoved and wantsDirectionalMove and TF_EndSchemaTaunt then
+				TF_EndSchemaTaunt(pl)
+			end
+
+			local jumpDown = cmd:KeyDown(IN_JUMP)
+			local jumpPressed = jumpDown and not pl.__SchemaTauntJumpWasDown
+			pl.__SchemaTauntJumpWasDown = jumpDown
+			if jumpPressed and TF_EndSchemaTaunt then
+				TF_EndSchemaTaunt(pl)
+			end
+
+			local attackDown = cmd:KeyDown(IN_ATTACK)
+			local attackPressed = attackDown and not pl.__SchemaTauntAttackWasDown
+			pl.__SchemaTauntAttackWasDown = attackDown
+			if attackPressed and TF_TriggerSchemaTauntInput then
+				TF_TriggerSchemaTauntInput(pl, "IN_ATTACK")
+			end
+
+			local attack2Down = cmd:KeyDown(IN_ATTACK2)
+			local attack2Pressed = attack2Down and not pl.__SchemaTauntAttack2WasDown
+			pl.__SchemaTauntAttack2WasDown = attack2Down
+			if attack2Pressed and TF_TriggerSchemaTauntInput then
+				TF_TriggerSchemaTauntInput(pl, "IN_ATTACK2")
+			end
+
+			cmd:RemoveKey(IN_JUMP)
+			cmd:RemoveKey(IN_ATTACK)
+			cmd:RemoveKey(IN_ATTACK2)
+			cmd:RemoveKey(IN_RELOAD)
+		else
+			pl.__SchemaTauntJumpWasDown = false
+			pl.__SchemaTauntAttackWasDown = false
+			pl.__SchemaTauntAttack2WasDown = false
+			pl.__SchemaTauntMoveInput = 0
+			pl.__SchemaTauntDriveInput = 0
+		end
+
+		local allowTauntMotion = pl:GetNWBool("TauntingMoped", false) or pl:GetNWBool("TauntingSchemaMove", false)
+		if pl:InCond(TF_COND_FREEZE_INPUT) or (pl:InCond(TF_COND_TAUNTING) and not allowTauntMotion) then
 			cmd:ClearMovement()
 			cmd:RemoveKey(IN_ATTACK)
 			cmd:RemoveKey(IN_ATTACK2)
 			cmd:RemoveKey(IN_RELOAD)
-		elseif pl:GetNWBool("NoWeapon", false) and not pl:GetNWBool("TauntingMoped", false) then
+		elseif pl:GetNWBool("NoWeapon", false) and not allowTauntMotion then
 			cmd:RemoveKey(IN_ATTACK)
 			cmd:RemoveKey(IN_ATTACK2)
 			cmd:RemoveKey(IN_RELOAD)
@@ -2327,8 +2764,8 @@ if SERVER then
 						pl:SelectWeapon(fallbackClass)
 					end
 				end)
+				return true
 			end
-			return true
 		end
 
 		if pl:InCond(TF_COND_MELEE_ONLY) and not is_melee_weapon(newWep) then
@@ -2348,5 +2785,266 @@ if SERVER then
 		pl._tf_cond_stacks = nil
 		pl._tf_cond_speed = nil
 		pl:SetNWFloat("TFCondSpeedMult", 1)
+	end)
+end
+
+if CLIENT then
+	CreateClientConVar("tf_debug_spy_disguise_local", "0", true, false, "Force local client to render Spy disguise enemy-view model for debugging.")
+
+	local dispenserModelByEnt = {}
+	local spyDisguiseModelByEnt = {}
+	local spyDisguiseWeaponModelByEnt = {}
+	local spyDisguiseCosmeticModelsByEnt = {}
+	local DISGUISE_MODEL_BY_CLASS = {
+		scout = "models/player/scout.mdl",
+		soldier = "models/player/soldier.mdl",
+		pyro = "models/player/pyro.mdl",
+		demo = "models/player/demo.mdl",
+		demoman = "models/player/demo.mdl",
+		heavy = "models/player/heavy.mdl",
+		engineer = "models/player/engineer.mdl",
+		medic = "models/player/medic.mdl",
+		sniper = "models/player/sniper.mdl",
+		spy = "models/player/spy.mdl",
+	}
+
+	local function split_disguise_model_list(raw)
+		local out = {}
+		if not isstring(raw) or raw == "" then return out end
+		for token in string.gmatch(raw, "([^|]+)") do
+			local mdl = string.Trim(token or "")
+			if mdl ~= "" and util.IsValidModel(mdl) then
+				out[#out + 1] = mdl
+			end
+		end
+		return out
+	end
+
+	local function cleanup_dispenser_model(ply)
+		if not ply or not ply.EntIndex then return end
+		local idx = ply:EntIndex()
+		local mdl = dispenserModelByEnt[idx]
+		if IsValid(mdl) then
+			mdl:Remove()
+		end
+		dispenserModelByEnt[idx] = nil
+	end
+
+	local function cleanup_spy_disguise_models(ply)
+		if not ply or not ply.EntIndex then return end
+		local idx = ply:EntIndex()
+
+		local mdl = spyDisguiseModelByEnt[idx]
+		if IsValid(mdl) then mdl:Remove() end
+		spyDisguiseModelByEnt[idx] = nil
+
+		local wmdl = spyDisguiseWeaponModelByEnt[idx]
+		if IsValid(wmdl) then wmdl:Remove() end
+		spyDisguiseWeaponModelByEnt[idx] = nil
+
+		local cosmetics = spyDisguiseCosmeticModelsByEnt[idx]
+		if istable(cosmetics) then
+			for _, cmdl in ipairs(cosmetics) do
+				if IsValid(cmdl) then cmdl:Remove() end
+			end
+		end
+		spyDisguiseCosmeticModelsByEnt[idx] = nil
+	end
+
+	local function should_draw_dispenser_disguise(ply)
+		if not IsValid(ply) or not ply:IsPlayer() or not ply:Alive() then return false end
+		if not ply.InCond or not ply:InCond(TF_COND_DISGUISED_AS_DISPENSER) then return false end
+		if not ply.Crouching or not ply:Crouching() then return false end
+		local ground = ply.GetGroundEntity and ply:GetGroundEntity() or NULL
+		if ground == nil or ground == NULL then return false end
+
+		local lp = LocalPlayer()
+		if not IsValid(lp) then return false end
+		if lp == ply and not lp:ShouldDrawLocalPlayer() then return false end
+		return true
+	end
+
+	local function get_spy_disguise_draw_info(ply)
+		if not IsValid(ply) or not ply:IsPlayer() or not ply:Alive() then return nil end
+		if not ply.InCond or not ply:InCond(TF_COND_DISGUISED) then return nil end
+		if ply:InCond(TF_COND_DISGUISED_AS_DISPENSER) then return nil end
+		if ply:GetNWBool("Cloaked", false) then return nil end
+
+		local className = string.lower(ply:GetNWString("TFSpyDisguiseClass", ""))
+		local model = DISGUISE_MODEL_BY_CLASS[className]
+		if not isstring(model) or model == "" then return nil end
+
+		local disguiseTeam = ply:GetNWInt("TFSpyDisguiseTeam", -1)
+		if disguiseTeam < 0 then return nil end
+
+		local lp = LocalPlayer()
+		if not IsValid(lp) then return nil end
+		local forceLocal = GetConVar("tf_debug_spy_disguise_local") and GetConVar("tf_debug_spy_disguise_local"):GetBool() or false
+		if lp == ply and not lp:ShouldDrawLocalPlayer() and not forceLocal then return nil end
+		if lp:Team() ~= disguiseTeam then return nil end
+
+		return {
+			model = model,
+			skin = (disguiseTeam == TEAM_BLU or disguiseTeam == TF_TEAM_PVE_INVADERS) and 1 or 0,
+			weaponModel = ply:GetNWString("TFSpyDisguiseFallbackWeaponModel", ""),
+			cosmeticModels = split_disguise_model_list(ply:GetNWString("TFSpyDisguiseFallbackCosmeticModels", "")),
+		}
+	end
+
+	function TF_ShouldHideOwnerWearablesForViewer(owner, viewer)
+		if not IsValid(owner) or not owner:IsPlayer() then return false end
+		if not IsValid(viewer) or not viewer:IsPlayer() then return false end
+		local forceLocal = GetConVar("tf_debug_spy_disguise_local") and GetConVar("tf_debug_spy_disguise_local"):GetBool() or false
+		if owner == viewer and not viewer:ShouldDrawLocalPlayer() and not forceLocal then return false end
+		local disguiseTeam = owner:GetNWInt("TFSpyDisguiseTeam", -1)
+		if disguiseTeam < 0 then return false end
+		if not owner:GetNWBool("Disguised", false) then return false end
+		if owner:GetNWBool("Cloaked", false) then return false end
+		if owner:InCond(TF_COND_DISGUISED_AS_DISPENSER) then return false end
+		return viewer:Team() == disguiseTeam
+	end
+
+	hook.Add("PrePlayerDraw", "TFCondDispenserDisguiseDraw", function(ply)
+		if not should_draw_dispenser_disguise(ply) then
+			cleanup_dispenser_model(ply)
+			return
+		end
+
+		local idx = ply:EntIndex()
+		local mdl = dispenserModelByEnt[idx]
+		if not IsValid(mdl) then
+			mdl = ClientsideModel("models/buildables/dispenser_light.mdl", RENDERGROUP_OPAQUE)
+			if not IsValid(mdl) then return end
+			dispenserModelByEnt[idx] = mdl
+		end
+
+		mdl:SetPos(ply:GetPos())
+		mdl:SetAngles(Angle(0, 0, 0))
+		local skin = ((ply:Team() == TEAM_RED) and 1) or ((ply:Team() == TEAM_BLU) and 0) or 0
+		mdl:SetSkin(skin)
+		mdl:SetupBones()
+		mdl:DrawModel()
+
+		return true
+	end)
+
+	hook.Add("PrePlayerDraw", "TFCondSpyDisguiseDraw", function(ply)
+		local info = get_spy_disguise_draw_info(ply)
+		if not info then
+			cleanup_spy_disguise_models(ply)
+			return
+		end
+
+		local idx = ply:EntIndex()
+		local mdl = spyDisguiseModelByEnt[idx]
+		if not IsValid(mdl) then
+			mdl = ClientsideModel(info.model, RENDERGROUP_OPAQUE)
+			if not IsValid(mdl) then return end
+			mdl:SetNoDraw(true)
+			spyDisguiseModelByEnt[idx] = mdl
+		elseif mdl:GetModel() ~= info.model then
+			mdl:SetModel(info.model)
+		end
+
+		mdl:SetPos(ply:GetPos())
+		mdl:SetAngles(ply:GetAngles())
+		mdl:SetSkin(info.skin)
+		mdl:SetSequence(ply:GetSequence())
+		mdl:SetCycle(ply:GetCycle())
+		mdl:SetPlaybackRate(ply:GetPlaybackRate())
+		mdl:SetupBones()
+		mdl:DrawModel()
+
+		local weaponModel = (isstring(info.weaponModel) and util.IsValidModel(info.weaponModel)) and info.weaponModel or ""
+		if weaponModel ~= "" then
+			local wmdl = spyDisguiseWeaponModelByEnt[idx]
+			if not IsValid(wmdl) then
+				wmdl = ClientsideModel(weaponModel, RENDERGROUP_OPAQUE)
+				if IsValid(wmdl) then
+					wmdl:SetNoDraw(true)
+					wmdl:SetParent(mdl)
+					wmdl:AddEffects(bit.bor(EF_BONEMERGE, EF_BONEMERGE_FASTCULL))
+					spyDisguiseWeaponModelByEnt[idx] = wmdl
+				end
+			elseif wmdl:GetModel() ~= weaponModel then
+				wmdl:SetModel(weaponModel)
+			end
+			wmdl = spyDisguiseWeaponModelByEnt[idx]
+			if IsValid(wmdl) then
+				wmdl:SetSkin(info.skin)
+				wmdl:SetupBones()
+				wmdl:DrawModel()
+			end
+		else
+			local staleWep = spyDisguiseWeaponModelByEnt[idx]
+			if IsValid(staleWep) then staleWep:Remove() end
+			spyDisguiseWeaponModelByEnt[idx] = nil
+		end
+
+		local desiredCosmetics = info.cosmeticModels or {}
+		local cosmeticModels = spyDisguiseCosmeticModelsByEnt[idx]
+		if not istable(cosmeticModels) then
+			cosmeticModels = {}
+			spyDisguiseCosmeticModelsByEnt[idx] = cosmeticModels
+		end
+		for i = 1, #desiredCosmetics do
+			local desiredModel = desiredCosmetics[i]
+			local cmdl = cosmeticModels[i]
+			if not IsValid(cmdl) then
+				cmdl = ClientsideModel(desiredModel, RENDERGROUP_OPAQUE)
+				if IsValid(cmdl) then
+					cmdl:SetNoDraw(true)
+					cmdl:SetParent(mdl)
+					cmdl:AddEffects(bit.bor(EF_BONEMERGE, EF_BONEMERGE_FASTCULL))
+					cosmeticModels[i] = cmdl
+				end
+			elseif cmdl:GetModel() ~= desiredModel then
+				cmdl:SetModel(desiredModel)
+			end
+			cmdl = cosmeticModels[i]
+			if IsValid(cmdl) then
+				cmdl:SetSkin(info.skin)
+				cmdl:SetupBones()
+				cmdl:DrawModel()
+			end
+		end
+		for i = #desiredCosmetics + 1, #cosmeticModels do
+			local stale = cosmeticModels[i]
+			if IsValid(stale) then stale:Remove() end
+			cosmeticModels[i] = nil
+		end
+
+		return true
+	end)
+
+	hook.Add("EntityRemoved", "TFCondDispenserDisguiseCleanup", function(ent)
+		if not ent or not ent.IsPlayer or not ent:IsPlayer() then return end
+		cleanup_dispenser_model(ent)
+		cleanup_spy_disguise_models(ent)
+	end)
+
+	hook.Add("ShutDown", "TFCondDispenserDisguiseShutdown", function()
+		for _, mdl in pairs(dispenserModelByEnt) do
+			if IsValid(mdl) then
+				mdl:Remove()
+			end
+		end
+		dispenserModelByEnt = {}
+		for _, mdl in pairs(spyDisguiseModelByEnt) do
+			if IsValid(mdl) then mdl:Remove() end
+		end
+		for _, mdl in pairs(spyDisguiseWeaponModelByEnt) do
+			if IsValid(mdl) then mdl:Remove() end
+		end
+		for _, t in pairs(spyDisguiseCosmeticModelsByEnt) do
+			if istable(t) then
+				for _, mdl in ipairs(t) do
+					if IsValid(mdl) then mdl:Remove() end
+				end
+			end
+		end
+		spyDisguiseModelByEnt = {}
+		spyDisguiseWeaponModelByEnt = {}
+		spyDisguiseCosmeticModelsByEnt = {}
 	end)
 end

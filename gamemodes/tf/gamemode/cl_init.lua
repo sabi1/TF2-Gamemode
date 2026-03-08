@@ -20,6 +20,7 @@ include("cl_pickteam.lua")
 
 include("cl_conflict.lua")
 include("cl_debug_bridge.lua")
+include("cl_halloween_boss_notify.lua")
  
 include("shared.lua")
 include("cl_entclientinit.lua")
@@ -278,6 +279,7 @@ end)
 		panel:CheckBox( "TF2 CLASSES: Use Minimized Viewmodels", "tf_use_min_viewmodels" )
 		panel:CheckBox( "TF2 CLASSES: Give Extra Weapons on Spawn", "tf_give_hl2_weapons" )
 		panel:CheckBox( "Enable Pyrovision", "tf_pyrovision" )
+		panel:CheckBox( "Enable Romevision When Available", "tf_romevision_opt_in" )
 		panel:NumSlider( "TF2 SWEPS: Viewmodel FOV", "viewmodel_fov_tf", 52, 120 )
 		panel:CheckBox( "TF2 CLASSES: Force HEV Hud", "tf_forcehl2hud" )
 		panel:CheckBox( "Enable Debugging for TF Bots", "z_debug" )
@@ -322,7 +324,7 @@ local function VectorMA( start, scale, direction, dest )
 end
 
 hook.Add( "CalcView", "SetPosToRagdoll", function( ply, pos, angles, fov )
-	physenv.SetGravity( Vector(0,0,-386) )
+	physenv.SetGravity( Vector(0,0,-800) )
 end )
  
 if (IsValid(LocalPlayer())) then
@@ -759,7 +761,7 @@ end, function() return GAMEMODE.PlayerClassesAutoComplete end)
 --RunConsoleCommand("snd_restart")
 RunConsoleCommand("hud_showloadout","0")
 RunConsoleCommand("spawnmenu_reload")
-physenv.SetGravity(Vector(0,0,-386))
+physenv.SetGravity(Vector(0,0,-800))
 usermessage.Hook("PlayerResetDominations", function(um)
 	local pl = um:ReadEntity()
 	if not IsValid(pl) then return end
@@ -938,7 +940,17 @@ end)
 net.Receive("TF_HalloweenGargoyleNotify", function()
 	local _eventName = net.ReadString()
 	local message = net.ReadString()
+	local voice = net.ReadString()
+	local spooky = net.ReadString()
 	if message == "" then return end
+
+	if voice ~= "" then
+		LocalPlayer():EmitSound(voice, 100, 100, 1, CHAN_VOICE)
+	end
+
+	if spooky ~= "" then
+		surface.PlaySound(spooky)
+	end
 
 	ShowTFGargoyleNotification(message)
 end)
@@ -996,6 +1008,109 @@ hook.Add("PostDrawTranslucentRenderables", "TF_HalloweenSoulBurstDraw", function
 			end
 		end
 	end
+end)
+
+local romevisionSharedOffers = romevisionSharedOffers or {}
+local romevisionSharedSeen = romevisionSharedSeen or {}
+local romevisionPromptOpen = false
+
+local function TF2GM_LocalizeRomevisionText(key, fallback)
+	if tf_lang and tf_lang.GetRaw then
+		local text = tf_lang.GetRaw(key, true)
+		if isstring(text) and text ~= "" then
+			return text
+		end
+	end
+	return fallback
+end
+
+local function TF2GM_LocalPlayerCanProcessRomevisionOffer()
+	local lp = LocalPlayer()
+	if not IsValid(lp) then return false end
+	if lp:Team() == TEAM_SPECTATOR then return true end
+	if not lp.GetPlayerClass then return false end
+	return tostring(lp:GetPlayerClass() or "") ~= ""
+end
+
+local function TF2GM_ShowRomevisionPrompt()
+	local cvOptIn = GetConVar("tf_romevision_opt_in")
+	local cvSkip = GetConVar("tf_romevision_skip_prompt")
+	if not cvOptIn or not cvSkip then return end
+	if cvOptIn:GetBool() or cvSkip:GetBool() or romevisionPromptOpen then return end
+	romevisionPromptOpen = true
+
+	Derma_Query(
+		TF2GM_LocalizeRomevisionText("#TF_Prompt_Romevision_Message", "Romevision is available because someone has The Hardy Laurel in their backpack."),
+		TF2GM_LocalizeRomevisionText("#TF_Prompt_Romevision_Title", "Enable Romevision?"),
+		TF2GM_LocalizeRomevisionText("#TF_Prompt_Romevsion_OK", "Yes"),
+		function()
+			romevisionPromptOpen = false
+			RunConsoleCommand("tf_romevision_opt_in", "1")
+		end,
+		TF2GM_LocalizeRomevisionText("#TF_Prompt_Romevsion_Cancel", "No"),
+		function()
+			romevisionPromptOpen = false
+		end,
+		TF2GM_LocalizeRomevisionText("#TF_Prompt_Romevsion_Opt_Out", "Never ask about Romevision again"),
+		function()
+			romevisionPromptOpen = false
+			RunConsoleCommand("tf_romevision_skip_prompt", "1")
+		end
+	)
+end
+
+local function TF2GM_PrintRomevisionOfferChat(playerName)
+	playerName = tostring(playerName or "")
+	if playerName == "" then return end
+
+	local template = TF2GM_LocalizeRomevisionText(
+		"#TF_Player_OptionalVision",
+		"%player% has the Hardy Laurel which enables Romevision for everyone to share!"
+	)
+	template = string.gsub(template, "[%c]", "")
+	template = string.gsub(template, "%%player%%", playerName)
+
+	chat.AddText(Color(110, 190, 255), template)
+end
+
+local function TF2GM_ProcessRomevisionOffer(providerId, playerName)
+	if providerId == "" then return end
+
+	if not romevisionSharedSeen[providerId] then
+		romevisionSharedSeen[providerId] = true
+		TF2GM_PrintRomevisionOfferChat(playerName)
+	end
+
+	local cvOptIn = GetConVar("tf_romevision_opt_in")
+	local cvSkip = GetConVar("tf_romevision_skip_prompt")
+	if not cvOptIn or not cvSkip then return end
+
+	if GetGlobalBool("TF_MVM_RomevisionAvailable", false)
+		and not cvOptIn:GetBool()
+		and not cvSkip:GetBool()
+	then
+		TF2GM_ShowRomevisionPrompt()
+	end
+end
+
+net.Receive("TF_RomevisionOffer", function()
+	local providerId = net.ReadString()
+	local playerName = net.ReadString()
+	if providerId == "" then return end
+
+	romevisionSharedOffers[#romevisionSharedOffers + 1] = {
+		id = providerId,
+		name = playerName,
+	}
+end)
+
+hook.Add("Think", "TF2GM_RomevisionOfferQueue", function()
+	if #romevisionSharedOffers <= 0 then return end
+	if not TF2GM_LocalPlayerCanProcessRomevisionOffer() then return end
+
+	local offer = table.remove(romevisionSharedOffers, 1)
+	if not offer then return end
+	TF2GM_ProcessRomevisionOffer(tostring(offer.id or ""), tostring(offer.name or ""))
 end)
 
 hook.Add("HUDPaint", "TF_HalloweenGargoyleLocator", function()
@@ -1639,6 +1754,13 @@ ApplyTF2ClassPreviewProfile(icon5)
 icon5:SetZPos(12)
 icon5:SetModel( "models/empty.mdl" ) -- you can only change colors on playermodels
 icon5.Paint = function() end
+local icon6 = vgui.Create( "DModelPanel", ClassFrame )
+icon6:SetSize(previewPanelW, previewPanelH)
+icon6:SetPos(previewPanelX, previewPanelY)
+ApplyTF2ClassPreviewProfile(icon6)
+icon6:SetZPos(12)
+icon6:SetModel( "models/empty.mdl" )
+icon6.Paint = function() end
 local convar = GetConVar("loadout_heavy")
 local split = string.Split(convar:GetString(), ",")
 --print(split[1])
@@ -1669,7 +1791,102 @@ icon5:GetEntity():SetNoDraw(true)
 icon5:GetEntity():SetParent(icon:GetEntity())
 icon5:GetEntity():AddEffects(EF_BONEMERGE)
 icon5:GetEntity():AddEffects(EF_PARENT_ANIMATES)
-icon.PreviewLinkedPanels = { icon2, icon3, icon4, icon5 }
+icon6:GetEntity():SetNoDraw(true)
+icon6:GetEntity():SetParent(icon2:GetEntity())
+icon6:GetEntity():AddEffects(EF_BONEMERGE)
+icon6:GetEntity():AddEffects(EF_PARENT_ANIMATES)
+icon.PreviewLinkedPanels = { icon2, icon3, icon4, icon5, icon6 }
+
+local function clearPreviewParticleSystem(ent)
+	if not IsValid(ent) then return end
+	if ent.StopParticles then
+		ent:StopParticles()
+	end
+	ent.PreviewParticleSystem = nil
+end
+
+local function getClassSlotProperties(className, slot)
+	if not istable(TFClientLoadoutProperties) then return nil end
+	local classProps = TFClientLoadoutProperties[className]
+	if not istable(classProps) then return nil end
+	return classProps[tonumber(slot)]
+end
+
+local function getPropertyAttributeByClass(properties, className, fallback)
+	if not istable(properties) or not istable(properties.attributes) or not isstring(className) then
+		return fallback
+	end
+	for _, pair in ipairs(properties.attributes) do
+		local attrID = istable(pair) and tonumber(pair[1]) or nil
+		if attrID and tf_items and tf_items.AttributesByID and istable(tf_items.AttributesByID[attrID]) then
+			local def = tf_items.AttributesByID[attrID]
+			if def.attribute_class == className then
+				return pair[2]
+			end
+		end
+	end
+	return fallback
+end
+
+local function decodeItemTintColor(raw)
+	local n = tonumber(raw)
+	if not n or n <= 0 then return nil end
+	n = math.floor(n)
+	if n > 0xFFFFFF then
+		n = bit.band(n, 0xFFFFFF)
+	end
+	return Color(
+		bit.band(bit.rshift(n, 16), 0xFF),
+		bit.band(bit.rshift(n, 8), 0xFF),
+		bit.band(n, 0xFF),
+		255
+	)
+end
+
+local function getUnusualParticleSystemFromProperties(properties)
+	if not istable(properties) then return nil end
+	local idx = tonumber(getPropertyAttributeByClass(properties, "set_attached_particle_static", nil))
+	if not idx then
+		idx = tonumber(getPropertyAttributeByClass(properties, "attach particle effect static", nil))
+	end
+	if not idx then
+		idx = tonumber(getPropertyAttributeByClass(properties, "attach particle effect", nil))
+	end
+	if not idx then return nil end
+	local def = tf_items and tf_items.Particles and tf_items.Particles[idx] or nil
+	if istable(def) and isstring(def.system) and def.system ~= "" then
+		return def.system
+	end
+	return nil
+end
+
+local function getFestiveAttachedModelForPreview(item, properties)
+	if not istable(item) or not istable(properties) then return nil end
+	local festive = tonumber(getPropertyAttributeByClass(properties, "is_festivized", 0)) or 0
+	if festive <= 0 then return nil end
+
+	local festiveModels = item.visuals and item.visuals.attached_models_festive or nil
+	if (not istable(festiveModels)) and tf_item and tf_item.ResolvePaintkitVisualsForData then
+		local paintkitVisuals = tf_item.ResolvePaintkitVisualsForData(item, properties)
+		festiveModels = paintkitVisuals and paintkitVisuals.attached_models_festive or nil
+	end
+	if not istable(festiveModels) then return nil end
+
+	local festiveEntry = festiveModels[0] or festiveModels["0"]
+	if not istable(festiveEntry) then
+		for _, candidate in pairs(festiveModels) do
+			if istable(candidate) and isstring(candidate.model) and candidate.model ~= "" then
+				festiveEntry = candidate
+				break
+			end
+		end
+	end
+
+	if istable(festiveEntry) and isstring(festiveEntry.model) and festiveEntry.model ~= "" then
+		return festiveEntry.model
+	end
+	return nil
+end
 
 local function getWearablePreviewModel(item, className)
 	if not istable(item) then return nil end
@@ -1729,10 +1946,14 @@ local function applyPreviewWearables(className)
 	for i = 1, 3 do
 		local p = wearablePanels[i]
 		if IsValid(p) and IsValid(p:GetEntity()) then
+			clearPreviewParticleSystem(p:GetEntity())
 			p:GetEntity():SetModel("models/empty.mdl")
 			p:GetEntity():SetParent(icon:GetEntity())
 			p:GetEntity():AddEffects(EF_BONEMERGE)
 p:GetEntity():AddEffects(EF_PARENT_ANIMATES)
+			p:GetEntity():SetMaterial("")
+			p:GetEntity():SetRenderMode(RENDERMODE_NORMAL)
+			p:GetEntity():SetColor(Color(255, 255, 255, 255))
 			p:GetEntity():SetNoDraw(false)
 		end
 	end
@@ -1745,10 +1966,26 @@ p:GetEntity():AddEffects(EF_PARENT_ANIMATES)
 					if isstring(mdl) and mdl ~= "" then
 						local panel = wearablePanels[idx]
 						if IsValid(panel) and IsValid(panel:GetEntity()) then
+							local slotProps = getClassSlotProperties(className, 3 + idx)
 							panel:GetEntity():SetModel(mdl)
 							panel:GetEntity():SetParent(icon:GetEntity())
 							panel:GetEntity():AddEffects(EF_BONEMERGE)
 panel:GetEntity():AddEffects(EF_PARENT_ANIMATES)
+
+							local tint = decodeItemTintColor(slotProps and getPropertyAttributeByClass(slotProps, "set_item_tint_rgb", nil) or nil)
+							if tint then
+								panel:GetEntity():SetRenderMode(RENDERMODE_TRANSCOLOR)
+								panel:GetEntity():SetColor(tint)
+							else
+								panel:GetEntity():SetRenderMode(RENDERMODE_NORMAL)
+								panel:GetEntity():SetColor(Color(255, 255, 255, 255))
+							end
+
+							local unusual = getUnusualParticleSystemFromProperties(slotProps)
+							if unusual then
+								ParticleEffectAttach(unusual, PATTACH_ABSORIGIN_FOLLOW, panel:GetEntity(), 0)
+								panel:GetEntity().PreviewParticleSystem = unusual
+							end
 						end
 					end
 
@@ -1807,7 +2044,78 @@ panel:GetEntity():AddEffects(EF_PARENT_ANIMATES)
 	end
 end
 
+local classPreviewWeaponSlot = {
+	scout = 1,
+	soldier = 1,
+	pyro = 1,
+	demoman = 2,
+	heavy = 1,
+	engineer = 3,
+	medic = 2,
+	sniper = 1,
+	spy = 3,
+}
+
+local function applyPreviewWeaponForClass(className)
+	if not isstring(className) or className == "" then return end
+	if not (IsValid(icon2) and IsValid(icon2:GetEntity())) then return end
+	if not (IsValid(icon6) and IsValid(icon6:GetEntity())) then return end
+
+	local slot = tonumber(classPreviewWeaponSlot[className]) or 1
+	local convar = GetConVar("loadout_" .. className)
+	local split = convar and string.Split(convar:GetString(), ",") or {}
+	local weaponID = tonumber(split[slot]) or -1
+	local itemData = weaponID > 0 and tf_items and tf_items.ItemsByID and tf_items.ItemsByID[weaponID] or nil
+	if not istable(itemData) then return end
+
+	local weaponEnt = icon2:GetEntity()
+	local wModel = itemData.model_world or itemData.model_player
+	if isstring(wModel) and wModel ~= "" then
+		weaponEnt:SetModel(wModel)
+	end
+	weaponEnt:SetParent(icon:GetEntity())
+	weaponEnt:AddEffects(EF_BONEMERGE)
+	weaponEnt:AddEffects(EF_PARENT_ANIMATES)
+	weaponEnt:SetNoDraw(false)
+	weaponEnt:SetMaterial("")
+	weaponEnt:SetRenderMode(RENDERMODE_NORMAL)
+	weaponEnt:SetColor(Color(255, 255, 255, 255))
+	clearPreviewParticleSystem(weaponEnt)
+
+	local props = getClassSlotProperties(className, slot)
+	if tf_item and tf_item.ResolveMaterialOverrideForItemData then
+		local matOverride = tf_item.ResolveMaterialOverrideForItemData(itemData, props, LocalPlayer())
+		if isstring(matOverride) and matOverride ~= "" then
+			weaponEnt:SetMaterial(matOverride)
+		end
+	end
+
+	local unusual = getUnusualParticleSystemFromProperties(props)
+	if unusual then
+		ParticleEffectAttach(unusual, PATTACH_ABSORIGIN_FOLLOW, weaponEnt, 0)
+		weaponEnt.PreviewParticleSystem = unusual
+	end
+
+	local festiveEnt = icon6:GetEntity()
+	clearPreviewParticleSystem(festiveEnt)
+	festiveEnt:SetMaterial("")
+	festiveEnt:SetRenderMode(RENDERMODE_NORMAL)
+	festiveEnt:SetColor(Color(255, 255, 255, 255))
+	local festiveModel = getFestiveAttachedModelForPreview(itemData, props)
+	if isstring(festiveModel) and festiveModel ~= "" then
+		festiveEnt:SetModel(festiveModel)
+		festiveEnt:SetParent(weaponEnt)
+		festiveEnt:AddEffects(EF_BONEMERGE)
+		festiveEnt:AddEffects(EF_PARENT_ANIMATES)
+		festiveEnt:SetNoDraw(false)
+	else
+		festiveEnt:SetModel("models/empty.mdl")
+		festiveEnt:SetNoDraw(true)
+	end
+end
+
 applyPreviewWearables("heavy")
+applyPreviewWeaponForClass("heavy")
 
 local hoveredClassName = "heavy"
 local loadoutClassToIndex = {
@@ -1859,6 +2167,7 @@ end
 		if lastPreviewTeamSkin ~= skin then
 			lastPreviewTeamSkin = skin
 			applyPreviewWearables(hoveredClassName or "heavy")
+			applyPreviewWeaponForClass(hoveredClassName or "heavy")
 		end
 	end)
 
@@ -2408,6 +2717,7 @@ icon2:GetEntity():AddEffects(EF_PARENT_ANIMATES)
 	end
 	PlayClassHoverSound(1)
 	applyPreviewWearables("scout")
+	applyPreviewWeaponForClass("scout")
 	
       icon:GetEntity():SetSequence("selectionmenu_startpose")
 	icon:StartScene("scenes/player/scout/low/class_select.vcd")
@@ -2467,6 +2777,7 @@ icon2:GetEntity():AddEffects(EF_PARENT_ANIMATES)
 	end
 	PlayClassHoverSound(2)
 	applyPreviewWearables("soldier")
+	applyPreviewWeaponForClass("soldier")
 	
       icon:GetEntity():SetSequence("selectionmenu_startpose")
 	icon:StartScene("scenes/player/soldier/low/class_select.vcd")
@@ -2522,6 +2833,7 @@ icon2:GetEntity():AddEffects(EF_PARENT_ANIMATES)
 	end
 	PlayClassHoverSound(3)
 	applyPreviewWearables("pyro")
+	applyPreviewWeaponForClass("pyro")
 	ApplyClassBoardText("pyro", "PYRO")
 		
       icon:GetEntity():SetSequence("selectionmenu_startpose")
@@ -2580,6 +2892,7 @@ icon2:GetEntity():AddEffects(EF_PARENT_ANIMATES)
 	end
 	PlayClassHoverSound(4)
 	applyPreviewWearables("demoman")
+	applyPreviewWeaponForClass("demoman")
 	
       icon:GetEntity():SetSequence("selectionmenu_startpose")
 	icon:StartScene("scenes/player/demoman/low/class_select.vcd")
@@ -2638,6 +2951,7 @@ icon2:GetEntity():AddEffects(EF_PARENT_ANIMATES)
 
 	PlayClassHoverSound(5)
 	applyPreviewWearables("heavy")
+	applyPreviewWeaponForClass("heavy")
 	
       icon:GetEntity():SetSequence("selectionmenu_startpose")
 	icon:StartScene("scenes/player/heavy/low/class_select.vcd")
@@ -2701,6 +3015,7 @@ icon2:GetEntity():AddEffects(EF_PARENT_ANIMATES)
 	end
 	PlayClassHoverSound(6)
 	applyPreviewWearables("engineer")
+	applyPreviewWeaponForClass("engineer")
 	
       icon:GetEntity():SetSequence("selectionmenu_startpose")
 	icon:StartScene("scenes/player/engineer/low/class_select.vcd")
@@ -2760,6 +3075,7 @@ icon2:GetEntity():AddEffects(EF_PARENT_ANIMATES)
 	end
 	PlayClassHoverSound(7)
 	applyPreviewWearables("medic")
+	applyPreviewWeaponForClass("medic")
     ApplyClassBoardText("medic", "MEDIC")
 		
       icon:GetEntity():SetSequence("selectionmenu_startpose")
@@ -2819,6 +3135,7 @@ icon2:GetEntity():AddEffects(EF_PARENT_ANIMATES)
 	end
 	PlayClassHoverSound(8)
 	applyPreviewWearables("sniper")
+	applyPreviewWeaponForClass("sniper")
 	
       icon:GetEntity():SetSequence("selectionmenu_startpose")
 	icon:StartScene("scenes/player/sniper/low/class_select.vcd")
@@ -2876,6 +3193,7 @@ icon2:GetEntity():AddEffects(EF_PARENT_ANIMATES)
 	end
 	PlayClassHoverSound(9)
 	applyPreviewWearables("spy")
+	applyPreviewWeaponForClass("spy")
 	
       icon:GetEntity():SetSequence("selectionmenu_startpose")
 	icon:StartScene("scenes/player/spy/low/class_select.vcd")
@@ -3861,6 +4179,21 @@ local function GetConfiguredSteamAPIKey()
 	return nil
 end
 
+local function ItemVisualDebugEnabled()
+	local c = GetConVar("tf_debug_item_visuals")
+	return c and c:GetBool() or false
+end
+
+local function FindAttrInPairList(pairsList, attrId)
+	if not istable(pairsList) then return nil end
+	for _, pair in ipairs(pairsList) do
+		if istable(pair) and tonumber(pair[1]) == tonumber(attrId) then
+			return pair[2]
+		end
+	end
+	return nil
+end
+
 local function DecodeSteamInventoryJSON(raw)
 	if not isstring(raw) then return nil, nil end
 	raw = string.gsub(raw, "^\239\187\191", "")
@@ -3913,12 +4246,18 @@ end
 			for _, att in ipairs(itemData.attributes) do
 				if istable(att) then
 					local id = tonumber(att.defindex or att.attribute_class or att.id)
+					local attrDef = id and tf_items and tf_items.AttributesByID and tf_items.AttributesByID[id] or nil
 					local rawFloat = tonumber(att.float_value)
 					local rawValue = tonumber(att.value)
 					local value = nil
-					-- Steam's item API mixes int-backed and float-backed attributes.
-					-- For int-backed attrs (e.g. paintkit id), float_value is tiny garbage.
-					if rawFloat ~= nil and (rawFloat == 0 or math.abs(rawFloat) > 0.000001) then
+
+					-- Use schema metadata when available; Steam's float_value is unreliable
+					-- for integer-backed item attrs such as paintkit ids and seeds.
+					if attrDef and tonumber(attrDef.stored_as_integer) == 1 then
+						value = rawValue
+					elseif attrDef and attrDef.attribute_type == "string" then
+						value = att.value
+					elseif rawFloat ~= nil and (rawFloat == 0 or math.abs(rawFloat) > 0.000001) then
 						value = rawFloat
 					else
 						value = rawValue or rawFloat
@@ -3930,6 +4269,21 @@ end
 			end
 		if #attrs > 0 then
 			props.attributes = attrs
+			if ItemVisualDebugEnabled() then
+				local paintkit = FindAttrInPairList(attrs, 834)
+				local wear = FindAttrInPairList(attrs, 725)
+				local festive = FindAttrInPairList(attrs, 2053)
+				if paintkit ~= nil or wear ~= nil or festive ~= nil then
+					print(string.format(
+						"[tf_debug_item_visuals] BuildSteamItemProperties defindex=%s paintkit=%s wear=%s festive=%s attrs=%d",
+						tostring(defindex),
+						tostring(paintkit),
+						tostring(wear),
+						tostring(festive),
+						#attrs
+					))
+				end
+			end
 		end
 	end
 
@@ -4097,6 +4451,24 @@ local function MergeSteamInventory(ply)
 											loadouts[className][targetIndex] = defindex
 											if itemProperties then
 												loadoutProperties[className][targetIndex] = itemProperties
+												if ItemVisualDebugEnabled() then
+													local attrs = itemProperties.attributes
+													local paintkit = FindAttrInPairList(attrs, 834)
+													local wear = FindAttrInPairList(attrs, 725)
+													local festive = FindAttrInPairList(attrs, 2053)
+													if paintkit ~= nil or wear ~= nil or festive ~= nil then
+														print(string.format(
+															"[tf_debug_item_visuals] MergeEquip class=%s slot=%s target=%d defindex=%s paintkit=%s wear=%s festive=%s",
+															tostring(className),
+															tostring(slot),
+															tonumber(targetIndex) or -1,
+															tostring(defindex),
+															tostring(paintkit),
+															tostring(wear),
+															tostring(festive)
+														))
+													end
+												end
 											end
 										end
 									end
@@ -4145,6 +4517,8 @@ local function MergeSteamInventory(ply)
 								tauntConvar:SetString(table.concat(tauntSplit, ","))
 							end
 						end
+
+						TFClientLoadoutProperties = table.Copy(loadoutProperties)
 
 						net.Start("TF_UpdateLoadoutProperties")
 							net.WriteTable(loadoutProperties)
@@ -4230,6 +4604,7 @@ concommand.Add("mergetf2loadout", function(ply)
 end)
 
 CreateClientConVar("tf_steam_api_key", "", true, false, "Steam Web API key used for TF2 inventory merge.")
+CreateClientConVar("tf_debug_item_visuals", "0", true, false, "Debug Steam->loadout->item visual attribute flow.")
 concommand.Add("tf_set_steam_api_key", function(_, _, args)
 	local key = string.Trim(table.concat(args or {}, " "))
 	if key == "" then

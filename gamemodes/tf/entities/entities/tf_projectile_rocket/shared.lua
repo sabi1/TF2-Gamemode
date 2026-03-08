@@ -173,11 +173,13 @@ end
 function ENT:FindTarget()
 	local v1, v2, dot
 	v1 = self:GetForward()
+	local owner = self:GetOwner()
+	local ownerTeam = (GAMEMODE and GAMEMODE.EntityTeam and GAMEMODE:EntityTeam(owner)) or TEAM_NEUTRAL
 	
 	local max, target
 	
 	for _,v in pairs(ents.GetAll()) do
-		if (v:IsPlayer() or v:IsNPC()) and v:Health()>0 and GAMEMODE:EntityTeam(v)~=self:GetOwner():Team() then
+		if (v:IsPlayer() or v:IsNPC()) and v:Health()>0 and GAMEMODE:EntityTeam(v)~=ownerTeam then
 			v2 = (v:GetPos() - self:GetPos()):GetNormal()
 			dot = v1:DotProduct(v2)
 			
@@ -287,9 +289,10 @@ function ENT:DoExplosion(ent)
 
 			--ParticleEffect("Explosion_ShockWave_01", self:GetPos(), self:GetAngles())
  
-			if self:GetOwner():Team() == TEAM_BLU then
+			local ownerTeam = (GAMEMODE and GAMEMODE.EntityTeam and GAMEMODE:EntityTeam(self:GetOwner())) or TEAM_NEUTRAL
+			if ownerTeam == TEAM_BLU then
 				--ParticleEffect("drg_cow_explosioncore_charged_blue", self:GetPos(), self:GetAngles())		
-			elseif self:GetOwner():Team() == TF_TEAM_PVE_INVADERS then
+			elseif ownerTeam == TF_TEAM_PVE_INVADERS then
 				--ParticleEffect("drg_cow_explosioncore_charged_blue", self:GetPos(), self:GetAngles())		
 			else
 				--ParticleEffect("drg_cow_explosioncore_charged", self:GetPos(), self:GetAngles())
@@ -349,7 +352,9 @@ function ENT:DoExplosion(ent)
 	
 	for k,v in ipairs(ents.FindInSphere(self:GetPos(),range)) do
 		if (v:IsPlayer()) then
-			if ((string.find(v:GetModel(),"/bot_") or (string.find(game.GetMap(), "mvm_") and self:GetOwner():Team() != TEAM_BLU and v:Team() != self:GetOwner():Team())) and !v:IsFriendly(self:GetOwner())) then
+			local owner = self:GetOwner()
+			local ownerTeam = (GAMEMODE and GAMEMODE.EntityTeam and GAMEMODE:EntityTeam(owner)) or TEAM_NEUTRAL
+			if ((string.find(v:GetModel(),"/bot_") or (string.find(game.GetMap(), "mvm_") and ownerTeam != TEAM_BLU and v:Team() != ownerTeam)) and (!IsValid(owner) or !v:IsFriendly(owner))) then
 				ParticleEffect("mvm_soldier_shockwave", self:GetPos(), self:GetAngles())
 				if (!v:HasPlayerState(PLAYERSTATE_STUNNED)) then
 					--v:EmitSound("TFPlayer.StunImpact")

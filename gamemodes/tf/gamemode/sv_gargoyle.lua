@@ -166,10 +166,12 @@ local function QueueNextGargoyleAction()
 	TFNextMapGargoyleAction = CurTime() + GetRandomGargoyleDelay()
 end
 
-local function AnnounceGargoyleMessage(eventName, message)
+local function AnnounceGargoyleMessage(eventName, message, voice, spooky)
 	net.Start("TF_HalloweenGargoyleNotify")
 	net.WriteString(eventName or "")
 	net.WriteString(message or "")
+	net.WriteString(voice or "")
+	net.WriteString(spooky or "")
 	net.Broadcast()
 end
 
@@ -194,14 +196,7 @@ function GM:AnnounceHalloweenGargoyle(eventName, overrideMessage)
 		message = overrideMessage or "The Soul Gargoyle has disappeared."
 	end
 
-	for _, ply in ipairs(player.GetAll()) do
-		if IsValid(ply) and ply:IsPlayer() then
-			ply:EmitSound(voice, 100, 100, 1, CHAN_VOICE)
-			ply:EmitSound(spooky, 80, 100, 1, CHAN_STATIC)
-		end
-	end
-
-	AnnounceGargoyleMessage(eventName, message)
+	AnnounceGargoyleMessage(eventName, message, voice, spooky)
 end
 
 local function BuildGargoyleSpawnPointList()
@@ -1298,10 +1293,51 @@ local function SetEntityStuff( ent1, ent2 ) -- Transfer most of the set things o
 	end
 end
 
+local function IsMvMMap()
+	local map = string.lower(game.GetMap() or "")
+	return string.find(map, "mvm_", 1, true) ~= nil
+end
+
+local function IsMvMRobotLike(ply)
+	if not IsValid(ply) then return false end
+	if not IsMvMMap() then return false end
+	if ply:IsBot() then return true end
+	return string.find(string.lower(ply:GetModel() or ""), "/bot_", 1, true) ~= nil
+end
+
+local function IsMiniBossLike(ply)
+	if not IsValid(ply) then return false end
+	return ply:IsMiniBoss() or ply:GetModelScale() > 1.0 or string.find(string.lower(ply:GetModel() or ""), "_boss.mdl", 1, true) ~= nil
+end
+
+local function ShouldGibLikeTF2(ply, dmginfo, inflictor, isBlastKill)
+	if not IsValid(ply) or not dmginfo then return false end
+	if ply:HasDeathFlag(DF_GIB) then return true end
+	if dmginfo:IsDamageType(DMG_ALWAYSGIB) then return true end
+	if not isBlastKill then return false end
+
+	if IsMvMRobotLike(ply) and not IsMiniBossLike(ply) then
+		return false
+	end
+
+	local p = math.Clamp(player_gib_probability:GetFloat(), 0, 1)
+	return math.Rand(0, 1) <= p
+end
+
 
 function GM:DoPlayerDeath(ply, attacker, dmginfo)
 	local shouldgib = false
 	local inflictor = dmginfo:GetInflictor()
+	local isBlastKill = dmginfo:IsDamageType(DMG_BLAST) or dmginfo:IsExplosionDamage() or (IsValid(inflictor) and inflictor.Explosive)
+	local shouldGibLikeTF2 = ShouldGibLikeTF2(ply, dmginfo, inflictor, isBlastKill)
+
+	if isBlastKill and not shouldGibLikeTF2 then
+		local force = dmginfo:GetDamageForce()
+		force.x = force.x * 2.5
+		force.y = force.y * 2.5
+		force.z = force.z * 2.0
+		dmginfo:SetDamageForce(force)
+	end
 	for k,v in ipairs(player.GetBots()) do
 		if (v.TFBot) then
 			if (IsValid(v.TargetEnt)) then
@@ -1395,7 +1431,7 @@ function GM:DoPlayerDeath(ply, attacker, dmginfo)
 				ply:SetModel(string.Replace(ply:GetModel(),"/player/","/lkskin/hwm/"))
 			end
 		end
-		if (!ply:IsL4D() and !ply:IsHL2() and (!dmginfo:IsDamageType(DMG_BLAST) or string.find(ply:GetModel(),"bot_")) && (!dmginfo:IsDamageType(DMG_ALWAYSGIB) or string.find(ply:GetModel(),"bot_")) and ply:GetPlayerClass() != "boomer" && ply:GetPlayerClass() != "tank_l4d" and !(string.find(ply:GetModel(),"bot_") and string.find(ply:GetModel(),"_boss") or ply:GetModelScale() > 1.0)) then
+		if (!ply:IsL4D() and !ply:IsHL2() and (!isBlastKill or string.find(ply:GetModel(),"bot_")) and !shouldGibLikeTF2 and ply:GetPlayerClass() != "boomer" && ply:GetPlayerClass() != "tank_l4d" and !(string.find(ply:GetModel(),"bot_") and string.find(ply:GetModel(),"_boss") or ply:GetModelScale() > 1.0)) then
 			timer.Simple(0.02, function()
 				if ply:GetRagdollEntity():IsValid() then
 					ply:GetRagdollEntity():Remove()
@@ -1720,7 +1756,7 @@ function GM:DoPlayerDeath(ply, attacker, dmginfo)
 		end
 	else
 		
-		if (((!ply:IsHL2() and !ply:IsL4D() and not (dmginfo:IsDamageType(DMG_BLAST) or dmginfo:IsExplosionDamage() or inflictor.Explosive) and !ply:HasDeathFlag(DF_GIB) ) or (ply:IsHL2() || ply:IsL4D())) or string.find(ply:GetModel(),"/bot_") and ply:GetModelScale() == 1.0 and !string.find(ply:GetModel(),"_boss.mdl")) then
+		if (((!ply:IsHL2() and !ply:IsL4D() and !isBlastKill and !shouldGibLikeTF2 ) or (ply:IsHL2() || ply:IsL4D())) or string.find(ply:GetModel(),"/bot_") and ply:GetModelScale() == 1.0 and !string.find(ply:GetModel(),"_boss.mdl")) then
 			if (GetConVar("tf_use_client_ragdolls"):GetBool()) then
 				if ((string.find(ply:GetModel(),"bot_") and ply:GetModelScale() > 1.0) or ply:IsMiniBoss()) then
 					
@@ -2053,7 +2089,7 @@ function GM:DoPlayerDeath(ply, attacker, dmginfo)
 	if dmginfo:IsFallDamage() then -- Fall damage
 		ply.FallDeath = true
 		ply:EmitSound("player/pl_fleshbreak.wav", 70, math.random(92,96))
-	elseif dmginfo:IsDamageType(DMG_BLAST) or dmginfo:IsExplosionDamage() or inflictor.Explosive or ply:HasDeathFlag(DF_GIB) then -- Explosion damage
+	elseif isBlastKill or shouldGibLikeTF2 then -- Explosion damage
 	
 		if ply:GetMaterial() == "models/shadertest/predator" then return end
 		if (!ply:HasDeathFlag(DF_GIB)) then
@@ -2081,24 +2117,30 @@ function GM:DoPlayerDeath(ply, attacker, dmginfo)
 				end
 			end
 		end
-		local p = player_gib_probability:GetFloat()
-		p = 1
-		
-		if (ply:HasDeathFlag(DF_GIB)) then
+		if (shouldGibLikeTF2 and dmginfo:IsDamageType(DMG_SHOCK)) then
+			local effectName = (ply:Team() == TEAM_RED) and "electrocuted_gibbed_red" or "electrocuted_gibbed_blue"
+			ParticleEffect(effectName, ply:GetPos(), Angle(0, 0, 0))
+			ply:EmitSound("TFPlayer.MedicChargedDeath")
+		end
+
+		if (shouldGibLikeTF2) then
 			ParticleEffect("tfc_sniper_mist",ply:GetPos(),ply:GetAngles(),nil)
 		end
 		
 		if not ply:IsHL2() and !ply:IsL4D() then
 			if (!(string.find(ply:GetModel(),"bot_"))) then
-				ply:Explode(dmginfo)
-				ply:EmitSound("BaseCombatCharacter.CorpseGib")
-				shouldgib = true	
+				if shouldGibLikeTF2 then
+					ply:Explode(dmginfo)
+					ply:EmitSound("BaseCombatCharacter.CorpseGib")
+					shouldgib = true
+				end
 			end
 		else
-			ply:Explode(dmginfo)
-			
-			if (IsValid(ply:GetRagdollEntity())) then
-				ply:GetRagdollEntity():Remove()
+			if shouldGibLikeTF2 then
+				ply:Explode(dmginfo)
+				if (IsValid(ply:GetRagdollEntity())) then
+					ply:GetRagdollEntity():Remove()
+				end
 			end
 		end
 	elseif dmginfo:IsDamageType(DMG_ACID) then -- Critical damage

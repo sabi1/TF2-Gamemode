@@ -112,8 +112,8 @@ local function playDeployBombAnimation(bot)
 	if not IsValid(bot) then return false end
 	local played = false
 
-	if bot.DoAnimationEvent and PLAYERANIMEVENT_CUSTOM then
-		local ok = pcall(bot.DoAnimationEvent, bot, PLAYERANIMEVENT_CUSTOM, "primary_deploybomb")
+	if bot.DoAnimationEvent and PLAYERANIMEVENT_CUSTOM_GESTURE then
+		local ok = pcall(bot.DoAnimationEvent, bot, PLAYERANIMEVENT_CUSTOM_GESTURE, "primary_deploybomb")
 		if ok then
 			played = true
 		end
@@ -147,7 +147,9 @@ local function completeBombDeploy(bot, deployZone)
 	end
 
 	intel.Deploying = true
-	if intel.Capture then
+	if IsValid(deployZone) and deployZone.Capture then
+		deployZone:Capture(bot)
+	elseif intel.Capture then
 		intel:Capture(bot, deployZone)
 	end
 

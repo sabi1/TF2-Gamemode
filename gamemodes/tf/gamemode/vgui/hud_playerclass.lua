@@ -15,6 +15,49 @@ local character_default = surface.GetTextureID("hud/class_scoutred")
 local character3d_default = "models/player/spy.mdl"
 local convar = CreateClientConVar("cl_hud_playerclass_use_playermodel", "0", true, false)
 
+local function TeamToClassImageIndex(teamNum)
+	if teamNum == TEAM_BLU or teamNum == TF_TEAM_PVE_INVADERS then
+		return 2
+	end
+	return 1
+end
+
+local function GetDisplayClassInfo(basePly, baseTeam, baseTbl)
+	if not IsValid(basePly) then
+		return baseTeam, baseTbl
+	end
+
+	if basePly ~= LocalPlayer() then
+		return baseTeam, baseTbl
+	end
+
+	if string.lower(tostring(basePly:GetPlayerClass() or "")) ~= "spy" then
+		return baseTeam, baseTbl
+	end
+
+	if not (basePly:GetNWBool("Disguised", false) or basePly:GetNWBool("Disguising", false)) then
+		return baseTeam, baseTbl
+	end
+
+	local disguiseClass = string.lower(string.Trim(basePly:GetNWString("TFSpyDisguiseClass", "")))
+	if disguiseClass == "" then
+		return baseTeam, baseTbl
+	end
+
+	local displayTeam = baseTeam
+	local disguiseTeam = tonumber(basePly:GetNWInt("TFSpyDisguiseTeam", -1)) or -1
+	if disguiseTeam > 0 then
+		displayTeam = disguiseTeam
+	end
+
+	local displayTbl = baseTbl
+	if GAMEMODE and GAMEMODE.PlayerClasses and GAMEMODE.PlayerClasses[disguiseClass] then
+		displayTbl = GAMEMODE.PlayerClasses[disguiseClass]
+	end
+
+	return displayTeam, displayTbl
+end
+
 function PANEL:Init()
 	self:SetPaintBackgroundEnabled(false)
 	self:ParentToHUD()
@@ -36,11 +79,14 @@ function PANEL:Paint()
 	if not LocalPlayer():Alive() or GetConVar("tf_forcehl2hud"):GetBool() or gmod.GetGamemode() == "tf_darkrp" or LocalPlayer():IsHL2() or GAMEMODE.ShowScoreboard or GetConVarNumber("cl_drawhud")==0 or LocalPlayer():Team() == TEAM_SPECTATOR or LocalPlayer():GetPlayerClass()=="" then if self.ClassPanel then self.ClassPanel:Remove() self.ClassPanel = nil end return end
 		local t = LocalPlayer():Team()
 		local tbl = LocalPlayer():GetPlayerClassTable()
+		local classPly = LocalPlayer()
 
 		if LocalPlayer():GetObserverTarget() and LocalPlayer():GetObserverTarget():IsPlayer() then
-			t = LocalPlayer():GetObserverTarget():Team()
-			tbl = LocalPlayer():GetObserverTarget():GetPlayerClassTable()
+			classPly = LocalPlayer():GetObserverTarget()
+			t = classPly:Team()
+			tbl = classPly:GetPlayerClassTable()
 		end
+		t, tbl = GetDisplayClassInfo(classPly, t, tbl)
 
 		--ht = ACT_MP_STAND_..LocalPlayer():GetActiveWeapon().HoldType
 		--[[model = LocalPlayer():GetPlayerClass()
@@ -193,7 +239,7 @@ function PANEL:Paint()
 		if self.ClassModel then self.ClassModel:Remove() end
 		tex = character_default
 		if tbl and tbl.CharacterImage and tbl.CharacterImage[1] then
-			tex = tbl.CharacterImage[t - 1] or tbl.CharacterImage[1]
+			tex = tbl.CharacterImage[TeamToClassImageIndex(t)] or tbl.CharacterImage[1]
 		end
 		surface.SetTexture(tex)
 		surface.SetDrawColor(255,255,255,255)

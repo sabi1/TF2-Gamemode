@@ -48,8 +48,8 @@ TF_MVMShop.DefaultUpgrades = {
     { id = "lifesteal_melee", name = "Melee Heal On Kill", category = "Melee", target = "melee", description = "+25 health on melee kill", costs = { 150, 275, 400 } },
     { id = "effectbar_melee", name = "Recharge Rate", category = "Melee", target = "melee", description = "+25% faster recharge rate", costs = { 100, 150, 200, 250 }, requiresScript = true },
 
-    { id = "building_health", name = "Building Health", category = "Engineer", target = "player", classes = { "engineer" }, description = "+15% building health", costs = { 150, 250, 350 } },
-    { id = "building_rate", name = "Building Fire Rate", category = "Engineer", target = "player", classes = { "engineer" }, description = "+10% sentry fire rate", costs = { 200, 300, 450 } },
+    { id = "building_health", name = "Building Health", category = "Engineer", target = "pda", classes = { "engineer" }, description = "+15% building health", costs = { 150, 250, 350 } },
+    { id = "building_rate", name = "Building Fire Rate", category = "Engineer", target = "pda", classes = { "engineer" }, description = "+10% sentry fire rate", costs = { 200, 300, 450 } },
     { id = "canteen_capacity", name = "Canteen Specialist", category = "Canteen", target = "action", description = "+1 max canteen charge", costs = { 150, 300 } },
 }
 
@@ -329,8 +329,45 @@ local function GuessUpgradeTargetFromAttribute(attributeName, isPlayerUpgrade)
     if isPlayerUpgrade then return "player" end
     local attr = string.lower(tostring(attributeName or ""))
     if attr == "" then return "primary" end
+    if attr == "canteen specialist"
+        or attr == "critboost"
+        or attr == "ubercharge"
+        or attr == "refill_ammo"
+        or attr == "recall"
+        or attr == "building instant upgrade" then
+        return "action"
+    end
+    if attr == "engy building health bonus"
+        or attr == "engy sentry fire rate increased"
+        or attr == "engy sentry radius increased"
+        or attr == "engy sentry damage bonus"
+        or attr == "maxammo metal increased"
+        or attr == "engy dispenser radius increased"
+        or attr == "engy disposable sentries"
+        or attr == "multiple sentries"
+        or attr == "bidirectional teleport"
+        or attr == "robo sapper" then
+        return (attr == "robo sapper") and "building" or "pda"
+    end
     if string.find(attr, "melee", 1, true) then return "melee" end
     if string.find(attr, "secondary", 1, true) then return "secondary" end
+    if attr == "ubercharge rate bonus"
+        or attr == "healing mastery"
+        or attr == "overheal expert"
+        or attr == "generate rage on heal"
+        or attr == "increase buff duration"
+        or attr == "generate rage on damage" then
+        return "secondary"
+    end
+    if attr == "airblast pushback scale"
+        or attr == "srifle charge rate increased"
+        or attr == "projectile speed increased"
+        or attr == "rocket specialist"
+        or attr == "attack projectiles"
+        or attr == "armor piercing"
+        or attr == "explosive sniper shot" then
+        return "primary"
+    end
     if string.find(attr, "buff", 1, true)
         or string.find(attr, "jar", 1, true)
         or string.find(attr, "canteen", 1, true)
@@ -339,6 +376,43 @@ local function GuessUpgradeTargetFromAttribute(attributeName, isPlayerUpgrade)
         return "secondary"
     end
     return "primary"
+end
+
+local function GuessUpgradeCategoryFromAttribute(attributeName, target, isPlayerUpgrade, uiGroup)
+    if isPlayerUpgrade then
+        local attr = string.lower(tostring(attributeName or ""))
+        if attr == "canteen specialist" then
+            return "Canteen"
+        end
+        return "Player"
+    end
+
+    if tonumber(uiGroup) == 2 then
+        return "Canteen"
+    end
+
+    local attr = string.lower(tostring(attributeName or ""))
+    target = string.lower(tostring(target or ""))
+    if attr == "engy building health bonus"
+        or attr == "engy sentry fire rate increased"
+        or attr == "engy sentry radius increased"
+        or attr == "engy sentry damage bonus"
+        or attr == "engy dispenser radius increased"
+        or attr == "engy disposable sentries"
+        or attr == "multiple sentries"
+        or attr == "bidirectional teleport" then
+        return "Engineer"
+    end
+    if attr == "robo sapper" then
+        return "Spy"
+    end
+    if target == "primary" then return "Primary" end
+    if target == "secondary" then return "Secondary" end
+    if target == "melee" then return "Melee" end
+    if target == "action" then return "Canteen" end
+    if target == "pda" then return "Engineer" end
+    if target == "building" then return "Spy" end
+    return "Weapon"
 end
 
 local DeriveTierCountFromScript
@@ -374,7 +448,7 @@ local function ParseUpgradeEntriesFromText(txt)
                 id = tostring(numericId),
                 name = PrettifyAttributeName(attrib),
                 target = (uiGroup == 2) and "action" or GuessUpgradeTargetFromAttribute(attrib, isPlayerUpgrade),
-                category = isPlayerUpgrade and "Player" or "Weapon",
+                category = GuessUpgradeCategoryFromAttribute(attrib, (uiGroup == 2) and "action" or GuessUpgradeTargetFromAttribute(attrib, isPlayerUpgrade), isPlayerUpgrade, uiGroup),
                 description = "",
                 icon = tostring(icon or ""),
                 scriptAttribute = tostring(attrib),
@@ -622,7 +696,7 @@ function TF_MVMShop:LoadUpgrades()
                 dst = {
                     id = id,
                     name = TF_MVMShop.AttributeDisplayNameMap[srcAttr] or PrettifyAttributeName(srcAttr),
-                    category = src.category or ((srcTarget == "player") and "Player" or "Weapon"),
+                    category = GuessUpgradeCategoryFromAttribute(srcAttr, srcTarget, src.category == "Player", src.scriptUiGroup),
                     target = srcTarget ~= "" and srcTarget or "primary",
                     description = src.description or "",
                     costs = istable(src.costs) and table.Copy(src.costs) or {},
@@ -647,13 +721,18 @@ function TF_MVMShop:LoadUpgrades()
             if isstring(src.description) and src.description ~= "" then dst.description = src.description end
             if isstring(src.icon) and src.icon ~= "" then dst.icon = src.icon end
             if isstring(src.name) and src.name ~= "" then dst.name = src.name end
-            if isstring(src.category) and src.category ~= "" then dst.category = src.category end
+            if isstring(src.category) and src.category ~= "" and string.lower(src.category) ~= "weapon" then
+                dst.category = src.category
+            end
             if isstring(src.target) and src.target ~= "" then dst.target = src.target end
             if srcAttr ~= "" then dst.scriptAttribute = srcAttr end
             if src.scriptQuality ~= nil then dst.scriptQuality = tonumber(src.scriptQuality) or dst.scriptQuality end
             if src.scriptUiGroup ~= nil then dst.scriptUiGroup = tonumber(src.scriptUiGroup) or dst.scriptUiGroup end
             if src.scriptIncrement ~= nil then dst.scriptIncrement = tonumber(src.scriptIncrement) or dst.scriptIncrement end
             if src.scriptCap ~= nil then dst.scriptCap = tonumber(src.scriptCap) or dst.scriptCap end
+            if dst.category == nil or dst.category == "" or string.lower(dst.category) == "weapon" then
+                dst.category = GuessUpgradeCategoryFromAttribute(srcAttr, dst.target, string.lower(tostring(dst.target or "")) == "player", dst.scriptUiGroup)
+            end
         end
     end
 
@@ -681,7 +760,7 @@ function TF_MVMShop:LoadUpgrades()
 
     local mergedLookup = table.Copy(baseData.lookup or {})
     local mergedList = table.Copy(TF_MVMShop.DefaultUpgrades)
-    MergeParsedIntoList(mergedList, baseData.parsed)
+    MergeParsedIntoList(mergedList, (baseData.scriptEntries and baseData.scriptEntries.all) or baseData.parsed)
     local itemUpgradeCount = #(baseData.scriptEntries and baseData.scriptEntries.item or {})
     local playerUpgradeCount = #(baseData.scriptEntries and baseData.scriptEntries.player or {})
 
@@ -702,7 +781,7 @@ function TF_MVMShop:LoadUpgrades()
     for _, path in ipairs(overridePaths) do
         local extra = ReadUpgradeData(path)
         if not extra then continue end
-        MergeParsedIntoList(mergedList, extra.parsed)
+        MergeParsedIntoList(mergedList, (extra.scriptEntries and extra.scriptEntries.all) or extra.parsed)
         mergedLookup = MergeLookup(mergedLookup, extra.lookup)
         itemUpgradeCount = itemUpgradeCount + #(extra.scriptEntries and extra.scriptEntries.item or {})
         playerUpgradeCount = playerUpgradeCount + #(extra.scriptEntries and extra.scriptEntries.player or {})
@@ -875,23 +954,6 @@ function TF_MVMShop:GetWeaponInLogicalSlot(ply, logicalSlot)
         return active
     end
 
-    -- Prefer effect-bar / drink variants (Sandman, Milk, Jar-like secondaries, etc.)
-    -- to match TF2 upgrade intent when multiple same-slot entities are present.
-    local effectCandidates = {}
-    for _, wep in ipairs(candidates) do
-        if self:WeaponHasEffectBarLike(wep) or self:IsWeaponDrinkLike(wep) then
-            effectCandidates[#effectCandidates + 1] = wep
-        end
-    end
-    if #effectCandidates == 1 then
-        return effectCandidates[1]
-    elseif #effectCandidates > 1 then
-        table.sort(effectCandidates, function(a, b)
-            return (a:EntIndex() or 0) > (b:EntIndex() or 0)
-        end)
-        return effectCandidates[1]
-    end
-
     -- Otherwise pick the most recently created entity in the slot.
     table.sort(candidates, function(a, b)
         return (a:EntIndex() or 0) > (b:EntIndex() or 0)
@@ -901,7 +963,7 @@ end
 
 function TF_MVMShop:GetStrictTargetKey(ply, target)
     target = string.lower(tostring(target or ""))
-    if target == "primary" or target == "secondary" or target == "melee" or target == "action" then
+    if target == "primary" or target == "secondary" or target == "melee" or target == "action" or target == "pda" or target == "building" then
         local wep = self:GetWeaponInLogicalSlot(ply, target)
         if IsValid(wep) and wep.GetClass then
             return target .. ":" .. string.lower(tostring(wep:GetClass() or ""))
@@ -914,7 +976,7 @@ end
 function TF_MVMShop:BuildStrictUpgradeValidationMatrix(ply)
     local matrix = {}
     local flatSet = {}
-    local baseSlots = { "primary", "secondary", "melee", "action" }
+    local baseSlots = { "primary", "secondary", "melee", "action", "pda", "building" }
     for _, slot in ipairs(baseSlots) do
         matrix[self:GetStrictTargetKey(ply, slot)] = matrix[self:GetStrictTargetKey(ply, slot)] or {}
     end
@@ -1022,6 +1084,43 @@ function TF_MVMShop:IsWeaponMinigunLike(wep)
     local cls = self:GetWeaponClassNameLower(wep)
     return string.find(cls, "minigun", 1, true) ~= nil
         or string.find(cls, "gatling", 1, true) ~= nil
+end
+
+function TF_MVMShop:IsWeaponBuffBannerLike(wep)
+    local cls = self:GetWeaponClassNameLower(wep)
+    return string.find(cls, "buff_item", 1, true) ~= nil
+        or string.find(cls, "conch", 1, true) ~= nil
+        or string.find(cls, "banner", 1, true) ~= nil
+        or string.find(cls, "backup", 1, true) ~= nil
+        or string.find(cls, "battalion", 1, true) ~= nil
+end
+
+function TF_MVMShop:IsWeaponMedigunLike(wep)
+    local cls = self:GetWeaponClassNameLower(wep)
+    return string.find(cls, "medigun", 1, true) ~= nil
+end
+
+function TF_MVMShop:IsWeaponSniperRifleLike(wep)
+    local cls = self:GetWeaponClassNameLower(wep)
+    return string.find(cls, "sniperrifle", 1, true) ~= nil
+        or string.find(cls, "sniper_rifle", 1, true) ~= nil
+        or string.find(cls, "classic", 1, true) ~= nil
+end
+
+function TF_MVMShop:HasEngineerUpgradeTool(ply)
+    if not IsValid(ply) then return false end
+    for _, wep in ipairs(ply:GetWeapons()) do
+        if not IsValid(wep) then continue end
+        local cls = self:GetWeaponClassNameLower(wep)
+        if string.find(cls, "builder", 1, true)
+            or string.find(cls, "pda_engineer", 1, true)
+            or string.find(cls, "wrench", 1, true)
+            or string.find(cls, "robot_arm", 1, true)
+            or string.find(cls, "laser_pointer", 1, true) then
+            return true
+        end
+    end
+    return false
 end
 
 function TF_MVMShop:IsWeaponSupportLike(wep)
@@ -1183,15 +1282,25 @@ end
 function TF_MVMShop:IsUpgradeAllowedForLoadout(ply, upgrade)
     local target = string.lower(tostring(upgrade.target or ""))
     local id = string.lower(tostring(upgrade.id or ""))
+    local className = string.lower(tostring(ply:GetPlayerClass() or ""))
+    local isBuffDurationUpgrade = id == "buff_duration_secondary"
+        or self:UpgradeAttrMatches(upgrade, "increase buff duration")
+        or self:UpgradeAttrMatches(upgrade, "generate rage on damage")
+    local isMedigunUpgrade = self:UpgradeAttrMatches(upgrade, "ubercharge rate bonus")
+        or self:UpgradeAttrMatches(upgrade, "healing mastery")
+        or self:UpgradeAttrMatches(upgrade, "overheal expert")
+        or self:UpgradeAttrMatches(upgrade, "generate rage on heal")
+    local isSniperChargeUpgrade = self:UpgradeAttrMatches(upgrade, "srifle charge rate increased")
+    local isAirblastUpgrade = self:UpgradeAttrMatches(upgrade, "airblast pushback scale")
+    local isEngineerUpgrade = self:UpgradeAttrMatches(upgrade, "engy ")
+        or self:UpgradeAttrMatches(upgrade, "bidirectional teleport")
+        or self:UpgradeAttrMatches(upgrade, "disposable sentries")
+        or self:UpgradeAttrMatches(upgrade, "multiple sentries")
 
     if target == "primary" or target == "secondary" or target == "melee" then
         local wep = self:GetWeaponInLogicalSlot(ply, target)
         if not IsValid(wep) then
             return false, "missing_weapon"
-        end
-        local explicitAllow = self:GetExplicitUpgradeAllowSetForWeapon(wep, target)
-        if explicitAllow ~= nil and explicitAllow[id] ~= true then
-            return false, "explicit_filtered"
         end
         local drinkLike = self:IsWeaponDrinkLike(wep)
         local isDamageUpgrade = id == "damage_primary" or id == "damage_secondary" or self:UpgradeAttrMatches(upgrade, "damage bonus")
@@ -1203,6 +1312,24 @@ function TF_MVMShop:IsUpgradeAllowedForLoadout(ply, upgrade)
             or self:UpgradeAttrMatches(upgrade, "effect bar")
             or self:UpgradeAttrMatches(upgrade, "charge recharge")
             or self:UpgradeAttrMatches(upgrade, "item meter charge rate")
+        local explicitAllow = self:GetExplicitUpgradeAllowSetForWeapon(wep, target)
+        if explicitAllow ~= nil and explicitAllow[id] ~= true then
+            local explicitFamilyAllowed = false
+            if explicitAllow.buff_duration_secondary and isBuffDurationUpgrade then
+                explicitFamilyAllowed = true
+            elseif (explicitAllow.effectbar_primary or explicitAllow.effectbar_secondary or explicitAllow.effectbar_melee) and isEffectBarUpgrade then
+                explicitFamilyAllowed = true
+            elseif (explicitAllow.damage_primary or explicitAllow.damage_secondary or explicitAllow.damage_melee) and isDamageUpgrade then
+                explicitFamilyAllowed = true
+            elseif explicitAllow.swing_melee and self:UpgradeAttrMatches(upgrade, "melee attack rate bonus") then
+                explicitFamilyAllowed = true
+            elseif explicitAllow.lifesteal_melee and self:UpgradeAttrMatches(upgrade, "heal on kill") then
+                explicitFamilyAllowed = true
+            end
+            if not explicitFamilyAllowed then
+                return false, "explicit_filtered"
+            end
+        end
 
         if isDamageUpgrade then
             if self:IsWeaponSupportLike(wep) or drinkLike then
@@ -1270,9 +1397,41 @@ function TF_MVMShop:IsUpgradeAllowedForLoadout(ply, upgrade)
             if target ~= "melee" then
                 return false, "weapon_wrong_slot"
             end
+        elseif isBuffDurationUpgrade then
+            if target ~= "secondary" or not self:IsWeaponBuffBannerLike(wep) then
+                return false, "weapon_wrong_type"
+            end
+        elseif isMedigunUpgrade then
+            if target ~= "secondary" or not self:IsWeaponMedigunLike(wep) then
+                return false, "weapon_wrong_type"
+            end
+        elseif isSniperChargeUpgrade then
+            if target ~= "primary" or not self:IsWeaponSniperRifleLike(wep) then
+                return false, "weapon_wrong_type"
+            end
+        elseif isAirblastUpgrade then
+            if target ~= "primary" or not self:IsWeaponFlamethrowerLike(wep) then
+                return false, "weapon_wrong_type"
+            end
         end
+    elseif target == "pda" then
+        local wep = self:GetWeaponInLogicalSlot(ply, "pda")
+        if className ~= "engineer" or not IsValid(wep) then
+            return false, "class_restricted"
+        end
+        return true, nil
+    elseif target == "building" then
+        local wep = self:GetWeaponInLogicalSlot(ply, "building")
+        if className ~= "spy" or not IsValid(wep) then
+            return false, "class_restricted"
+        end
+        return true, nil
     elseif target == "action" then
-        -- keep canteen capacity available to mirror TF2 station behavior
+        if isEngineerUpgrade then
+            if className ~= "engineer" or not self:HasEngineerUpgradeTool(ply) then
+                return false, "class_restricted"
+            end
+        end
         return true, nil
     end
 
@@ -1352,6 +1511,16 @@ function TF_MVMShop:GetWeaponSlotName(wep)
     if not IsValid(wep) then return "" end
     local cls = string.lower(tostring((wep.GetClass and wep:GetClass()) or ""))
 
+    if string.find(cls, "pda_engineer", 1, true)
+        or string.find(cls, "tf_weapon_builder", 1, true)
+        or string.find(cls, "construction_pda", 1, true) then
+        return "pda"
+    end
+    if string.find(cls, "pda_spy", 1, true)
+        or string.find(cls, "sapper", 1, true) then
+        return "building"
+    end
+
     -- Explicit fallback for known secondary drinks/jars when item metadata is unavailable.
     if string.find(cls, "jar_milk", 1, true)
         or string.find(cls, "jar_gas", 1, true)
@@ -1364,7 +1533,7 @@ function TF_MVMShop:GetWeaponSlotName(wep)
         local itemData = wep:GetItemData()
         if itemData and isstring(itemData.item_slot) then
             local slot = string.lower(itemData.item_slot)
-            if slot == "primary" or slot == "secondary" or slot == "melee" or slot == "action" then
+            if slot == "primary" or slot == "secondary" or slot == "melee" or slot == "action" or slot == "pda" or slot == "building" then
                 return slot
             end
         end
@@ -1547,8 +1716,11 @@ function TF_MVMShop:BuildScriptCoverageReport()
         ["damage force reduction"] = true,
         ["engy building health bonus"] = true,
         ["engy sentry fire rate increased"] = true,
+        ["engy sentry radius increased"] = true,
+        ["engy sentry damage bonus"] = true,
         ["engy dispenser radius increased"] = true,
         ["engy disposable sentries"] = true,
+        ["multiple sentries"] = true,
         ["bidirectional teleport"] = true,
         ["building instant upgrade"] = true,
         ["canteen specialist"] = true,
@@ -1753,9 +1925,11 @@ function TF_MVMShop:ApplyEngineerBuildingStats(ply)
     local fireMul = 1 + (0.1 * self:GetLevel(ply, "building_rate"))
     local _, engyHealthInc, engyHealthHas = self:GetScriptAttributeProgressAnyTarget(ply, "engy building health bonus")
     local _, engyRateInc, engyRateHas = self:GetScriptAttributeProgressAnyTarget(ply, "engy sentry fire rate increased")
+    local _, sentryRangeInc, sentryRangeHas = self:GetScriptAttributeProgressAnyTarget(ply, "engy sentry radius increased")
+    local _, sentryDamageInc, sentryDamageHas = self:GetScriptAttributeProgressAnyTarget(ply, "engy sentry damage bonus")
     local _, dispRangeInc, dispRangeHas = self:GetScriptAttributeProgressAnyTarget(ply, "engy dispenser radius increased")
-    local biTeleLevel = self:GetScriptAttributeProgressAnyTarget(ply, "bidirectional teleport")
-    local instLevel = self:GetScriptAttributeProgressAnyTarget(ply, "building instant upgrade")
+    local biTeleLevel = select(1, self:GetScriptAttributeProgressAnyTarget(ply, "bidirectional teleport"))
+    local instLevel = select(1, self:GetScriptAttributeProgressAnyTarget(ply, "building instant upgrade"))
     if engyHealthHas then
         healthMul = healthMul * math.max(0.1, 1 + engyHealthInc)
     end
@@ -1773,13 +1947,31 @@ function TF_MVMShop:ApplyEngineerBuildingStats(ply)
             if className == "obj_sentrygun" then
                 ent.TF_MVM_BaseFireRate = ent.TF_MVM_BaseFireRate or (ent.FireRate or 0.1)
                 ent.FireRate = ent.TF_MVM_BaseFireRate / fireMul
+                ent.TF_MVM_BaseRange = ent.TF_MVM_BaseRange or tonumber(ent.Range) or 1100
+                if sentryRangeHas then
+                    ent.Range = math.max(64, math.floor(ent.TF_MVM_BaseRange * math.max(0.1, 1 + sentryRangeInc)))
+                else
+                    ent.Range = ent.TF_MVM_BaseRange
+                end
+                ent.TF_MVM_BaseDamage = ent.TF_MVM_BaseDamage or tonumber(ent.BaseDamage) or 16
+                if sentryDamageHas then
+                    ent.BaseDamage = math.max(1, math.floor((ent.TF_MVM_BaseDamage * math.max(0.1, 1 + sentryDamageInc)) + 0.5))
+                else
+                    ent.BaseDamage = ent.TF_MVM_BaseDamage
+                end
                 local _, rocketSpecInc, rocketSpecHas = self:GetScriptAttributeProgress(ply, "primary", "rocket specialist")
                 if rocketSpecHas then
                     ent.TF_MVM_RocketSpecialist = math.max(0, rocketSpecInc)
+                else
+                    ent.TF_MVM_RocketSpecialist = nil
                 end
-            elseif className == "obj_dispenser" and dispRangeHas then
+            elseif className == "obj_dispenser" then
                 ent.TF_MVM_BaseRange = ent.TF_MVM_BaseRange or tonumber(ent.Range) or 100
-                ent.Range = math.max(32, math.floor(ent.TF_MVM_BaseRange * math.max(0.1, 1 + dispRangeInc)))
+                if dispRangeHas then
+                    ent.Range = math.max(32, math.floor(ent.TF_MVM_BaseRange * math.max(0.1, 1 + dispRangeInc)))
+                else
+                    ent.Range = ent.TF_MVM_BaseRange
+                end
             elseif className == "obj_teleporter" then
                 ent.TF_MVM_BidirectionalTeleport = (biTeleLevel and biTeleLevel > 0) and true or false
             end
@@ -1818,6 +2010,8 @@ function TF_MVMShop:ApplyPlayerStats(ply)
     local _, dynMarkInc, dynMarkHas = self:GetScriptAttributeProgressAnyTarget(ply, "mark for death")
     local _, dynBleedInc, dynBleedHas = self:GetScriptAttributeProgressAnyTarget(ply, "bleeding duration")
     local _, dynUberDurInc, dynUberDurHas = self:GetScriptAttributeProgressAnyTarget(ply, "uber duration bonus")
+    local dispSentryLevel = select(1, self:GetScriptAttributeProgressAnyTarget(ply, "engy disposable sentries"))
+    local multiSentryLevel = select(1, self:GetScriptAttributeProgressAnyTarget(ply, "multiple sentries"))
 
     if dynHpHas then hpBonus = hpBonus + math.floor(dynHpInc + 0.5) end
     if dynSpeedHas then speedMul = speedMul * math.max(0.1, 1 + dynSpeedInc) end
@@ -1870,6 +2064,7 @@ function TF_MVMShop:ApplyPlayerStats(ply)
     ply.TF_MVM_Dynamic.MarkForDeathDuration = dynMarkHas and math.max(0, dynMarkInc) or 0
     ply.TF_MVM_Dynamic.BleedDuration = dynBleedHas and math.max(0, dynBleedInc) or 0
     ply.TF_MVM_Dynamic.UberDurationBonus = dynUberDurHas and math.max(0, dynUberDurInc) or 0
+    ply.TF_MVM_Dynamic.DisposableSentryCount = math.max(0, tonumber(dispSentryLevel) or 0, tonumber(multiSentryLevel) or 0)
 
     local _, maxMetalInc, maxMetalHas = self:GetScriptAttributeProgressAnyTarget(ply, "maxammo metal increased")
     if maxMetalHas and ply.AmmoMax and ply.AmmoMax[TF_METAL] then
@@ -3065,6 +3260,16 @@ else
         if not IsValid(wep) then return "" end
         local cls = string.lower(tostring((wep.GetClass and wep:GetClass()) or ""))
 
+        if string.find(cls, "pda_engineer", 1, true)
+            or string.find(cls, "tf_weapon_builder", 1, true)
+            or string.find(cls, "construction_pda", 1, true) then
+            return "pda"
+        end
+        if string.find(cls, "pda_spy", 1, true)
+            or string.find(cls, "sapper", 1, true) then
+            return "building"
+        end
+
         -- Mirror server-side fallback so drink/jar/banners resolve consistently.
         if string.find(cls, "jar_milk", 1, true)
             or string.find(cls, "jar_gas", 1, true)
@@ -3159,10 +3364,16 @@ else
                 return target == tabKey or category == tabKey
             end
             if tabKey == "special" then
-                return category == "engineer"
+                if className == "engineer" then
+                    return category == "engineer" or target == "pda"
+                end
+                if className == "spy" then
+                    return category == "spy" or target == "building"
+                end
+                return false
             end
             if tabKey == "action" then
-                return category == "canteen" or target == "action"
+                return category == "canteen" or (target == "action" and category ~= "engineer" and category ~= "spy")
             end
             return false
         end
@@ -3227,10 +3438,10 @@ else
             return target == tabKey or category == tabKey
         end
         if tabKey == "special" then
-            return category == "engineer"
+            return category == "engineer" or category == "spy" or target == "pda" or target == "building"
         end
         if tabKey == "action" then
-            return category == "canteen" or target == "action"
+            return category == "canteen" or (target == "action" and category ~= "engineer" and category ~= "spy")
         end
         return false
     end

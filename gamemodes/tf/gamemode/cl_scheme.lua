@@ -31,6 +31,9 @@ surface.CreateFont("ChalkboardTitleMedium", {font = "TF2 Professor", size = 24*S
 surface.CreateFont("ChalkboardText", {font = "TF2 Professor", size = 14*Scale})
 
 surface.CreateFont("MenuMainTitle", {font = "TF2", size = 24*Scale})
+surface.CreateFont("MenuSmallFont", {font = "TF2 Build", size = 16*Scale})
+surface.CreateFont("MenuSmallestFont", {font = "TF2 Build", size = 11*Scale})
+surface.CreateFont("TeamMenuBold", {font = "TF2 Build", size = 30*Scale, weight = 700})
 surface.CreateFont("MenuClassBuckets", {font = "TF2 Secondary", size = 11*Scale})
 surface.CreateFont("ScoreboardSmallest", {font = "Verdana", size = 7*Scale, weight = 400})
 surface.CreateFont("ScoreboardVerySmall", {font = "Verdana", size = 8*Scale, weight = 400})

@@ -15,6 +15,7 @@ local VALID_LOADOUT_CLASSES = {
 
 if SERVER then
     util.AddNetworkString("TF_UpdateLoadoutProperties")
+    CreateConVar("tf_debug_item_visuals", "0", {FCVAR_ARCHIVE}, "Debug Steam->loadout->item visual attribute flow.")
 end
 
 local function normalizeLoadout(split)
@@ -37,6 +38,21 @@ local function sanitizeAttributes(rawAttributes)
     end
     if #out == 0 then return nil end
     return out
+end
+
+local function ItemVisualDebugEnabled()
+    local c = GetConVar("tf_debug_item_visuals")
+    return c and c:GetBool() or false
+end
+
+local function FindAttrInPairList(pairsList, attrId)
+    if not istable(pairsList) then return nil end
+    for _, pair in ipairs(pairsList) do
+        if istable(pair) and tonumber(pair[1]) == tonumber(attrId) then
+            return pair[2]
+        end
+    end
+    return nil
 end
 
 local function sanitizeSlotProperties(raw)
@@ -80,6 +96,24 @@ if SERVER then
                 cleaned[className] = {}
                 for i = 1, LOADOUT_SLOT_COUNT do
                     cleaned[className][i] = sanitizeSlotProperties(slots[i])
+                    if ItemVisualDebugEnabled() and cleaned[className][i] and cleaned[className][i].attributes then
+                        local attrs = cleaned[className][i].attributes
+                        local paintkit = FindAttrInPairList(attrs, 834)
+                        local wear = FindAttrInPairList(attrs, 725)
+                        local festive = FindAttrInPairList(attrs, 2053)
+                        if paintkit ~= nil or wear ~= nil or festive ~= nil then
+                            print(string.format(
+                                "[tf_debug_item_visuals] SVLoadoutReceive ply=%s class=%s slot=%d defindex=%s paintkit=%s wear=%s festive=%s",
+                                tostring(IsValid(ply) and ply:Nick() or "nil"),
+                                tostring(className),
+                                i,
+                                tostring(cleaned[className][i].defindex),
+                                tostring(paintkit),
+                                tostring(wear),
+                                tostring(festive)
+                            ))
+                        end
+                    end
                 end
             end
         end
@@ -92,17 +126,24 @@ function meta:GiveLoadout()
     local convar = "loadout_" .. self:GetPlayerClass()
     local split = normalizeLoadout(string.Split(self:GetInfo(convar, "-1,-1,-1,-1,-1,-1,-1"), ","))
     local classProperties = self.TFLoadoutProperties and self.TFLoadoutProperties[playerClass] or nil
+    local playerModel = self.GetModel and self:GetModel() or ""
 
     for slotIndex, id in ipairs(split) do
         id = tonumber(id)
         local itemname = nil
-        -- oh no
-        for name, wep in pairs(tf_items.Items) do
-            if istable(wep) and wep.id == id then     
-                if (IsValid(self.Owner) and string.find(self.Owner:GetModel(),"/player/touhou/") and wep.item_class == "tf_wearable_item") then
-
-                else
-                    itemname = name
+        local itemDef = id and tf_items.ItemsByID and tf_items.ItemsByID[id] or nil
+        if istable(itemDef) then
+            if not (isstring(playerModel) and string.find(playerModel, "/player/touhou/", 1, true) and itemDef.item_class == "tf_wearable_item") then
+                itemname = itemDef.name
+            end
+        elseif id then
+            -- Fallback for older schema states where ItemsByID is incomplete.
+            for name, wep in pairs(tf_items.Items) do
+                if istable(wep) and tonumber(wep.id) == id then
+                    if not (isstring(playerModel) and string.find(playerModel, "/player/touhou/", 1, true) and wep.item_class == "tf_wearable_item") then
+                        itemname = name
+                    end
+                    break
                 end
             end
         end
@@ -110,6 +151,24 @@ function meta:GiveLoadout()
             local slotProps = classProperties and classProperties[slotIndex] or nil
             if slotProps and slotProps.defindex and slotProps.defindex ~= id then
                 slotProps = nil
+            end
+            if ItemVisualDebugEnabled() and slotProps and slotProps.attributes then
+                local paintkit = FindAttrInPairList(slotProps.attributes, 834)
+                local wear = FindAttrInPairList(slotProps.attributes, 725)
+                local festive = FindAttrInPairList(slotProps.attributes, 2053)
+                if paintkit ~= nil or wear ~= nil or festive ~= nil then
+                    print(string.format(
+                        "[tf_debug_item_visuals] GiveLoadoutApply ply=%s class=%s slot=%d defindex=%s item=%s paintkit=%s wear=%s festive=%s",
+                        tostring(self:Nick()),
+                        tostring(playerClass),
+                        slotIndex,
+                        tostring(id),
+                        tostring(itemname),
+                        tostring(paintkit),
+                        tostring(wear),
+                        tostring(festive)
+                    ))
+                end
             end
             self:EquipInLoadout(itemname, slotProps)
             --tf_items.CC_GiveItem(self, _, {itemname})

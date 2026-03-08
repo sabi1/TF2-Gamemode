@@ -7,6 +7,21 @@ module("tf_item", package.seeall)
 -----------------------------------
 -- BASE ITEM SHARED FUNCTIONS
 
+local function ItemVisualDebugEnabled()
+	local c = GetConVar and GetConVar("tf_debug_item_visuals") or nil
+	return c and c.GetBool and c:GetBool() or false
+end
+
+local function AttrValueForDebug(attList, className)
+	if not istable(attList) then return nil end
+	for _, a in ipairs(attList) do
+		if istable(a) and a.attribute_class == className then
+			return a.value
+		end
+	end
+	return nil
+end
+
 local ITEM = {}
 
 ITEM.IsTFItem = true
@@ -114,8 +129,171 @@ function ITEM:GetVisuals()
 	return self:GetItemData().visuals or {}
 end
 
+local function GetSchemaAttributeValue(item, attributeClass)
+	if not istable(item) or not isstring(attributeClass) or attributeClass == "" then return nil end
+
+	local attrs = item.attributes_by_id or item.attributes
+	if not istable(attrs) then return nil end
+
+	for _, attr in pairs(attrs) do
+		if istable(attr) and attr.attribute_class == attributeClass and attr.value ~= nil then
+			return tonumber(attr.value) or attr.value
+		end
+	end
+
+	return nil
+end
+
+function ITEM:GetVisionFilterFlags()
+	return tonumber(self:GetItemData().vision_filter_flags) or 0
+end
+
+function ITEM:GetVisionOptInFlags()
+	local flags = tonumber(self:GetAttributeValue("vision_opt_in_flags", 0)) or 0
+	if flags ~= 0 then
+		return flags
+	end
+
+	return tonumber(GetSchemaAttributeValue(self:GetItemData(), "vision_opt_in_flags")) or 0
+end
+
+function ITEM:IsHiddenByVision(viewer)
+	local itemFlags = tonumber(self:GetVisionFilterFlags()) or 0
+	if itemFlags == 0 then return false end
+
+	local viewerFlags = TF2_GetVisionFilterFlags and TF2_GetVisionFilterFlags(viewer) or 0
+	return bit.band(itemFlags, viewerFlags) == 0
+end
+
+function ITEM:GetVisionFilteredModel(viewer)
+	local item = self:GetItemData()
+	if not istable(item) then return nil end
+	if not isstring(item.model_vision_filtered) or item.model_vision_filtered == "" then return nil end
+
+	local viewerFlags = TF2_GetVisionFilterFlags and TF2_GetVisionFilterFlags(viewer) or 0
+	if bit.band(viewerFlags, TF_VISION_FILTER_PYRO or 0x01) == 0 then return nil end
+
+	local model = item.model_vision_filtered
+	if IsValid(self.Owner) and self.Owner.GetPlayerClass then
+		model = string.Replace(model, "%s", self.Owner:GetPlayerClass())
+	end
+	return string.Replace(model, "demoman", "demo")
+end
+
+function ITEM:GetEffectiveDisplayModel(viewer, fallbackModel)
+	if self:IsHiddenByVision(viewer) then
+		return nil
+	end
+
+	return self:GetVisionFilteredModel(viewer) or fallbackModel
+end
+
 function ITEM:GetPaintkitID()
 	return tonumber(self:GetAttributeValue("paintkit_proto_def_index", self:GetItemData().static_attrs and self:GetItemData().static_attrs.paintkit_proto_def_index))
+end
+
+local PaintkitDisplayNameByID = nil
+
+local function IsGenericPaintkitName(name, id)
+	if not isstring(name) then return true end
+	local n = string.Trim(name)
+	if n == "" then return true end
+	local l = string.lower(n)
+	if l == "paintkit" then return true end
+	if tonumber(id) and l == ("paintkit " .. tostring(tonumber(id))) then
+		return true
+	end
+	return false
+end
+
+local function GetLocalizedTokenIfAny(token)
+	if not isstring(token) or token == "" then return nil end
+	if not tf_lang or not tf_lang.GetRaw then return nil end
+	local resolved = tf_lang.GetRaw(token)
+	if not isstring(resolved) or resolved == "" then return nil end
+	if string.sub(token, 1, 1) == "#" and string.sub(resolved, 1, 1) == "#" then
+		return nil
+	end
+	return resolved
+end
+
+local function BuildPaintkitDisplayNameLookup()
+	local byID = {}
+
+	local function maybeSet(protoID, candidate)
+		local id = tonumber(protoID)
+		if not id then return end
+		if not isstring(candidate) then return end
+		local value = string.Trim(candidate)
+		if value == "" then return end
+
+		local current = byID[id]
+		if current == nil or IsGenericPaintkitName(current, id) then
+			byID[id] = value
+		end
+	end
+
+	for _, item in pairs(tf_items.ItemsByID or {}) do
+		if istable(item) and istable(item.static_attrs) then
+			local proto = tonumber(item.static_attrs.paintkit_proto_def_index)
+			if proto then
+				maybeSet(proto, GetLocalizedTokenIfAny(item.item_name))
+				maybeSet(proto, item.name)
+			end
+		end
+	end
+
+	for prefabName, prefab in pairs(tf_items.PrefabsByName or {}) do
+		if isstring(prefabName) then
+			local proto = tonumber(string.match(prefabName, "^paintkit_(%d+)$"))
+			if proto and istable(prefab) then
+				maybeSet(proto, GetLocalizedTokenIfAny(prefab.item_name))
+				maybeSet(proto, prefab.name)
+			end
+		end
+	end
+
+	return byID
+end
+
+local function GetPaintkitDisplayNameByID(id)
+	local proto = tonumber(id)
+	if not proto then return nil end
+	if not PaintkitDisplayNameByID then
+		PaintkitDisplayNameByID = BuildPaintkitDisplayNameLookup()
+	end
+
+	local name = PaintkitDisplayNameByID[proto]
+	if isstring(name) and name ~= "" then
+		return name
+	end
+	return "Paintkit " .. tostring(proto)
+end
+
+function ITEM:GetPaintkitDisplayName()
+	local id = self:GetPaintkitID()
+	if not id then return nil end
+	return GetPaintkitDisplayNameByID(id)
+end
+
+function GetPaintkitDisplayNameForItemData(itemData, properties)
+	local id = nil
+	if istable(properties) and istable(properties.attributes) then
+		for _, att in ipairs(properties.attributes) do
+			if istable(att) then
+				local rawID = tonumber(att.id or att.attribute_id or att.defindex or att[1])
+				if rawID == 834 then
+					id = tonumber(att.value or att[2])
+					break
+				end
+			end
+		end
+	end
+	if not id then
+		id = tonumber(itemData and itemData.static_attrs and itemData.static_attrs.paintkit_proto_def_index)
+	end
+	if not id then return nil end
+	return GetPaintkitDisplayNameByID(id)
 end
 
 function ITEM:GetTextureWear()
@@ -202,6 +380,29 @@ end
 
 local PaintkitVisualLookup = nil
 
+local function GetAttributeValueFromPropertyTable(properties, class, fallback)
+	if not istable(properties) then return fallback end
+
+	local attrs = properties.attributes
+	if not istable(attrs) then return fallback end
+
+	for _, att in ipairs(attrs) do
+		if istable(att) then
+			if att.attribute_class == class then
+				return att.value ~= nil and att.value or fallback
+			end
+
+			local id = tonumber(att.id or att.attribute_id or att.defindex)
+			local def = id and tf_items and tf_items.AttributesByID and tf_items.AttributesByID[id] or nil
+			if def and def.attribute_class == class then
+				return att.value ~= nil and att.value or fallback
+			end
+		end
+	end
+
+	return fallback
+end
+
 function ITEM:GetResolvedPaintkitVisuals()
 	local paintkitID = self:GetPaintkitID()
 	if not paintkitID then return nil end
@@ -222,6 +423,26 @@ function ITEM:GetResolvedPaintkitVisuals()
 		if defs[classFromSWEP] then
 			return defs[classFromSWEP]
 		end
+	end
+
+	for _, def in pairs(defs) do
+		return def
+	end
+end
+
+function ResolvePaintkitVisualsForData(itemData, properties)
+	local paintkitID = tonumber(GetAttributeValueFromPropertyTable(properties, "paintkit_proto_def_index", itemData and itemData.static_attrs and itemData.static_attrs.paintkit_proto_def_index))
+	if not paintkitID then return nil end
+	if not PaintkitVisualLookup then
+		PaintkitVisualLookup = BuildPaintkitVisualLookup()
+	end
+
+	local defs = PaintkitVisualLookup[paintkitID]
+	if not defs then return nil end
+
+	local itemClass = GetPaintkitClassFromItem(itemData)
+	if itemClass and defs[itemClass] then
+		return defs[itemClass]
 	end
 
 	for _, def in pairs(defs) do
@@ -255,6 +476,87 @@ local function ResolvePaintkitMaterialPath(baseMaterial, owner, wearValue)
 		return baseMaterial .. wearSuffix .. teamSuffix
 	end
 	return baseMaterial .. teamSuffix
+end
+
+local function ValidateMaterialOverridePath(candidate, fallbackBase)
+	if not CLIENT then
+		return candidate
+	end
+	if not isstring(candidate) or candidate == "" then
+		return nil
+	end
+	local mat = Material(candidate)
+	if mat and not mat:IsError() then
+		return candidate
+	end
+	if isstring(fallbackBase) and fallbackBase ~= "" then
+		local fallback = Material(fallbackBase)
+		if fallback and not fallback:IsError() then
+			return fallbackBase
+		end
+	end
+	return nil
+end
+
+if CLIENT then
+	local ProtoPaintkitApprox = {
+		[279] = {
+			layers = {
+				"patterns/workshop/smissmas_2020/1558054217/1558054217_a",
+				"patterns/workshop/smissmas_2020/1558054217/1558054217_c",
+				"patterns/workshop/smissmas_2020/1558054217/1558054217_b",
+			},
+			layer1Scale = "2.5",
+			weapons = {
+				scattergun = {
+					albedo = "models/weapons/c_models/c_scattergun/p_scattergun_albedo",
+				},
+			},
+		},
+	}
+
+	local ProtoPaintkitMaterialCache = {}
+
+	local function CreateApproxProtoPaintkitMaterial(paintkitID, itemClass)
+		local paintkit = ProtoPaintkitApprox[paintkitID]
+		local weapon = paintkit and paintkit.weapons and paintkit.weapons[itemClass] or nil
+		if not weapon or not isstring(weapon.albedo) or weapon.albedo == "" then return nil end
+
+		local key = tostring(paintkitID) .. ":" .. tostring(itemClass)
+		if ProtoPaintkitMaterialCache[key] then
+			return ProtoPaintkitMaterialCache[key]
+		end
+
+		local name = "tf2_warpaint_" .. tostring(paintkitID) .. "_" .. tostring(itemClass)
+		CreateMaterial(name, "VertexLitGeneric", {
+			["$basetexture"] = weapon.albedo,
+			["$detail"] = paintkit.layers[1],
+			["$detailscale"] = paintkit.layer1Scale or "1",
+			["$detailblendfactor"] = "1",
+			["$detailblendmode"] = "0",
+			["$model"] = "1",
+			["$vertexcolor"] = "1",
+			["$vertexalpha"] = "1",
+			["$phong"] = "1",
+			["$phongboost"] = "0.15",
+		})
+
+		ProtoPaintkitMaterialCache[key] = name
+		return name
+	end
+
+	function ResolveMaterialOverrideForItemData(itemData, properties, owner)
+		local visuals = ResolvePaintkitVisualsForData(itemData, properties)
+		local materialSource = visuals and visuals.material_override or nil
+		if isstring(materialSource) and materialSource ~= "" then
+			local materialBase = string.match(materialSource, "(.-)%.vmt") or materialSource
+			local wear = GetAttributeValueFromPropertyTable(properties, "set_item_texture_wear", itemData and itemData.static_attrs and itemData.static_attrs.texture_wear_default)
+			local resolved = ResolvePaintkitMaterialPath(materialBase, owner, wear) or materialBase
+			return ValidateMaterialOverridePath(resolved, materialBase)
+		end
+
+		return nil
+	end
 end
 
 function ITEM:GetKillIconName()
@@ -307,7 +609,27 @@ function ITEM:SendExtraAttributes(pl)
 	end
 end
 
+local function ExtraAttributesInputEqual(a, b)
+	if not istable(a) or not istable(b) then return false end
+	if #a ~= #b then return false end
+	for i = 1, #a do
+		local av = a[i]
+		local bv = b[i]
+		if not istable(av) or not istable(bv) then return false end
+		if tonumber(av[1]) ~= tonumber(bv[1]) then return false end
+		if tonumber(av[2]) ~= tonumber(bv[2]) then return false end
+	end
+	return true
+end
+
 function ITEM:SetExtraAttributes(att)
+	if not istable(att) then return end
+	if self._ApplyingExtraAttributes then return end
+	if istable(self.ExtraAttributesTable) and ExtraAttributesInputEqual(self.ExtraAttributesTable, att) then
+		return
+	end
+
+	self._ApplyingExtraAttributes = true
 	self.ExtraAttributes = {}
 	
 	for _,v in ipairs(att) do
@@ -323,9 +645,12 @@ function ITEM:SetExtraAttributes(att)
 		end
 	end
 	
-	if #self.ExtraAttributes == 0 then return end
+	if #self.ExtraAttributes == 0 then
+		self._ApplyingExtraAttributes = nil
+		return
+	end
 	
-	self.ExtraAttributesTable = att
+	self.ExtraAttributesTable = table.Copy(att)
 	
 	self:SendExtraAttributes()
 	
@@ -333,6 +658,43 @@ function ITEM:SetExtraAttributes(att)
 		table.Add(self.Attributes, self.ExtraAttributes)
 		--self.ExtraAttributes = nil
 		ApplyAttributes(self.ExtraAttributes, "equip", self, self.Owner)
+	end
+
+	if ItemVisualDebugEnabled() then
+		local paintkit = AttrValueForDebug(self.ExtraAttributes, "paintkit_proto_def_index")
+		local wear = AttrValueForDebug(self.ExtraAttributes, "set_item_texture_wear")
+		local festive = AttrValueForDebug(self.ExtraAttributes, "is_festivized")
+		print(string.format(
+			"[tf_debug_item_visuals] SetExtraAttributes ent=%d class=%s item=%s attrs=%d paintkit=%s wear=%s festive=%s",
+			self:EntIndex(),
+			tostring(self.GetClass and self:GetClass() or "nil"),
+			tostring(self.GetItemData and self:GetItemData() and self:GetItemData().name or "nil"),
+			#self.ExtraAttributes,
+			tostring(paintkit),
+			tostring(wear),
+			tostring(festive)
+		))
+	end
+
+	-- Extra attrs from Steam inventory (paintkit/festivized/etc.) can arrive after
+	-- initial item setup on client. Re-apply visuals so model/material overrides update.
+	if self.CheckUpdateItem and not self._InSetupItem then
+		self:CheckUpdateItem()
+	end
+	if self.InitVisuals and IsValid(self.Owner) then
+		local itemData = self:GetItemData()
+		if istable(itemData) then
+			local visuals
+			if self.Owner:EntityTeam() == TEAM_BLU or self.Owner:EntityTeam() == TF_TEAM_PVE_INVADERS then
+				visuals = itemData.visuals_blu or itemData.visuals
+			else
+				visuals = itemData.visuals_red or itemData.visuals
+			end
+			self:InitVisuals(self.Owner, visuals)
+			if CLIENT and self.InitializeAttachedModels then
+				self:InitializeAttachedModels()
+			end
+		end
 	end
 	
 	if CLIENT then
@@ -343,6 +705,7 @@ function ITEM:SetExtraAttributes(att)
 			end
 		end
 	end
+	self._ApplyingExtraAttributes = nil
 end
 
 function ITEM:OnEquipAttribute(att, owner)
@@ -427,10 +790,21 @@ function ITEM:InitVisuals(owner, visuals)
 	if isstring(materialSource) and materialSource ~= "" then
 		local materialBase = string.match(materialSource, "(.-)%.vmt") or materialSource
 		local resolved = ResolvePaintkitMaterialPath(materialBase, owner, self:GetTextureWear()) or materialBase
+		resolved = ValidateMaterialOverridePath(resolved, materialBase)
 		self.MaterialOverride = resolved
 		self.WeaponMaterial = resolved
 		self.CustomMaterialOverride2 = resolved
-		if CLIENT then
+		if CLIENT and resolved and resolved ~= "" then
+			self.CustomMaterialOverride = Material(resolved)
+		end
+	elseif CLIENT and ResolveMaterialOverrideForItemData then
+		local resolved = ResolveMaterialOverrideForItemData(self:GetItemData(), {
+			attributes = self:GetAttributes(),
+		}, owner)
+		if isstring(resolved) and resolved ~= "" then
+			self.MaterialOverride = resolved
+			self.WeaponMaterial = resolved
+			self.CustomMaterialOverride2 = resolved
 			self.CustomMaterialOverride = Material(resolved)
 		end
 	end
@@ -473,20 +847,77 @@ function ITEM:InitVisuals(owner, visuals)
 			festiveModels = paintkitVisuals.attached_models_festive
 		end
 		if self:IsFestivized() and istable(festiveModels) then
-			local festive = festiveModels[0] or festiveModels["0"]
-			if not istable(festive) then
-				for _, candidate in pairs(festiveModels) do
-					if istable(candidate) then
-						festive = candidate
-						break
+			local function extractFestiveModelFromEntry(entry, wantView)
+				if not istable(entry) then return nil end
+				local keys = wantView and {
+					"view_model",
+					"model_view",
+					"attached_model_view",
+					"model",
+				} or {
+					"world_model",
+					"model_world",
+					"attached_model_world",
+					"model",
+				}
+				for _, key in ipairs(keys) do
+					local v = entry[key]
+					if istable(v) then
+						v = v.model or v.view_model or v.world_model
+					end
+					if isstring(v) and v ~= "" then
+						return v
 					end
 				end
+				return nil
 			end
-			if istable(festive) and isstring(festive.model) and festive.model ~= "" then
-				self.AttachedWorldModel = festive.model
-				self.AttachedViewModel = festive.model
+
+			local function resolveFestiveModel(wantView)
+				local first = festiveModels[0] or festiveModels["0"]
+				local resolved = extractFestiveModelFromEntry(first, wantView)
+				if resolved then return resolved end
+
+				resolved = extractFestiveModelFromEntry(festiveModels, wantView)
+				if resolved then return resolved end
+
+				for _, candidate in ipairs(festiveModels) do
+					resolved = extractFestiveModelFromEntry(candidate, wantView)
+					if resolved then return resolved end
+				end
+
+				for _, candidate in pairs(festiveModels) do
+					resolved = extractFestiveModelFromEntry(candidate, wantView)
+					if resolved then return resolved end
+				end
+
+				return nil
+			end
+
+			local festiveWorld = resolveFestiveModel(false)
+			local festiveView = resolveFestiveModel(true)
+			if isstring(festiveWorld) and festiveWorld ~= "" then
+				self.AttachedWorldModel = festiveWorld
+			end
+			if isstring(festiveView) and festiveView ~= "" then
+				self.AttachedViewModel = festiveView
 			end
 		end
+	end
+
+	if ItemVisualDebugEnabled() then
+		print(string.format(
+			"[tf_debug_item_visuals] InitVisuals ent=%d class=%s item=%s paintkit=%s wear=%s festive=%s skin=%s mat=%s awm=%s avm=%s",
+			self:EntIndex(),
+			tostring(self.GetClass and self:GetClass() or "nil"),
+			tostring(self:GetItemData() and self:GetItemData().name or "nil"),
+			tostring(self:GetPaintkitID()),
+			tostring(self:GetTextureWear()),
+			tostring(self:IsFestivized()),
+			tostring(self.WeaponSkin),
+			tostring(self.CustomMaterialOverride2 or self.MaterialOverride or self.WeaponMaterial or ""),
+			tostring(self.AttachedWorldModel or ""),
+			tostring(self.AttachedViewModel or "")
+		))
 	end
 	
 	-- Bodygroups
@@ -560,21 +991,36 @@ if CLIENT then
 		return mat and not mat:IsError()
 	end
 
-	function ITEM:GetResolvedInventoryImage()
-		local item = self:GetItemData() or {}
-		local base = self.RuntimeImageInventory or item.image_inventory
-		if not isstring(base) or base == "" then return nil end
+	function ResolveInventoryImageForItemData(itemData, properties)
+		local visuals = ResolvePaintkitVisualsForData(itemData, properties)
+		local base = (visuals and visuals.image_inventory) or (itemData and itemData.image_inventory) or nil
+		local candidates = {}
+		if isstring(base) and base ~= "" then
+			candidates[#candidates + 1] = base
+		end
 
-		local candidates = { base }
+		local paintkitID = tonumber(GetAttributeValueFromPropertyTable(properties, "paintkit_proto_def_index", itemData and itemData.static_attrs and itemData.static_attrs.paintkit_proto_def_index))
+		local remappedDef = tonumber(itemData and (itemData.remapped_item_def_index or itemData.remapped_defindex or itemData.remap_item_def_index))
+		if not remappedDef then
+			remappedDef = tonumber(itemData and itemData.id)
+		end
+		local wear = tonumber(GetAttributeValueFromPropertyTable(properties, "set_item_texture_wear", itemData and itemData.static_attrs and itemData.static_attrs.texture_wear_default))
+		local wearCategory = math.Clamp(math.floor((wear or 0) * 5), 0, 4)
 
-		if self:IsFestivized() then
+		local isFestivized = tonumber(GetAttributeValueFromPropertyTable(properties, "is_festivized", 0)) or 0
+		if paintkitID and remappedDef then
+			local festiveSuffix = isFestivized > 0 and "_festive" or ""
+			candidates[#candidates + 1] = string.format("backpack/generated/paintkit%d_item%d_wear%d%s", paintkitID, remappedDef, wearCategory, festiveSuffix)
+			candidates[#candidates + 1] = string.format("paintkit%d_item%d_wear%d%s", paintkitID, remappedDef, wearCategory, festiveSuffix)
+		end
+
+		if isFestivized > 0 and isstring(base) and base ~= "" then
 			candidates[#candidates + 1] = base .. "_xmas"
 			candidates[#candidates + 1] = base .. "_festive"
 			candidates[#candidates + 1] = base .. "_festivized"
 		end
 
-		local wear = self:GetTextureWear()
-		if wear ~= nil then
+		if wear ~= nil and isstring(base) and base ~= "" then
 			local wearIndex = math.Clamp(math.floor((wear * 5)), 0, 4) + 1
 			local wearSuffix = WEAR_SUFFIXES[wearIndex]
 			if wearSuffix then
@@ -588,7 +1034,21 @@ if CLIENT then
 			end
 		end
 
-		return base
+		return (isstring(base) and base ~= "") and base or nil
+	end
+
+	function ITEM:GetResolvedInventoryImage()
+		local item = self:GetItemData() or {}
+		local resolved = ResolveInventoryImageForItemData(item, { attributes = self.ExtraAttributes or {} })
+		if isstring(resolved) and resolved ~= "" then
+			return resolved
+		end
+
+		local base = self.RuntimeImageInventory or item.image_inventory
+		if isstring(base) and base ~= "" then
+			return base
+		end
+		return nil
 	end
 end
 
@@ -689,6 +1149,15 @@ local function ResolveHandsViewModelForOwner(owner)
 end
 
 function ITEM:SetupItem(item)
+	self._InSetupItem = true
+	if istable(item) then
+		if isstring(item.model_player) and item.model_player ~= "" then
+			util.PrecacheModel(item.model_player)
+		end
+		if isstring(item.model_world) and item.model_world ~= "" then
+			util.PrecacheModel(item.model_world)
+		end
+	end
 
 	if SERVER then
 		if self:IsWeapon() and self.SetupCModelActivities then
@@ -709,10 +1178,11 @@ function ITEM:SetupItem(item)
 			end
 		end
 	else
-		if ExtraAttributesPending[self:EntIndex()] then
+		local pendingAttrs = ExtraAttributesPending[self:EntIndex()]
+		if pendingAttrs then
 			--MsgFN("Processing extra attributes for pending item %s", tostring(self))
-			self:SetExtraAttributes(ExtraAttributesPending[self:EntIndex()])
 			ExtraAttributesPending[self:EntIndex()] = nil
+			self:SetExtraAttributes(pendingAttrs)
 			
 			if self:IsWeapon() and self == self.Owner:GetActiveWeapon() then
 				HudInspectPanel:Update()
@@ -754,10 +1224,11 @@ function ITEM:SetupItem(item)
 		
 			-- todo: optimize clientside models, certainly don't need to create up to 4 clientside entities for each weapon
 			--self:InitializeCModel()
-			--self:InitializeWModel2()
+			self:InitializeWModel2()
 			self:InitializeAttachedModels()
 		end
 	end
+	self._InSetupItem = nil
 end
 
 -----------------------------------

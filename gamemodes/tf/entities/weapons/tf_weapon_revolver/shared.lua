@@ -61,35 +61,49 @@ SWEP.MinSpread = 0
 SWEP.MaxSpread = 0.06
 SWEP.CrosshairMaxScale = 3
 
+local function tf_spy_current_disguise_class(owner)
+	if not IsValid(owner) or owner:GetPlayerClass() ~= "spy" then
+		return nil
+	end
+	if not owner.InCond or not owner:InCond(TF_COND_DISGUISED) then
+		return nil
+	end
+	local className = string.lower(owner:GetNWString("TFSpyDisguiseClass", ""))
+	if className == "" then
+		return nil
+	end
+	return className
+end
 
 function SWEP:Deploy()
 	--MsgFN("Deploy %s", tostring(self))
 	
-		if self.Owner:GetModel() == "models/player/scout.mdl" or  self.Owner:GetModel() == "models/player/soldier.mdl" or  self.Owner:GetModel() == "models/player/pyro.mdl" or  self.Owner:GetModel() == "models/player/demo.mdl" or  self.Owner:GetModel() == "models/player/heavy.mdl" or  self.Owner:GetModel() == "models/player/engineer.mdl" or  self.Owner:GetModel() == "models/player/medic.mdl" or  self.Owner:GetModel() == "models/player/sniper.mdl" or  self.Owner:GetModel() == "models/player/hwm/spy.mdl" then
+		if tf_spy_current_disguise_class(self.Owner) then
 			self:SetWeaponHoldType("PRIMARY")			
 			self.HoldType = "PRIMARY"
 		end
 	if self.Owner:GetPlayerClass() == "spy" then
-		if self.Owner:GetModel() == "models/player/scout.mdl" or  self.Owner:GetModel() == "models/player/soldier.mdl" or  self.Owner:GetModel() == "models/player/pyro.mdl" or  self.Owner:GetModel() == "models/player/demo.mdl" or  self.Owner:GetModel() == "models/player/heavy.mdl" or  self.Owner:GetModel() == "models/player/engineer.mdl" or  self.Owner:GetModel() == "models/player/medic.mdl" or  self.Owner:GetModel() == "models/player/sniper.mdl" or  self.Owner:GetModel() == "models/player/hwm/spy.mdl" then
+		local disguiseClass = tf_spy_current_disguise_class(self.Owner)
+		if disguiseClass then
 			if SERVER then
 				animent2 = ents.Create( 'base_gmodentity' ) -- The entity used for the death animation	
-				if self.Owner:GetModel() == "models/player/engineer.mdl" then
+				if disguiseClass == "engineer" then
 					animent2:SetModel("models/weapons/c_models/c_shotgun/c_shotgun.mdl")
-				elseif self.Owner:GetModel() == "models/player/scout.mdl" then
+				elseif disguiseClass == "scout" then
 					animent2:SetModel("models/weapons/c_models/c_scattergun.mdl")
-				elseif self.Owner:GetModel() == "models/player/soldier.mdl" then
+				elseif disguiseClass == "soldier" then
 					animent2:SetModel("models/weapons/w_models/w_rocketlauncher.mdl")
-				elseif self.Owner:GetModel() == "models/player/pyro.mdl" then
+				elseif disguiseClass == "pyro" then
 					animent2:SetModel("models/weapons/c_models/c_flamethrower/c_flamethrower.mdl")
-				elseif self.Owner:GetModel() == "models/player/hwm/spy.mdl" then
+				elseif disguiseClass == "spy" then
 					animent2:SetModel("models/weapons/c_models/c_revolver/c_revolver.mdl")
-				elseif self.Owner:GetModel() == "models/player/sniper.mdl" then
+				elseif disguiseClass == "sniper" then
 					animent2:SetModel("models/weapons/c_models/c_sniperrifle/c_sniperrifle.mdl")
-				elseif self.Owner:GetModel() == "models/player/medic.mdl" then
+				elseif disguiseClass == "medic" then
 					animent2:SetModel("models/weapons/c_models/c_syringegun/c_syringegun.mdl")
-				elseif self.Owner:GetModel() == "models/player/heavy.mdl" then
+				elseif disguiseClass == "heavy" then
 					animent2:SetModel("models/weapons/c_models/c_minigun/c_minigun.mdl")
-				elseif self.Owner:GetModel() == "models/player/demo.mdl" then
+				elseif disguiseClass == "demo" then
 					animent2:SetModel("models/weapons/w_models/w_stickybomb_launcher.mdl")
 				end
 				animent2:SetAngles(self.Owner:GetAngles())
@@ -125,7 +139,7 @@ end
 function SWEP:Holster()
 	if (IsValid(self.Owner)) then
 		if self.Owner:GetPlayerClass() == "spy" then
-			if self.Owner:GetModel() == "models/player/scout.mdl" or  self.Owner:GetModel() == "models/player/soldier.mdl" or  self.Owner:GetModel() == "models/player/pyro.mdl" or  self.Owner:GetModel() == "models/player/demo.mdl" or  self.Owner:GetModel() == "models/player/heavy.mdl" or  self.Owner:GetModel() == "models/player/engineer.mdl" or  self.Owner:GetModel() == "models/player/medic.mdl" or  self.Owner:GetModel() == "models/player/sniper.mdl" or  self.Owner:GetModel() == "models/player/hwm/spy.mdl" then
+			if tf_spy_current_disguise_class(self.Owner) then
 				self:SetWeaponHoldType("PRIMARY")			
 				self.HoldType = "PRIMARY"
 			else
@@ -244,7 +258,7 @@ function SWEP:PrimaryAttack()
 end
 
 function SWEP:Think()
-	if self.Owner:GetModel() == "models/player/scout.mdl" or  self.Owner:GetModel() == "models/player/soldier.mdl" or  self.Owner:GetModel() == "models/player/pyro.mdl" or  self.Owner:GetModel() == "models/player/demo.mdl" or  self.Owner:GetModel() == "models/player/heavy.mdl" or  self.Owner:GetModel() == "models/player/engineer.mdl" or  self.Owner:GetModel() == "models/player/medic.mdl" or  self.Owner:GetModel() == "models/player/sniper.mdl" or  self.Owner:GetModel() == "models/player/hwm/spy.mdl" then
+	if tf_spy_current_disguise_class(self.Owner) then
 		self:SetWeaponHoldType("PRIMARY")			
 		self.HoldType = "PRIMARY"
 	end

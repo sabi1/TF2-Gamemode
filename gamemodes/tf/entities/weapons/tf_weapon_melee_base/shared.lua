@@ -535,59 +535,8 @@ function SWEP:MeleeAttack(dummy)
 			maxs = maxs,
 		}
 	end
-	if self.Owner:GetPlayerClass() == "spy" then
-		if self.Owner:GetModel() == "models/player/scout.mdl" or  self.Owner:GetModel() == "models/player/soldier.mdl" or  self.Owner:GetModel() == "models/player/pyro.mdl" or  self.Owner:GetModel() == "models/player/demo.mdl" or  self.Owner:GetModel() == "models/player/heavy.mdl" or  self.Owner:GetModel() == "models/player/engineer.mdl" or  self.Owner:GetModel() == "models/player/medic.mdl" or  self.Owner:GetModel() == "models/player/sniper.mdl" or  self.Owner:GetModel() == "models/player/hwm/spy.mdl" or self.Owner:GetModel() == "models/player/kleiner.mdl" then
-			if self.Owner:KeyDown( IN_ATTACK ) then
-				if SERVER then
-					if self.Owner:GetInfoNum("tf_robot", 0) == 0 then
-						self.Owner:SetModel("models/player/spy.mdl") 
-					else
-						self.Owner:SetModel("models/bots/spy/bot_spy.mdl")
-					end
-				end
-				if IsValid( button) then 
-					button:Remove() 
-				end
-				for _,v in pairs(ents.GetAll()) do
-					if v:IsNPC() and not v:IsFriendly(self.Owner) then
-						if SERVER then
-							v:AddEntityRelationship(self.Owner, D_HT, 99)
-						end
-					end
-				end
-				if self.Owner:Team() == TEAM_BLU then 
-					self.Owner:SetSkin(1) 
-				elseif self.Owner:Team() == TF_TEAM_PVE_INVADERS then 
-					self.Owner:SetSkin(1) 
-				else 
-					self.Owner:SetSkin(0) 
-				end
-				 
-				local ply = self.Owner
-				if (ply:GetModel() == "models/player/scout.mdl") then
-					ply.playerclass = "Scout"
-				elseif (ply:GetModel() == "models/player/soldier.mdl") then
-					ply.playerclass = "Soldier"
-				elseif (self:GetModel() == "models/player/pyro.mdl") then
-					ply.playerclass = "Pyro"
-				elseif (ply:GetModel() == "models/player/demo.mdl") then
-					ply.playerclass = "Demoman"
-				elseif (ply:GetModel() == "models/player/heavy.mdl") then
-					ply.playerclass = "Heavy"
-				elseif (ply:GetModel() == "models/player/engineer.mdl") then
-					ply.playerclass = "Engineer"
-				elseif (ply:GetModel() == "models/player/medic.mdl") then
-					ply.playerclass = "Medic"
-				elseif (ply:GetModel() == "models/player/sniper.mdl") then
-					ply.playerclass = "Medic"
-				else
-					local class = ply:GetPlayerClass()
-					ply.playerclass = string.upper(string.sub(class,1,1))..string.sub(class,2)	
-				end			
-				self.Owner:EmitSoundEx("player/spy_disguise.wav", 65, 100) 
-				self.Owner:SetAnimation(PLAYER_ATTACK1)
-			end
-		end
+	if SERVER and self.Owner:GetPlayerClass() == "spy" and self.Owner:InCond(TF_COND_DISGUISED) then
+		TF_RemoveSpyDisguise(self.Owner)
 	end
 	
 	if not dummy then
@@ -945,7 +894,7 @@ function SWEP:PrimaryAttack()
 	
 	self:StopTimers()
 	
-	if IsFirstTimePredicted() then 
+	if SERVER or IsFirstTimePredicted() then 
 		if (self:GetClass() == "tf_weapon_knife") then
 			table.insert(self.NextMeleeAttack, -1)
 		else
@@ -996,7 +945,7 @@ function SWEP:SecondaryAttack()
 		self.NextMeleeAttack = {}
 	end
 	
-	if IsFirstTimePredicted() then 
+	if SERVER or IsFirstTimePredicted() then 
 		table.insert(self.NextMeleeAttack, CurTime() + self.MeleeAttackDelay)
 	end
 end
@@ -1031,7 +980,7 @@ function SWEP:Think()
 		self.HitWorld = Sound("Halloween.HeadlessBossAxeHitWorld")
 	end	
 
-	while self.NextMeleeAttack and self.NextMeleeAttack[1] and CurTime() > self.NextMeleeAttack[1] and IsFirstTimePredicted() do
+	while self.NextMeleeAttack and self.NextMeleeAttack[1] and CurTime() > self.NextMeleeAttack[1] and (SERVER or IsFirstTimePredicted()) do
 		self:MeleeAttack()
 		table.remove(self.NextMeleeAttack, 1)
 		

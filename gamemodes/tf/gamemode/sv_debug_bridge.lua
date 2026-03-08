@@ -122,6 +122,7 @@ local function collectState()
 		tf_bot_valve_ai_debug = GetConVar("tf_bot_valve_ai_debug") and GetConVar("tf_bot_valve_ai_debug"):GetBool() or false,
 		mvm = nil,
 		bomb = collectBombState(),
+		objectives = nil,
 	}
 
 	if TF_MVM and TF_MVM.Runtime then
@@ -133,6 +134,10 @@ local function collectState()
 			wave_active = rt.WaveActive == true,
 			wave_index = tonumber(rt.WaveIndex or 0) or 0,
 		}
+	end
+
+	if TF_PARITY and TF_PARITY.CollectObjectiveSnapshot then
+		state.objectives = TF_PARITY.CollectObjectiveSnapshot()
 	end
 
 	return state

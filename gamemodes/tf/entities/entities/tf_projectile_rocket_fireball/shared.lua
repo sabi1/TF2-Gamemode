@@ -21,7 +21,7 @@ end
 
 function ENT:InitEffects()
 	local effect = ParticleSuffix(GAMEMODE:EntityTeam(self:GetOwner()))
-	if GetConVar("tf_pyrovision"):GetBool() then
+	if TF2_IsPyrovisionEnabled(CLIENT and LocalPlayer() or self:GetOwner()) then
 		ParticleEffectAttach("projectile_fireball", PATTACH_POINT_FOLLOW, self, self:LookupAttachment("trail"))
 	else
 		ParticleEffectAttach("projectile_fireball", PATTACH_POINT_FOLLOW, self, self:LookupAttachment("trail"))

@@ -263,27 +263,45 @@ concommand.Add("tf_taunt_laugh", function(ply)
 	if not ply:IsOnGround() then return end
 	if ply:WaterLevel() ~= 0 then return end
 
-	if ply:GetInfoNum("tf_giantrobot", 0) == 1 then ply:ChatPrint("You can't taunt as a mighty robot!") return end	
-	local time = ply:PlayScene("scenes/player/"..ply:GetPlayerClass().."/low/taunt_laugh.vcd", 0)	
+	if ply:GetInfoNum("tf_giantrobot", 0) == 1 then ply:ChatPrint("You can't taunt as a mighty robot!") return end
+	local laughByClass = {
+		scout = "Scout.LaughLong01",
+		soldier = "Soldier.LaughLong01",
+		pyro = "Pyro.LaughLong01",
+		demoman = "Demoman.LaughLong01",
+		heavy = "Heavy.LaughLong01",
+		engineer = "Engineer.LaughLong01",
+		medic = "Medic.LaughLong01",
+		sniper = "Sniper.LaughLong01",
+		spy = "Spy.LaughLong01",
+	}
+	local time = ply:PlayScene("scenes/player/"..ply:GetPlayerClass().."/low/taunt_laugh.vcd", 0)
 	ply:DoTauntEvent("taunt_laugh",true)
+	ply:SetNWBool("TauntingSchemaMove", false)
 	ply:SetNWBool("Taunting", true)
 	ply:SetNWBool("NoWeapon", true)
 	net.Start("ActivateTauntCam")
 	net.Send(ply)
 	if ply:GetPlayerClass() == "merc_dm" then
 		ply:EmitSound("vo/mercenary_laughevil01.wav", 80, 100)
-		timer.Create("Laugh", 2, 1, function()
+		timer.Create("Laugh" .. ply:EntIndex(), 2, 1, function()
 			if not IsValid(ply) or (not ply:Alive() and not ply:GetNWBool("Taunting")) then return end
 			ply:SetNWBool("Taunting", false)
 			ply:SetNWBool("NoWeapon", false)
+			ply:SetNWBool("TauntingSchemaMove", false)
 			net.Start("DeActivateTauntCam")
 			net.Send(ply)
 		end)
 	else
-		timer.Create("Laugh", time, 1, function()
+		local laughSound = laughByClass[ply:GetPlayerClass()]
+		if laughSound then
+			ply:EmitSound(laughSound)
+		end
+		timer.Create("Laugh" .. ply:EntIndex(), time, 1, function()
 			if not IsValid(ply) or (not ply:Alive() and not ply:GetNWBool("Taunting")) then return end
 			ply:SetNWBool("Taunting", false)
 			ply:SetNWBool("NoWeapon", false)
+			ply:SetNWBool("TauntingSchemaMove", false)
 			net.Start("DeActivateTauntCam")
 			net.Send(ply)
 		end)
@@ -513,39 +531,7 @@ concommand.Add("tf_taunt_russian_stop", function(ply)
 	net.Send(ply)
 end)
 concommand.Add("tf_taunt_banjo_start", function(ply)
-	if ply:GetNWBool("Taunting2") == true then return end
-	if ply:GetNWBool("Taunting2") == true then return end
-	if ply:GetPlayerClass() != "engineer" then return end
-	if ply:IsHL2() then ply:SendLua("RunConsoleCommand('act','laugh')") return end
-	if not ply:IsOnGround() then return end
-	if ply:WaterLevel() ~= 0 then return end
-
-	if ply:GetInfoNum("tf_giantrobot", 0) == 1 then ply:ChatPrint("You can't taunt as a mighty robot!") return end
-	ply:DoAnimationEvent(ACT_SIGNAL3, false)
-	ply:SetNWBool("Taunting2", true)
-	ply:EmitSound("BanjoSong")
-	local time = ply:SequenceDuration("taunt_bumpkins_banjo_fastloop")
-	timer.Create("LoopAnimBanjo2"..ply:EntIndex(), 0.001, 0, function()
-		if ply:GetNWBool("NoWeapon") == false then timer.Stop("LoopAnimBanjo"..ply:EntIndex()) timer.Stop("LoopAnimBanjo2"..ply:EntIndex()) timer.Stop("LoopTauntSpeakingConga2"..ply:EntIndex()) timer.Stop("LoopMusic"..ply:EntIndex()) return end
-	end)
-	ply:SetNWBool("Taunting", true)
-	ply:SetNWBool("NoWeapon", true)
-	net.Start("ActivateTauntCam")
-	net.Send(ply)
-	ply:PlayScene("scenes/player/"..ply:GetPlayerClass().."/low/taunt_russian.vcd", 0)
-	local animent2 = ents.Create( 'base_gmodentity' ) -- The entity used for the death animation	
-	animent2:SetModel("models/workshop/player/items/engineer/taunt_bumpkins_banjo/taunt_bumpkins_banjo.mdl") 
-	animent2:SetAngles(ply:GetAngles())
-	animent2:SetPos(ply:GetPos())
-	animent2:Spawn()
-	animent2:Activate()
-	animent2:SetParent(ply)
-	animent2:AddEffects(EF_BONEMERGE)
-	animent2:SetName("BanjoModel"..ply:EntIndex())
-	timer.Create("LoopAnimBanjo"..ply:EntIndex(), 10, 0, function()
-		ply:DoAnimationEvent(ACT_SIGNAL3, false)
-		ply:PlayScene("scenes/player/"..ply:GetPlayerClass().."/low/taunt_russian.vcd", 0)
-	end)
+	ply:ConCommand("tf_taunt_schema 30842")
 end)
 concommand.Add("tf_taunt_chair", function(ply)
 	if ply:GetNWBool("Taunting") == true then return end
@@ -767,21 +753,9 @@ concommand.Add("tf_taunt_introduction", function(ply)
 	end
 end)
 concommand.Add("tf_taunt_banjo_stop", function(ply)
-	if not IsValid(ply) or (not ply:Alive() and not ply:GetNWBool("NoWeapon")) then return end
-	if ply:GetPlayerClass() != "engineer" then return end
-	ply:StopSound("BanjoSong")
-	ply:ResetClassSpeed()
-	ply:DoAnimationEvent(ACT_SIGNAL_ADVANCE, false)
-	local time = ply:SequenceDuration(ply:LookupSequence("taunt_bumpkins_banjo_outro"))
-	timer.Create("OutroBanjo"..ply:EntIndex(), 2.5, 1, function()
-		for k,v in ipairs(ents.FindByName("BanjoModel"..ply:EntIndex())) do
-			v:Remove()
-			ply:SetNWBool("NoWeapon", false)
-			ply:SetNWBool("Taunting", false)
-			net.Start("DeActivateTauntCam")
-			net.Send(ply)	
-		end
-	end)
+	if TF_EndSchemaTaunt then
+		TF_EndSchemaTaunt(ply)
+	end
 end)
 concommand.Add("tf_taunt_chair_stop", function(ply)
 	if not IsValid(ply) or (not ply:Alive() and not ply:GetNWBool("NoWeapon")) then return end
@@ -2035,6 +2009,659 @@ concommand.Add("tf_taunt", function(ply,cmd,args)
 		end
 	end
 	ply:TFTaunt(args and args[1])
+end)
+local function getTauntItemByID(itemId)
+	local defindex = tonumber(itemId)
+	if not defindex or not tf_items or not tf_items.ItemsByID then return nil end
+	return tf_items.ItemsByID[defindex]
+end
+
+local function schemaPickPerClass(tbl, className)
+	if not istable(tbl) then return nil end
+	return tbl[className] or tbl[string.lower(className or "")] or nil
+end
+
+local function schemaNormalizeChoiceList(value)
+	if isstring(value) then
+		return {value}
+	end
+	if not istable(value) then
+		return {}
+	end
+
+	local numeric = {}
+	for k, v in pairs(value) do
+		if isstring(v) and v ~= "" then
+			numeric[#numeric + 1] = {idx = tonumber(k) or (#numeric + 1), value = v}
+		end
+	end
+	table.sort(numeric, function(a, b) return a.idx < b.idx end)
+
+	local out = {}
+	for _, entry in ipairs(numeric) do
+		out[#out + 1] = entry.value
+	end
+	return out
+end
+
+local function schemaPickScene(tbl, className)
+	local entry = schemaPickPerClass(tbl, className)
+	local list = schemaNormalizeChoiceList(entry)
+	if #list == 0 then return nil end
+	return list[math.random(#list)]
+end
+
+local function schemaSceneToSequence(scenePath)
+	if not isstring(scenePath) or scenePath == "" then return nil end
+	local normalized = string.Replace(scenePath, "\\", "/")
+	local basename = string.match(normalized, "([^/]+)%.vcd$")
+	return basename
+end
+
+local function schemaResolveSequence(ent, scenePath)
+	local basename = schemaSceneToSequence(scenePath)
+	if not IsValid(ent) or not isstring(basename) or basename == "" then return basename end
+
+	local candidates = {basename}
+	if string.EndsWith(basename, "_allclass") then
+		candidates[#candidates + 1] = string.sub(basename, 1, #basename - #"_allclass")
+	end
+
+	local seen = {}
+	for _, candidate in ipairs(candidates) do
+		if isstring(candidate) and candidate ~= "" and not seen[candidate] then
+			seen[candidate] = true
+			local idx = ent:LookupSequence(candidate)
+			if idx and idx >= 0 then
+				return candidate
+			end
+		end
+	end
+
+	return basename
+end
+
+local function schemaSequenceDuration(ent, seq)
+	if not IsValid(ent) or not isstring(seq) or seq == "" then return 0 end
+	local idx = ent:LookupSequence(seq)
+	if not idx or idx < 0 then return 0 end
+	return tonumber(ent:SequenceDuration(idx)) or 0
+end
+
+local function schemaGetAttribute(item, attrClass)
+	if not istable(item) then return nil end
+	for _, bucket in ipairs({item.attributes, item.static_attrs}) do
+		if istable(bucket) then
+			for _, attr in pairs(bucket) do
+				if istable(attr) and attr.attribute_class == attrClass then
+					return attr.value
+				end
+			end
+		end
+	end
+	return nil
+end
+
+local function schemaGetVisual(item, key)
+	if not istable(item) or not istable(item.visuals) then return nil end
+	return item.visuals[key]
+end
+
+local function schemaStartAnimatedProp(ent)
+	if not IsValid(ent) then return end
+	ent.AutomaticFrameAdvance = true
+	ent:SetPlaybackRate(1)
+	function ent:Think()
+		self:NextThink(CurTime())
+		return true
+	end
+end
+
+local function schemaPlayPropSequence(ent, scenePath)
+	if not IsValid(ent) then return 0 end
+	local seq = schemaSceneToSequence(scenePath)
+	if not isstring(seq) or seq == "" then return 0 end
+	local idx = ent:LookupSequence(seq)
+	if not idx or idx < 0 then return 0 end
+	ent:ResetSequence(seq)
+	ent:SetCycle(0)
+	schemaStartAnimatedProp(ent)
+	return tonumber(ent:SequenceDuration(idx)) or 0
+end
+
+local function schemaCreateProp(ply, state)
+	if not IsValid(ply) or not istable(state) or not isstring(state.propModel) or state.propModel == "" then return end
+	local prop = ents.Create("base_gmodentity")
+	if not IsValid(prop) then return end
+
+	prop:SetModel(state.propModel)
+	prop:SetAngles(ply:GetAngles())
+	prop:SetPos(ply:GetPos())
+	prop:Spawn()
+	prop:Activate()
+	prop:SetSkin(ply:GetSkin())
+	prop:SetParent(ply)
+	prop:AddEffects(EF_BONEMERGE)
+	prop:SetName(state.propName)
+	state.propEnt = prop
+
+	if isstring(state.propIntroScene) and state.propIntroScene ~= "" then
+		schemaPlayPropSequence(prop, state.propIntroScene)
+	end
+end
+
+local function schemaRemoveProp(state)
+	local prop = istable(state) and state.propEnt or nil
+	if IsValid(prop) then
+		prop:Remove()
+		return
+	end
+	if istable(state) and isstring(state.propName) and state.propName ~= "" then
+		for _, v in ipairs(ents.FindByName(state.propName)) do
+			v:Remove()
+		end
+	end
+end
+
+local function schemaSetTauntFlags(ply, enabled)
+	if not IsValid(ply) then return end
+	ply:SetNWBool("Taunting", enabled)
+	ply:SetNWBool("NoWeapon", enabled)
+	if enabled then
+		net.Start("ActivateTauntCam")
+	else
+		net.Start("DeActivateTauntCam")
+	end
+	net.Send(ply)
+end
+
+local function schemaIsBanjoTaunt(state)
+	return istable(state) and tonumber(state.itemId) == 30842
+end
+
+local function schemaIsVictoryLap(state)
+	return istable(state) and tonumber(state.itemId) == 1172
+end
+
+local function schemaStopBanjoEffects(ply)
+	if not IsValid(ply) then return end
+	timer.Remove("SchemaBanjoLoop_" .. ply:EntIndex())
+	timer.Remove("SchemaBanjoVoice_" .. ply:EntIndex())
+	ply:StopSound("Taunt.BumpkinsBanjoMusic")
+	ply:StopSound("Taunt.BumpkinsBanjoMusicFast")
+	ply:StopSound("BanjoSong")
+	ply:StopParticles()
+end
+
+local function schemaRefreshBanjoLoop(ply, state)
+	if not IsValid(ply) or not schemaIsBanjoTaunt(state) then return end
+	local entId = ply:EntIndex()
+	local fast = state.banjoMode == "fast"
+	local loopSound = fast and "Taunt.BumpkinsBanjoMusicFast" or "Taunt.BumpkinsBanjoMusic"
+	local interval = fast and 3.6 or 5.2
+
+	timer.Remove("SchemaBanjoLoop_" .. entId)
+	ply:StopSound("Taunt.BumpkinsBanjoMusic")
+	ply:StopSound("Taunt.BumpkinsBanjoMusicFast")
+	ply:EmitSound(loopSound)
+	timer.Create("SchemaBanjoLoop_" .. entId, interval, 0, function()
+		local st = IsValid(ply) and ply.__SchemaTauntState or nil
+		if not IsValid(ply) or not istable(st) or not st.active or not schemaIsBanjoTaunt(st) then
+			timer.Remove("SchemaBanjoLoop_" .. entId)
+			return
+		end
+		local currentSound = st.banjoMode == "fast" and "Taunt.BumpkinsBanjoMusicFast" or "Taunt.BumpkinsBanjoMusic"
+		ply:EmitSound(currentSound)
+	end)
+
+	timer.Remove("SchemaBanjoVoice_" .. entId)
+	timer.Create("SchemaBanjoVoice_" .. entId, 8, 0, function()
+		local st = IsValid(ply) and ply.__SchemaTauntState or nil
+		if not IsValid(ply) or not istable(st) or not st.active or not schemaIsBanjoTaunt(st) then
+			timer.Remove("SchemaBanjoVoice_" .. entId)
+			return
+		end
+		ply:EmitSound("engineer_taunt_bumpkins_banjo_yells")
+	end)
+
+	if fast then
+		local left = ply:LookupAttachment("hand_L")
+		local right = ply:LookupAttachment("hand_R")
+		if left and left > 0 then
+			ParticleEffectAttach("cig_smoke", PATTACH_POINT_FOLLOW, ply, left)
+		end
+		if right and right > 0 then
+			ParticleEffectAttach("cig_smoke", PATTACH_POINT_FOLLOW, ply, right)
+		end
+	else
+		ply:StopParticles()
+	end
+end
+
+local function schemaDoTrickshotAttack(ply, state)
+	if not IsValid(ply) or not istable(state) or tonumber(state.itemId) ~= 31520 then return end
+
+	ply:EmitSound("Weapon_Pistol.TF_Single")
+
+	local tr = util.TraceLine({
+		start = ply:EyePos(),
+		endpos = ply:EyePos() + ply:EyeAngles():Forward() * 500,
+		filter = ply,
+		mask = bit.bor(MASK_SOLID, CONTENTS_HITBOX),
+	})
+
+	local ent = tr.Entity
+	if not IsValid(ent) or not ent:IsPlayer() then return end
+	if ent:Team() <= 0 or ent:Team() == ply:Team() then return end
+
+	local launchDir = Angle(-45, ply:EyeAngles().y, 0):Forward()
+	local dmg = DamageInfo()
+	dmg:SetAttacker(ply)
+	dmg:SetInflictor(IsValid(ply:GetActiveWeapon()) and ply:GetActiveWeapon() or ply)
+	dmg:SetDamage(500)
+	dmg:SetDamageType(DMG_BULLET)
+	dmg:SetDamageForce(launchDir * 25000)
+	dmg:SetDamagePosition(ent:WorldSpaceCenter())
+	ent:TakeDamageInfo(dmg)
+end
+
+local function schemaStartTexasTwirlSounds(ply, state)
+	if not IsValid(ply) or not istable(state) or tonumber(state.itemId) ~= 31286 then return end
+	local entId = ply:EntIndex()
+	timer.Remove("SchemaTexasTwirl_" .. entId)
+	timer.Remove("SchemaTexasTwirl_" .. entId .. "_2")
+	timer.Create("SchemaTexasTwirl_" .. entId, 0.01, 1, function()
+		if not IsValid(ply) then return end
+		ply:EmitSound("Weapon_Pistol.TF_Single")
+	end)
+	timer.Create("SchemaTexasTwirl_" .. entId .. "_2", 0.38, 1, function()
+		if not IsValid(ply) then return end
+		ply:EmitSound("Selection.ScoutShotgunTwirl")
+	end)
+end
+
+local function schemaStartVictoryLapEffects(ply, state)
+	if not IsValid(ply) or not schemaIsVictoryLap(state) then return end
+	local entId = ply:EntIndex()
+	timer.Remove("SchemaVictoryLapLoop_" .. entId)
+	ply:EmitSound("BumperCar.Spawn")
+	timer.Create("SchemaVictoryLapLoop_" .. entId, 0.35, 1, function()
+		if not IsValid(ply) then return end
+		local st = ply.__SchemaTauntState
+		if not istable(st) or not st.active or not schemaIsVictoryLap(st) then return end
+		ply:EmitSound("BumperCar.GoLoop")
+	end)
+end
+
+local function schemaStopVictoryLapEffects(ply, state, skipOutro)
+	if not IsValid(ply) or not schemaIsVictoryLap(state) then return end
+	local entId = ply:EntIndex()
+	timer.Remove("SchemaVictoryLapLoop_" .. entId)
+	ply:StopSound("BumperCar.GoLoop")
+	ply:StopSound("Taunt.BumperCarGoLoop")
+	if not skipOutro then
+		ply:EmitSound("Taunt.BumperCarQuit")
+	end
+end
+
+local function schemaFinishPartnerTaunt(players)
+	for _, ent in ipairs(players or {}) do
+		if IsValid(ent) then
+			ent.__SchemaTauntPartnerState = nil
+			schemaSetTauntFlags(ent, false)
+		end
+	end
+end
+
+local function schemaFindPartnerTarget(ply, item)
+	if not IsValid(ply) or not istable(item) or not istable(item.taunt) then return nil end
+	local forwardDist = tonumber(item.taunt.taunt_separation_forward_distance) or 60
+	local searchRadius = math.max(tonumber(item.taunt.taunt_separation_forward_distance) or 60, 96) + 48
+	local nearest, nearestDist
+
+	for _, other in ipairs(ents.FindInSphere(ply:GetPos(), searchRadius)) do
+		if other == ply then continue end
+		if not IsValid(other) or not other:IsPlayer() then continue end
+		if other:GetNWBool("Taunting", false) then continue end
+		if not other:Alive() or not other:IsOnGround() or other:WaterLevel() ~= 0 then continue end
+		local dist = ply:GetPos():DistToSqr(other:GetPos())
+		if not nearestDist or dist < nearestDist then
+			nearest = other
+			nearestDist = dist
+		end
+	end
+
+	return nearest
+end
+
+local function schemaChoosePartnerScenes(item, initiatorClass, receiverClass)
+	local t = item and item.taunt
+	if not istable(t) then return nil, nil end
+
+	local initiatorChoices = schemaNormalizeChoiceList(schemaPickPerClass(t.custom_partner_taunt_initiator_per_class, initiatorClass))
+	local receiverChoices = schemaNormalizeChoiceList(schemaPickPerClass(t.custom_partner_taunt_receiver_per_class, receiverClass))
+
+	if #initiatorChoices > 0 and #receiverChoices > 0 then
+		local idx = math.random(math.min(#initiatorChoices, #receiverChoices))
+		return initiatorChoices[idx], receiverChoices[idx]
+	end
+
+	local sharedInitiator = schemaNormalizeChoiceList(schemaPickPerClass(t.custom_partner_taunt_per_class, initiatorClass))
+	local sharedReceiver = schemaNormalizeChoiceList(schemaPickPerClass(t.custom_partner_taunt_per_class, receiverClass))
+	if #sharedInitiator == 0 or #sharedReceiver == 0 then
+		return nil, nil
+	end
+
+	if #sharedInitiator >= 2 and #sharedReceiver >= 2 then
+		local swap = math.random(2) == 1
+		return sharedInitiator[swap and 1 or 2], sharedReceiver[swap and 2 or 1]
+	end
+
+	return sharedInitiator[1], sharedReceiver[math.min(#sharedReceiver, 1)]
+end
+
+local function startSchemaPartnerTaunt(ply, item)
+	local partner = schemaFindPartnerTarget(ply, item)
+	local className = tostring(ply:GetPlayerClass() or "")
+	local introScene = schemaPickScene(item.taunt.custom_taunt_scene_per_class, className)
+	local introSeq = schemaResolveSequence(ply, introScene)
+
+	if not IsValid(partner) then
+		if not isstring(introSeq) or introSeq == "" then return false end
+		local introDur = schemaSequenceDuration(ply, introSeq)
+		ply:DoTauntEvent(introSeq, true)
+		schemaSetTauntFlags(ply, true)
+		timer.Create("SchemaPartnerWait_" .. ply:EntIndex(), math.max(introDur, 2), 1, function()
+			if IsValid(ply) then
+				schemaSetTauntFlags(ply, false)
+			end
+		end)
+		return true
+	end
+
+	local partnerClass = tostring(partner:GetPlayerClass() or "")
+	local initScene, recvScene = schemaChoosePartnerScenes(item, className, partnerClass)
+	local initSeq = schemaResolveSequence(ply, initScene)
+	local recvSeq = schemaResolveSequence(partner, recvScene)
+	if not isstring(initSeq) or initSeq == "" or not isstring(recvSeq) or recvSeq == "" then
+		return false
+	end
+
+	local forward = ply:GetForward()
+	forward.z = 0
+	forward:Normalize()
+	local right = ply:GetRight()
+	right.z = 0
+	right:Normalize()
+
+	local forwardDist = tonumber(item.taunt.taunt_separation_forward_distance) or 60
+	local rightDist = tonumber(item.taunt.taunt_separation_right_distance) or 0
+	local partnerPos = ply:GetPos() + forward * forwardDist + right * rightDist
+	partner:SetPos(partnerPos)
+	local look = (ply:GetPos() - partner:GetPos()):Angle()
+	look.p = 0
+	look.r = 0
+	partner:SetEyeAngles(look)
+	partner:SetAngles(Angle(0, look.y, 0))
+
+	ply:DoTauntEvent(initSeq, true)
+	partner:DoTauntEvent(recvSeq, true)
+	schemaSetTauntFlags(ply, true)
+	schemaSetTauntFlags(partner, true)
+	ply.__SchemaTauntPartnerState = {partner = partner, itemId = tonumber(item.id)}
+	partner.__SchemaTauntPartnerState = {partner = ply, itemId = tonumber(item.id)}
+
+	local dur = math.max(schemaSequenceDuration(ply, initSeq), schemaSequenceDuration(partner, recvSeq), 1)
+	timer.Create("SchemaPartnerDone_" .. ply:EntIndex(), dur, 1, function()
+		schemaFinishPartnerTaunt({ply, partner})
+	end)
+
+	return true
+end
+
+local function stopSchemaTaunt(ply, skipOutro)
+	if not IsValid(ply) then return end
+	local state = ply.__SchemaTauntState
+	if not istable(state) or not state.active then return end
+
+	local entId = ply:EntIndex()
+	timer.Remove("SchemaTauntAutoStop_" .. entId)
+	timer.Remove("SchemaTauntInputReset_" .. entId)
+	timer.Remove("SchemaTauntAttack_" .. entId)
+	timer.Remove("SchemaPartnerWait_" .. entId)
+	timer.Remove("SchemaTexasTwirl_" .. entId)
+	timer.Remove("SchemaTexasTwirl_" .. entId .. "_2")
+	timer.Remove("SchemaVictoryLapLoop_" .. entId)
+	if schemaIsBanjoTaunt(state) and not skipOutro then
+		ply:EmitSound("Taunt.BumpkinsBanjoMusicStop")
+		ply:EmitSound("engineer_taunt_bumpkins_banjo_engineer_outro")
+	end
+	schemaStopVictoryLapEffects(ply, state, skipOutro)
+	schemaStopBanjoEffects(ply)
+
+	if isstring(state.loopSound) and state.loopSound ~= "" then
+		ply:StopSound(state.loopSound)
+	end
+
+	local outroDur = 0
+	if not skipOutro and isstring(state.outroSeq) and state.outroSeq ~= "" then
+		ply:DoTauntEvent(state.outroSeq, true)
+		outroDur = tonumber(state.outroDur) or 0
+	end
+
+	if not skipOutro and IsValid(state.propEnt) and isstring(state.propOutroScene) and state.propOutroScene ~= "" then
+		local propOutroDur = schemaPlayPropSequence(state.propEnt, state.propOutroScene)
+		outroDur = math.max(outroDur, propOutroDur)
+	end
+
+	if skipOutro or outroDur <= 0 then
+		schemaRemoveProp(state)
+	else
+		timer.Simple(math.max(outroDur, 0.1), function()
+			schemaRemoveProp(state)
+		end)
+	end
+
+	ply.__SchemaTauntMoveInput = 0
+	ply.__SchemaTauntDriveInput = 0
+	ply.__SchemaTauntTurnRate = 0
+	ply.__SchemaTauntDriveRate = 0
+	ply.__SchemaTauntState = nil
+	ply:SetNWBool("TauntingSchemaMove", false)
+
+	timer.Simple(math.max(outroDur, 0.1), function()
+		if not IsValid(ply) then return end
+		ply:SetNWBool("Taunting", false)
+		ply:SetNWBool("NoWeapon", false)
+		net.Start("DeActivateTauntCam")
+		net.Send(ply)
+	end)
+end
+
+function TF_EndSchemaTaunt(ply)
+	local state = IsValid(ply) and ply.__SchemaTauntState or nil
+	if istable(state) and state.active then
+		local minEndTime = (tonumber(state.startTime) or 0) + (tonumber(state.minTauntTime) or 0)
+		if CurTime() < minEndTime then return end
+	end
+	stopSchemaTaunt(ply, false)
+end
+
+function TF_TriggerSchemaTauntInput(ply, inputName)
+	if not IsValid(ply) then return end
+	local state = ply.__SchemaTauntState
+	if not istable(state) or not state.active then return end
+	local remap = state.inputRemaps and state.inputRemaps[inputName]
+	if not isstring(remap) or remap == "" then return end
+
+	local entId = ply:EntIndex()
+	local seq = remap
+	if not isstring(seq) or seq == "" then return end
+
+	local dur = schemaSequenceDuration(ply, seq)
+	timer.Remove("SchemaTauntInputReset_" .. entId)
+	ply:DoTauntEvent(seq, true)
+	if schemaIsBanjoTaunt(state) then
+		state.mainSeq = seq
+		if inputName == "IN_ATTACK2" then
+			state.banjoMode = "fast"
+		elseif inputName == "IN_ATTACK" then
+			state.banjoMode = "slow"
+		end
+		schemaRefreshBanjoLoop(ply, state)
+		local propRemap = state.propInputRemaps and state.propInputRemaps[inputName]
+		if IsValid(state.propEnt) and isstring(propRemap) and propRemap ~= "" then
+			schemaPlayPropSequence(state.propEnt, propRemap)
+		end
+		return
+	end
+	if schemaIsVictoryLap(state) and inputName == "IN_ATTACK" then
+		ply:EmitSound("Taunt.BumperCarHorn")
+	end
+	local propRemap = state.propInputRemaps and state.propInputRemaps[inputName]
+	if IsValid(state.propEnt) and isstring(propRemap) and propRemap ~= "" then
+		dur = math.max(dur, schemaPlayPropSequence(state.propEnt, propRemap))
+	end
+	timer.Create("SchemaTauntInputReset_" .. entId, math.max(dur, 0.5), 1, function()
+		if not IsValid(ply) then return end
+		local st = ply.__SchemaTauntState
+		if not istable(st) or not st.active then return end
+		if isstring(st.mainSeq) and st.mainSeq ~= "" then
+			ply:DoTauntEvent(st.mainSeq, true)
+		end
+	end)
+end
+
+local function startSchemaTaunt(ply, item)
+	if not IsValid(ply) or not istable(item) or not istable(item.taunt) then return false end
+	if ply:GetNWBool("Taunting") == true then return false end
+	if ply:IsHL2() then ply:SendLua("RunConsoleCommand('act','laugh')") return true end
+	if not ply:IsOnGround() then return false end
+	if ply:WaterLevel() ~= 0 then return false end
+	if ply:GetInfoNum("tf_giantrobot", 0) == 1 then
+		ply:ChatPrint("You can't taunt as a mighty robot!")
+		return true
+	end
+
+	local className = tostring(ply:GetPlayerClass() or "")
+	if tonumber(item.taunt.is_partner_taunt) == 1 or item.taunt.is_partner_taunt == "1" or item.taunt.is_partner_taunt == true then
+		return startSchemaPartnerTaunt(ply, item)
+	end
+
+	local scenePath = schemaPickScene(item.taunt.custom_taunt_scene_per_class, className)
+	local mainSeq = schemaResolveSequence(ply, scenePath)
+	if not isstring(mainSeq) or mainSeq == "" then return false end
+
+	local mainDur = schemaSequenceDuration(ply, mainSeq)
+	local outroScene = schemaPickScene(item.taunt.custom_taunt_outro_scene_per_class, className)
+	local outroSeq = schemaResolveSequence(ply, outroScene)
+	local outroDur = schemaSequenceDuration(ply, outroSeq)
+	local propModel = schemaPickScene(item.taunt.custom_taunt_prop_per_class, className)
+	local propIntroScene = schemaPickScene(item.taunt.custom_taunt_prop_scene_per_class, className)
+	local propOutroScene = schemaPickScene(item.taunt.custom_taunt_prop_outro_scene_per_class, className)
+	local inputRemaps = {}
+	if istable(item.taunt.custom_taunt_input_remap) then
+		for keyName, keyData in pairs(item.taunt.custom_taunt_input_remap) do
+			if istable(keyData) and istable(keyData.pressed) then
+				inputRemaps[keyName] = schemaResolveSequence(ply, schemaPickScene(keyData.pressed, className))
+			end
+		end
+	end
+	local propInputRemaps = {}
+	if istable(item.taunt.custom_taunt_prop_input_remap) then
+		for keyName, keyData in pairs(item.taunt.custom_taunt_prop_input_remap) do
+			if istable(keyData) and istable(keyData.pressed) then
+				propInputRemaps[keyName] = schemaPickScene(keyData.pressed, className)
+			end
+		end
+	end
+
+	local moveSpeed = tonumber(schemaGetAttribute(item, "taunt_move_speed")) or 0
+	local forceForward = (tonumber(schemaGetAttribute(item, "taunt_force_move_forward")) or 0) ~= 0
+	local turnSpeed = tonumber(schemaGetAttribute(item, "taunt_turn_speed")) or 0
+	local turnAccel = tonumber(schemaGetAttribute(item, "taunt_turn_acceleration_time")) or 0.2
+	local hold = (tonumber(schemaGetAttribute(item, "enable_misc2_holdtaunt")) or 0) ~= 0
+	local tauntAttackName = schemaGetAttribute(item, "taunt_attack_name")
+	local tauntAttackTime = tonumber(schemaGetAttribute(item, "taunt_attack_time")) or 0
+	local minTauntTime = tonumber(item.taunt.min_taunt_time) or 0
+	local stopIfMoved = tonumber(item.taunt.stop_taunt_if_moved) == 1 or item.taunt.stop_taunt_if_moved == "1" or item.taunt.stop_taunt_if_moved == true
+	local controlled = moveSpeed > 0 or turnSpeed > 0 or forceForward
+
+	local state = {
+		active = true,
+		itemId = tonumber(item.id),
+		startTime = CurTime(),
+		mainSeq = mainSeq,
+		mainDur = mainDur,
+		outroSeq = outroSeq,
+		outroDur = outroDur,
+		propModel = propModel,
+		propIntroScene = propIntroScene,
+		propOutroScene = propOutroScene,
+		propName = "SchemaTauntProp" .. ply:EntIndex(),
+		moveSpeed = moveSpeed,
+		forceForward = forceForward,
+		turnSpeed = turnSpeed,
+		turnAccel = turnAccel,
+		hold = hold,
+		tauntAttackName = tauntAttackName,
+		tauntAttackTime = tauntAttackTime,
+		minTauntTime = minTauntTime,
+		stopIfMoved = stopIfMoved,
+		loopSound = tonumber(item.id) == 1172 and nil or (schemaGetAttribute(item, "taunt_success_sound_loop") or schemaGetAttribute(item, "taunt_success_sound") or schemaGetVisual(item, "custom_sound0") or schemaGetVisual(item, "custom_sound1")),
+		inputRemaps = inputRemaps,
+		propInputRemaps = propInputRemaps,
+	}
+	ply.__SchemaTauntState = state
+	ply.__SchemaTauntMoveInput = 0
+	ply.__SchemaTauntDriveInput = 0
+	ply.__SchemaTauntTurnRate = 0
+	ply.__SchemaTauntDriveRate = 0
+
+	ply:DoTauntEvent(mainSeq, true)
+	ply:SetNWBool("Taunting", true)
+	ply:SetNWBool("NoWeapon", true)
+	ply:SetNWBool("TauntingSchemaMove", controlled)
+	net.Start("ActivateTauntCam")
+	net.Send(ply)
+
+	schemaCreateProp(ply, state)
+
+	if isstring(state.loopSound) and state.loopSound ~= "" then
+		ply:EmitSound(state.loopSound)
+	end
+	if schemaIsBanjoTaunt(state) then
+		state.banjoMode = "slow"
+		schemaRefreshBanjoLoop(ply, state)
+		ply:EmitSound("engineer_taunt_bumpkins_banjo_intro")
+	end
+	if schemaIsVictoryLap(state) then
+		schemaStartVictoryLapEffects(ply, state)
+	end
+	schemaStartTexasTwirlSounds(ply, state)
+	if isstring(state.tauntAttackName) and state.tauntAttackName ~= "" and state.tauntAttackTime > 0 then
+		timer.Create("SchemaTauntAttack_" .. ply:EntIndex(), state.tauntAttackTime, 1, function()
+			local st = IsValid(ply) and ply.__SchemaTauntState or nil
+			if not IsValid(ply) or not istable(st) or not st.active then return end
+			if st.tauntAttackName == "TAUNTATK_ENGINEER_TRICKSHOT" then
+				schemaDoTrickshotAttack(ply, st)
+			end
+		end)
+	end
+
+	local autoStopDelay = hold and math.max(minTauntTime, 600) or (controlled and math.max(minTauntTime, 30) or math.max(mainDur, minTauntTime, 1))
+	timer.Create("SchemaTauntAutoStop_" .. ply:EntIndex(), autoStopDelay, 1, function()
+		if not IsValid(ply) then return end
+		stopSchemaTaunt(ply, false)
+	end)
+
+	return true
+end
+
+concommand.Add("tf_taunt_schema", function(ply, cmd, args)
+	local item = getTauntItemByID(args and args[1])
+	if not istable(item) then return end
+	startSchemaTaunt(ply, item)
 end)
 concommand.Add("tf_taunt_item", function(ply, cmd, args)
 	local itemId = tonumber(args and args[1])

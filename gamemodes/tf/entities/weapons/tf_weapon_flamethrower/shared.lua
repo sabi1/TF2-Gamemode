@@ -26,7 +26,7 @@ function SWEP:SetFlamethrowerEffect(i)
 	
 	local effect
 	local t = GAMEMODE:EntityTeam(self.Owner)
-	if GetConVar("tf_pyrovision"):GetBool() then
+	if TF2_IsPyrovisionEnabled(LocalPlayer()) then
 		if i==1 then
 			effect = "flamethrower_rainbow"
 		elseif i>1 then

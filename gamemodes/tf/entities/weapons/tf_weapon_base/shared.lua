@@ -15,6 +15,36 @@ SWEP.ShootCritSound = Sound("Weapon_Scatter_Gun.SingleCrit")
 SWEP.ReloadSound = Sound("Weapon_Scatter_Gun.WorldReload") 
 SWEP.ReloadSoundFinish = nil
 SWEP.IsMeleeWeapon = false
+
+local function DebugTFWorldModelDraw(wep, stage, model)
+	if not CLIENT then return end
+	local cvar = GetConVar("tf_debug_worldmodels")
+	if not cvar or not cvar:GetBool() then return end
+	wep._NextWorldModelDebug = wep._NextWorldModelDebug or 0
+	if CurTime() < wep._NextWorldModelDebug then return end
+	wep._NextWorldModelDebug = CurTime() + 1
+	local owner = IsValid(wep) and wep:GetOwner() or nil
+	local noWeapon = IsValid(owner) and owner:GetNWBool("NoWeapon", false) or false
+	print(string.format("[tf_debug_worldmodels] %s wep=%s owner=%s item=%s model=%s wmodel_valid=%s hide=%s nowep=%s",
+		stage,
+		IsValid(wep) and wep:GetClass() or "nil",
+		IsValid(owner) and owner:EntIndex() or -1,
+		IsValid(wep) and wep.GetItemData and wep:GetItemData() and wep:GetItemData().name or "nil",
+		tostring(model),
+		tostring(IsValid(wep) and IsValid(wep.WModel)),
+		tostring(noWeapon),
+		tostring(noWeapon)
+	))
+end
+
+local function DrawTFWorldModelDebugBox(pos, ang)
+	if not CLIENT then return end
+	local cvar = GetConVar("tf_debug_worldmodels")
+	if not cvar or not cvar:GetBool() then return end
+	if not isvector(pos) or not isangle(ang) then return end
+	render.DrawWireframeBox(pos, ang, Vector(-2, -2, -2), Vector(2, 2, 2), Color(255, 64, 64), true)
+end
+
 local function ShouldHideWeaponModels(wep)
 	local owner = IsValid(wep) and wep:GetOwner() or nil
 	return IsValid(owner) and owner:GetNWBool("NoWeapon", false) == true
@@ -25,6 +55,13 @@ local function ApplyNoWeaponDrawState(wep, hide)
 	if IsValid(wep.WModel2) then wep.WModel2:SetNoDraw(hide) end
 	if IsValid(wep.AttachedWModel) then wep.AttachedWModel:SetNoDraw(hide) end
 	if IsValid(wep.ExtraWModel) then wep.ExtraWModel:SetNoDraw(hide) end
+end
+
+local function ShouldDrawForOwnerActiveWeapon(wep)
+	local owner = IsValid(wep) and wep:GetOwner() or nil
+	if not IsValid(owner) then return true end
+	local active = owner.GetActiveWeapon and owner:GetActiveWeapon() or nil
+	return IsValid(active) and active == wep
 end
 
 local function GetOwnerInvulnMaterial(wep)
@@ -54,6 +91,16 @@ local function GetEffectiveWeaponMaterial(wep, fallbackMat)
 	return GetOwnerInvulnMaterial(wep) or fallbackMat or ""
 end
 
+local function GetDrawableWeaponMaterial(mat)
+	if not CLIENT then return mat or "" end
+	if not isstring(mat) or mat == "" then return "" end
+	local m = Material(mat)
+	if m and not m:IsError() then
+		return mat
+	end
+	return ""
+end
+
 local function GetDefaultViewModelMaterial(wep)
 	if not IsValid(wep) or not IsValid(wep:GetOwner()) then return "" end
 	if wep:GetOwner():IsHL2() then return "" end
@@ -67,67 +114,132 @@ local defaultdeployspeed = CreateConVar( "tf_default_deploy_speed", "1.34", {FCV
 
 if CLIENT then
 
+local function GetWeaponDisplayModel(wep, viewer)
+	local baseModel = wep:GetItemData().model_player or wep.WorldModel
+	if wep.GetEffectiveDisplayModel then
+		return wep:GetEffectiveDisplayModel(viewer, baseModel)
+	end
+	return baseModel
+end
+
 function SWEP:DrawWorldModel(  )
-		local _Owner = self:GetOwner()
+	-- Prevent duplicate world draws in the same frame (engine path + forced hook path).
+	local frame = FrameNumber and FrameNumber() or nil
+	if frame and self._LastDrawWorldModelFrame == frame then
+		return
+	end
+	self._LastDrawWorldModelFrame = frame
 
-		if (!IsValid(self.WModel)) then
-			self.WModel = ents.CreateClientProp()
-			self.WModel:Spawn()
-			self.WModel:SetNoDraw(true)
-		else
-			local hideForTaunt = ShouldHideWeaponModels(self)
-			if hideForTaunt then
-				ApplyNoWeaponDrawState(self, true)
-				return
-			end
-			ApplyNoWeaponDrawState(self, false)
-			if (IsValid(_Owner)) then
-				if (IsValid(self.Owner:GetNWEntity("PuppetAnim",nil))) then
-					self.Owner:SetModelScale((self.Owner:GetNWEntity("PuppetAnim",nil):GetModelRadius() / self.Owner:GetModelRadius()) * self.Owner:GetNWEntity("PuppetAnim",nil):GetModelScale())
-				end
-				local t2 = _Owner:GetProxyVar("CritTeam") 
-				local s2 = _Owner:GetProxyVar("CritStatus")
-				self.WModel:SetProxyVar("CritTeam",t2)
-				self.WModel:SetProxyVar("CritStatus",s2)
-				-- Specify a good position
-				
-				local model = self:GetItemData().model_world or self:GetItemData().model_player or self.WorldModel
-				if (self.WModel:GetModel() != model) then
-					self.WModel:SetModel(model)
-				end
-				local offsetVec = Vector(4, -2, 0)
-				local offsetAng = Angle(170, 180, 0)
-				if (_Owner:IsHL2()) then
-					local boneid = _Owner:LookupBone("ValveBiped.Bip01_R_Hand") -- Right Hand
-					if !boneid then return end
+	local owner = self:GetOwner()
+	local itemData = self:GetItemData()
+	local model = (itemData and itemData.model_world)
+		or (itemData and itemData.model_player)
+		or self.WorldModel
+	if not util.IsValidModel(model) then
+		model = self.WorldModel
+	end
+	DebugTFWorldModelDraw(self, "drawworldmodel_begin", model)
+	local hideForTaunt = ShouldHideWeaponModels(self)
+	if hideForTaunt then
+		ApplyNoWeaponDrawState(self, true)
+		return
+	end
 
-					local matrix = _Owner:GetBoneMatrix(boneid)  
-					if !matrix then return end
+	-- Only the active weapon should appear in third-person.
+	if not ShouldDrawForOwnerActiveWeapon(self) then
+		ApplyNoWeaponDrawState(self, true)
+		return
+	end
 
-					local newPos, newAng = LocalToWorld(offsetVec, offsetAng, matrix:GetTranslation(), matrix:GetAngles())
-
-					self.WModel:SetPos(newPos)
-					self.WModel:SetAngles(newAng)
-
-					self.WModel:SetupBones()
-				end
-				local mat = GetEffectiveWeaponMaterial(self, self.CustomMaterialOverride2 or self.MaterialOverride or self.WeaponMaterial or "")
-				if (self.WModel:GetMaterial() != mat) then
-					self.WModel:SetMaterial(mat)	
-				end
-				self.WModel:SetSkin(self.WeaponSkin or self:GetOwner():GetSkin())
-				self.WModel:SetPos(self:GetPos())
-				self.WModel:SetAngles(self:GetAngles())
-				self.WModel:SetParent(self.Owner)
-				self.WModel:AddEffects(bit.bor(EF_BONEMERGE,EF_BONEMERGE_FASTCULL))	
-			else	
-				self.WModel:SetPos(self:GetPos())
-				self.WModel:SetAngles(self:GetAngles())
-			end 
-			self.WModel:DrawModel()
-			self.WModel:DrawShadow(true)
+	if IsValid(owner) then
+		if self.IsHiddenByVision and self:IsHiddenByVision(LocalPlayer()) then
+			ApplyNoWeaponDrawState(self, true)
+			return
 		end
-		
+	end
+
+	ApplyNoWeaponDrawState(self, false)
+
+	-- Avoid repeatedly forcing the model every draw pass; that can cause visible snaps.
+	if self._RequestedWorldDrawModel ~= model then
+		self._RequestedWorldDrawModel = model
+		if self:GetModel() ~= model then
+			self:SetModel(model)
+		end
+	end
+
+	local mat = GetDrawableWeaponMaterial(GetEffectiveWeaponMaterial(self, self.CustomMaterialOverride2 or self.MaterialOverride or self.WeaponMaterial or ""))
+	if self:GetMaterial() ~= mat then
+		self:SetMaterial(mat)
+	end
+
+	if IsValid(self.WModel2) then
+		local desiredParent = IsValid(owner) and owner or self
+		if self.WModel2:GetParent() ~= desiredParent then
+			self.WModel2:SetParent(desiredParent)
+		end
+	end
+
+	local skin = (IsValid(owner) and (self.WeaponSkin or owner:GetSkin())) or self.WeaponSkin or 0
+	if self:GetSkin() ~= skin then
+		self:SetSkin(skin)
+	end
+
+	local worldEnt = (IsValid(self.WModel2) and self.WModel2) or self
+	if worldEnt == self then
+		self:SetNoDraw(false)
+	end
+	DrawTFWorldModelDebugBox(self:GetPos(), self:GetAngles())
+	DebugTFWorldModelDraw(self, "drawworldmodel_draw", model)
+	self:StartVisualOverrides()
+	if worldEnt == self then
+		self:DrawModel()
+	else
+		if worldEnt.FrameAdvance then
+			worldEnt:FrameAdvance(RealFrameTime())
+		end
+		worldEnt:SetNoDraw(false)
+		if worldEnt:GetSkin() ~= skin then
+			worldEnt:SetSkin(skin)
+		end
+		if worldEnt:GetMaterial() ~= mat then
+			worldEnt:SetMaterial(mat)
+		end
+		worldEnt:DrawModel()
+	end
+
+	-- Keep festive/attached world models in sync with delayed item visual updates.
+	local attachedModel = self.AttachedWorldModel or ""
+	local needsAttachInit = (self._LastAttachedWorldModel ~= attachedModel)
+	if not needsAttachInit and isstring(self.AttachedWorldModel) and self.AttachedWorldModel ~= "" and not IsValid(self.AttachedWModel) then
+		needsAttachInit = true
+	end
+	if needsAttachInit then
+		self._LastAttachedWorldModel = attachedModel
+		if isfunction(self.InitializeAttachedModels) then
+			self:InitializeAttachedModels()
+		end
+	end
+
+	if IsValid(self.AttachedWModel) then
+		local worldParent = (IsValid(self.WModel2) and self.WModel2) or (IsValid(self.WModel) and self.WModel) or self
+		if self.AttachedWModel:GetParent() ~= worldParent then
+			self.AttachedWModel:SetParent(worldParent)
+		end
+		if self.AttachedWModel.FrameAdvance then
+			self.AttachedWModel:FrameAdvance(RealFrameTime())
+		end
+		self.AttachedWModel:SetNoDraw(false)
+		if self.AttachedWModel:GetMaterial() ~= mat then
+			self.AttachedWModel:SetMaterial(mat)
+		end
+		if self.AttachedWModel:GetSkin() ~= skin then
+			self.AttachedWModel:SetSkin(skin)
+		end
+		self.AttachedWModel:DrawModel()
+	end
+
+	self:EndVisualOverrides()
 end
 
 end
@@ -763,6 +875,8 @@ function SWEP:Equip()
 end
 
 
+local forceWorldModelDraw = CLIENT and CreateClientConVar("tf_force_worldmodel_draw", "0", true, false) or nil
+
 hook.Add("EntityRemoved", "TFWeaponRemoved", function(ent)
 	if ent.IsTFWeapon then
 		if IsValid(ent.WModel2) then ent.WModel2:Remove() end
@@ -775,7 +889,21 @@ end)
 -- Instead of using using DrawWorldModel to render the world model, do it here (at least it guarantees that it will be always drawn if the player is visible)
 -- any potential problem with this?
 hook.Add("PostPlayerDraw", "ForceDrawTFWorldModel", function(pl)
-
+	if not CLIENT or not IsValid(pl) then return end
+	if not forceWorldModelDraw or not forceWorldModelDraw:GetBool() then return end
+	local wep = pl:GetActiveWeapon()
+	if not IsValid(wep) or not wep.IsTFWeapon or not isfunction(wep.DrawWorldModel) then return end
+	if pl == LocalPlayer() and not pl:ShouldDrawLocalPlayer() then return end
+	if pl:GetNWBool("NoWeapon", false) then return end
+	if pl.RenderingWorldModel then return end
+	pl.RenderingWorldModel = true
+	local ok, err = pcall(function()
+		wep:DrawWorldModel()
+	end)
+	pl.RenderingWorldModel = false
+	if not ok then
+		ErrorNoHalt(string.format("ForceDrawTFWorldModel(shared) failed for %s: %s\n", tostring(wep), tostring(err)))
+	end
 end)
 
 function SWEP:InitializeWModel2()
@@ -879,9 +1007,21 @@ local function WeaponSlotIndex(wep)
 	return tonumber(slot) or 0
 end
 
+local function WeaponIsMedigunForSelection(wep)
+	if not IsValid(wep) then return false end
+	local class = wep:GetClass()
+	if not isstring(class) then return false end
+	return class == "tf_weapon_ampgun" or string.find(class, "tf_weapon_medigun", 1, true) == 1
+end
+
 local function WeaponHasUsableAmmoForSelection(wep)
 	if not IsValid(wep) then return false end
 	if wep.Hidden or wep.IsPDA then
+		return true
+	end
+
+	-- Mediguns are always usable even when Uber starts at 0%.
+	if WeaponIsMedigunForSelection(wep) then
 		return true
 	end
 
@@ -1005,6 +1145,24 @@ function SWEP:AutoSwitchIfOutOfAmmo()
 end
 
 function SWEP:Deploy() 
+	if self.CheckUpdateItem then
+		self:CheckUpdateItem()
+	end
+
+	local deployItemData = self:GetItemData()
+	local deployWorldModel = (deployItemData and deployItemData.model_world)
+		or (deployItemData and deployItemData.model_player)
+	if isstring(deployWorldModel) and deployWorldModel ~= "" then
+		util.PrecacheModel(deployWorldModel)
+		self.WorldModel = deployWorldModel
+	end
+
+	if CLIENT and isfunction(self.InitializeAttachedModels) then
+		self._LastAttachedWorldModel = nil
+		self._LastAttachedWorldModelThink = nil
+		self:InitializeAttachedModels()
+	end
+
 	local vm = self.Owner:GetViewModel()
 	if (IsValid(vm)) then
 		if (self.Owner:IsHL2()) then
@@ -1076,7 +1234,11 @@ function SWEP:Deploy()
 		end
 	end
 	--MsgFN("Deploy %s", tostring(self))
-	local wmodel = self:GetItemData().model_player or self.WorldModel
+	local wmodel = self.WorldModel
+	if CLIENT and isfunction(GetWeaponDisplayModel) and isfunction(LocalPlayer) then
+		local lp = LocalPlayer()
+		wmodel = GetWeaponDisplayModel(self, lp) or self.WorldModel
+	end
 	if (self.Owner:GetNWBool("NoWeapon")) then
 		--self.WorldModel = "models/empty.mdl"
 	else
@@ -1636,6 +1798,12 @@ function SWEP:Holster()
 			if IsValid(self.WModel) then
 				self.WModel:Remove()
 			end
+			if IsValid(self.AttachedVModel) then
+				self.AttachedVModel:Remove()
+			end
+			if IsValid(self.AttachedWModel) then
+				self.AttachedWModel:Remove()
+			end
 			if IsValid(self.ExtraCModel) then
 				self.ExtraCModel:Remove()
 			end
@@ -1645,6 +1813,8 @@ function SWEP:Holster()
 			if IsValid(self.OffhandProjectileCModel) then
 				self.OffhandProjectileCModel:Remove()
 			end
+			self._LastAttachedWorldModel = nil
+			self._LastAttachedWorldModelThink = nil
 		end
 	end
 	
@@ -1918,8 +2088,11 @@ function SWEP:Think()
 	if (string.find(self.Owner:GetModel(),"/bot_")) then
 		self.CriticalChance = 0
 	end
-	if ((self:GetItemData().model_world or self:GetItemData().model_player) ~= nil) then
-		self.WorldModel = "models/empty.mdl"
+	local itemData = self:GetItemData()
+	local resolvedWorldModel = (itemData and itemData.model_world)
+		or (itemData and itemData.model_player)
+	if isstring(resolvedWorldModel) and resolvedWorldModel ~= "" and self.WorldModel ~= resolvedWorldModel then
+		self.WorldModel = resolvedWorldModel
 	end
 	if (((self.NextReload and self.NextReload>=CurTime()) or ((self.NextReloadStart and self.NextReloadStart>=CurTime()) or self.Reloading)) and self.ReloadSingle) then
 	
@@ -1949,6 +2122,29 @@ function SWEP:Think()
 	if CLIENT then
 		local hideForTaunt = ShouldHideWeaponModels(self)
 		ApplyNoWeaponDrawState(self, hideForTaunt)
+		local drawMat = GetDrawableWeaponMaterial(GetEffectiveWeaponMaterial(self, self.CustomMaterialOverride2 or self.MaterialOverride or self.WeaponMaterial or ""))
+		local attachedModel = self.AttachedWorldModel or ""
+		local needsAttachInit = (self._LastAttachedWorldModelThink ~= attachedModel)
+		if not needsAttachInit then
+			if isstring(self.AttachedWorldModel) and self.AttachedWorldModel ~= "" and not IsValid(self.AttachedWModel) then
+				needsAttachInit = true
+			end
+			if isstring(self.AttachedViewModel) and self.AttachedViewModel ~= "" and not IsValid(self.AttachedVModel) then
+				needsAttachInit = true
+			end
+			if IsValid(self.AttachedVModel) then
+				local desiredViewParent = (IsValid(self.CModel) and self.CModel) or (IsValid(self.Owner) and IsValid(self.Owner:GetViewModel()) and self.Owner:GetViewModel()) or nil
+				if IsValid(desiredViewParent) and self.AttachedVModel:GetParent() ~= desiredViewParent then
+					needsAttachInit = true
+				end
+			end
+		end
+		if needsAttachInit then
+			self._LastAttachedWorldModelThink = attachedModel
+			if isfunction(self.InitializeAttachedModels) then
+				self:InitializeAttachedModels()
+			end
+		end
 		local lp = LocalPlayer()
 		local drawLocalViewModel = IsValid(lp)
 			and self.Owner == lp
@@ -1970,7 +2166,7 @@ function SWEP:Think()
 		if not hideForTaunt and drawLocalViewModel and IsValid(self.CModel) then
 			self.CModel:DrawModel()
 			self.CModel:SetSkin(self.WeaponSkin or self.Owner:GetSkin())
-			local cmat = GetEffectiveWeaponMaterial(self, self.WeaponMaterial)
+			local cmat = drawMat
 			if self.CModel:GetMaterial() ~= cmat then
 				self.CModel:SetMaterial(cmat)
 			end
@@ -1984,12 +2180,11 @@ function SWEP:Think()
 	
 		end
 		if not hideForTaunt and IsValid(self.WModel) then
-			self.WModel:DrawModel()
 			local skin = self.WeaponSkin or self.Owner:GetSkin()
 			if (self.WModel:GetSkin() != skin) then
 				self.WModel:SetSkin(skin)	
 			end
-			local wmat = GetEffectiveWeaponMaterial(self, self.WeaponMaterial)
+			local wmat = drawMat
 			if (self.WModel:GetMaterial() != wmat) then
 				self.WModel:SetMaterial(wmat)
 			end
@@ -2187,7 +2382,11 @@ function SWEP:Think()
 			end
 		end
 	end
-	local wmodel = self:GetItemData().model_player or self.WorldModel
+	local wmodel = self.WorldModel
+	if CLIENT and isfunction(GetWeaponDisplayModel) and isfunction(LocalPlayer) then
+		local lp = LocalPlayer()
+		wmodel = GetWeaponDisplayModel(self, lp) or self.WorldModel
+	end
 	if (self.Owner:GetNWBool("NoWeapon")) then
 		--self.WorldModel = "models/empty.mdl"
 	else
@@ -2306,12 +2505,15 @@ function SWEP:Think()
 			self.NextReload2 = CurTime() + self.ReloadTime
 			if CLIENT then
 				if self:GetItemData().model_player == "models/weapons/c_models/c_scattergun.mdl" then
-					--PrintTable(self.CModel:GetAttachments())
-					local effectdata = EffectData()
-					effectdata:SetEntity( self.Owner:GetViewModel() )
-					effectdata:SetOrigin( self.CModel:GetAttachment(self.CModel:LookupAttachment("eject_brass")).Pos )
-					effectdata:SetAngles( Angle(self.CModel:GetAttachment(self.CModel:LookupAttachment("eject_brass")).Ang.x,self.CModel:GetAttachment(self.CModel:LookupAttachment("eject_brass")).Ang.y,self.CModel:GetAttachment(self.CModel:LookupAttachment("eject_brass")).Ang.z) )
-					util.Effect( "ShotgunShellEject", effectdata )
+					local attachID = IsValid(self.CModel) and self.CModel:LookupAttachment("eject_brass") or 0
+					local attach = attachID > 0 and self.CModel:GetAttachment(attachID) or nil
+					if attach then
+						local effectdata = EffectData()
+						effectdata:SetEntity(self.Owner:GetViewModel())
+						effectdata:SetOrigin(attach.Pos)
+						effectdata:SetAngles(attach.Ang)
+						util.Effect("ShotgunShellEject", effectdata)
+					end
 				end
 			end
 			--self.Owner:SetAnimation(10000)	
@@ -2394,12 +2596,15 @@ function SWEP:Think()
 		end
 		if CLIENT then
 			if self:GetItemData().model_player == "models/weapons/c_models/c_scattergun.mdl" then
-				--PrintTable(self.CModel:GetAttachments())
-				local effectdata = EffectData()
-				effectdata:SetEntity( self.Owner:GetViewModel() )
-				effectdata:SetOrigin( self.CModel:GetAttachment(self.CModel:LookupAttachment("eject_brass")).Pos )
-				effectdata:SetAngles( Angle(self.CModel:GetAttachment(self.CModel:LookupAttachment("eject_brass")).Ang.x,self.CModel:GetAttachment(self.CModel:LookupAttachment("eject_brass")).Ang.y,self.CModel:GetAttachment(self.CModel:LookupAttachment("eject_brass")).Ang.z) )
-				util.Effect( "ShotgunShellEject", effectdata )
+				local attachID = IsValid(self.CModel) and self.CModel:LookupAttachment("eject_brass") or 0
+				local attach = attachID > 0 and self.CModel:GetAttachment(attachID) or nil
+				if attach then
+					local effectdata = EffectData()
+					effectdata:SetEntity(self.Owner:GetViewModel())
+					effectdata:SetOrigin(attach.Pos)
+					effectdata:SetAngles(attach.Ang)
+					util.Effect("ShotgunShellEject", effectdata)
+				end
 			end
 		end
 		--self.Owner:SetAnimation(10000) -- reload loop	 	

@@ -26,6 +26,60 @@ CreateConVar("loadout_taunts_spy", "-1,-1,-1,-1,-1,-1,-1,-1", {FCVAR_ARCHIVE,FCV
 local nextLoadoutUpdate = 0
 local LOADOUT_SLOT_COUNT = 7
 
+local function resolveLoadoutItemImagePath(item, properties)
+    if not istable(item) then return nil end
+    if tf_item and tf_item.ResolveInventoryImageForItemData then
+        local resolved = tf_item.ResolveInventoryImageForItemData(item, properties)
+        if isstring(resolved) and resolved ~= "" then
+            return resolved
+        end
+    end
+    if isstring(item.image_inventory) and item.image_inventory ~= "" then
+        return item.image_inventory
+    end
+    return nil
+end
+
+local function applyDecoratedLegacyPanelVisual(panel, item, properties)
+    if not IsValid(panel) or not istable(item) then return end
+    panel.FallbackModel = nil
+    panel.overridematerial = nil
+
+    local imagePath = resolveLoadoutItemImagePath(item, properties)
+    local hasImage = false
+    if isstring(imagePath) and imagePath ~= "" then
+        local mat = Material(imagePath)
+        hasImage = mat and not mat:IsError()
+    end
+
+    local matOverride = tf_item and tf_item.ResolveMaterialOverrideForItemData and tf_item.ResolveMaterialOverrideForItemData(item, properties, LocalPlayer()) or nil
+    local paintkitID = tonumber(item and item.static_attrs and item.static_attrs.paintkit_proto_def_index)
+    if istable(properties) and istable(properties.attributes) then
+        for _, att in ipairs(properties.attributes) do
+            if istable(att) and tonumber(att[1]) == 834 then
+                paintkitID = tonumber(att[2]) or paintkitID
+                break
+            end
+        end
+    end
+    local festive = 0
+    if istable(properties) and istable(properties.attributes) then
+        for _, att in ipairs(properties.attributes) do
+            if istable(att) and tonumber(att[1]) == 2053 then
+                festive = tonumber(att[2]) or 0
+                break
+            end
+        end
+    end
+
+    local needsFallback = ((paintkitID and paintkitID > 0) or festive > 0 or (isstring(matOverride) and matOverride ~= "")) and not hasImage
+    if not needsFallback then return end
+
+    panel.FallbackModel = item.model_player or item.model_world
+    panel.overridematerial = isstring(matOverride) and matOverride or nil
+    panel.itemImage = surface.GetTextureID("backpack/weapons/c_models/c_bat")
+end
+
 local function normalizeLoadout(split)
     local out = {}
     for i = 1, LOADOUT_SLOT_COUNT do
@@ -410,16 +464,15 @@ function itemSelector(type, weapons)
         model.text = tf_lang.GetRaw(v.item_name) or v.name
         model.centerytext = true
         model.disabled = false
-        if !isstring(v.image_inventory) or Material(v.image_inventory):IsError() then
+        local resolvedImage = resolveLoadoutItemImagePath(v, v.SteamProperties)
+        if not isstring(resolvedImage) or resolvedImage == "" or Material(resolvedImage):IsError() then
             model.FallbackModel = v.model_player
             model.itemImage = surface.GetTextureID("backpack/weapons/c_models/c_bat")
-        elseif isstring(v.image_inventory) then
-            model.itemImage = surface.GetTextureID(v.image_inventory)
+        else
+            model.itemImage = surface.GetTextureID(resolvedImage)
         end
 
-        if v.attributes and v.attributes["material override"] and v.attributes["material override"].value then
-            model.overridematerial = v.attributes["material override"].value
-        end
+        applyDecoratedLegacyPanelVisual(model, v, v.SteamProperties)
 
         model.DoClick = function()
             nextLoadoutUpdate = 0
@@ -484,21 +537,20 @@ function hatSelector(type)
 			t.RealName = v["name"]
 			t.centerytext = true
 			t.disabled = false
-			if !isstring(v["image_inventory"]) or Material(v["image_inventory"]):IsError() then
+			local resolvedImage = resolveLoadoutItemImagePath(v, v.SteamProperties)
+			if !isstring(resolvedImage) or resolvedImage == "" or Material(resolvedImage):IsError() then
 				t.FallbackModel = v["model_player"]
 				t.itemImage = surface.GetTextureID("backpack/weapons/c_models/c_bat")
-			elseif isstring(v["image_inventory"]) then
+			elseif isstring(resolvedImage) then
 				-- t.FallbackModel = v["model_player"]
-				t.itemImage = surface.GetTextureID(v["image_inventory"])
+				t.itemImage = surface.GetTextureID(resolvedImage)
 			end
 
 			--[[if v["item_class"] ~= "tf_wearable_item" and tonumber(v["id"]) > 6000 then
 				t.FallbackModel = v["model_player"]
 			end]]
 
-			if v["attributes"] and v["attributes"]["material override"] and v["attributes"]["material override"]["value"] then
-				t.overridematerial = v["attributes"]["material override"]["value"]
-			end
+			applyDecoratedLegacyPanelVisual(t, v, v.SteamProperties)
 
 			t.itemImage_low = nil
 

@@ -1384,7 +1384,9 @@ local ATTRIBUTES = {
 
 ["set_turn_to_gold"] = {
 	boolean = true,
-	pre_damage = function(v,ent,inf,att)
+	pre_damage = function(v,ent,hitgroup,dmginfo)
+		local inf = (dmginfo and dmginfo.GetInflictor) and dmginfo:GetInflictor() or nil
+		local att = (dmginfo and dmginfo.GetAttacker) and dmginfo:GetAttacker() or nil
 	engineer_gold_lines =
 	{
 		"scenes/Player/Engineer/low/3605.vcd",
@@ -1408,7 +1410,7 @@ local ATTRIBUTES = {
 			ent:EmitSound("weapons/saxxy_impact_gen_06.wav")
 			--ent:SetNWBool("ShouldDropGoldenRagdoll", true)
 			ent:AddDeathFlag(DF_GOLDEN)
-			if inf.Owner:GetPlayerClass() == "engineer" then
+			if IsValid(att) and att.GetPlayerClass and att:GetPlayerClass() == "engineer" then
 				att:PlayScene(engineer_gold_lines[math.random( #engineer_gold_lines )])
 			end
 		end

@@ -5,6 +5,25 @@ local TranslateCModelToVModel = {
 	["models/weapons/c_models/c_targe/c_targe.mdl"] = "models/weapons/c_models/c_v_targe/c_v_targe.mdl",
 }
 
+local function GetTFLocalPlayer()
+	if CLIENT and isfunction(LocalPlayer) then
+		local lp = LocalPlayer()
+		if IsValid(lp) then
+			return lp
+		end
+	end
+end
+
+local function IsTFLocalPlayer(ent)
+	local lp = GetTFLocalPlayer()
+	return IsValid(ent) and IsValid(lp) and ent == lp, lp
+end
+
+local function TFLocalPlayerHasPyrovision()
+	local lp = GetTFLocalPlayer()
+	return lp and TF2_IsPyrovisionEnabled(lp) or false
+end
+
 function ENT:GetHatData()
 	return PlayerHats[self:GetNWString("HatName")]
 end
@@ -1000,7 +1019,8 @@ hook.Add("EntityEmitSound", "MouthFix", function(snd)
 		if CLIENT then
 			if !IsValid(snd.Entity) then return end
 			local pl = snd.Entity
-			if (snd.Entity:EntIndex() == LocalPlayer():EntIndex()) then
+			local isLocalPlayer = IsTFLocalPlayer(snd.Entity)
+			if isLocalPlayer then
 				if (!pl:IsL4D() and !pl:IsBot()) then
 					if (pl:GetPlayerClass() != "gmodplayer") then
 						--pl:SetModel(pl:GetNWString("PlayerClassModel"))
@@ -1014,7 +1034,8 @@ hook.Add("EntityEmitSound", "MouthFix", function(snd)
 	elseif (snd.Entity:IsPlayer() and snd.Entity:IsHL2()) then
 		if CLIENT and !snd.Entity:IsBot() then
 			if !IsValid(snd.Entity) then return end
-			if (snd.Entity:EntIndex() == LocalPlayer():EntIndex()) then
+			local isLocalPlayer = IsTFLocalPlayer(snd.Entity)
+			if isLocalPlayer then
 				----snd.Entity:SetModel(snd.Entity:GetNWString("PlayerClassModel"))
 			end
 		end
@@ -1097,6 +1118,7 @@ local anim = v:LookupSequence("exp_angry_0"..math.random(1,6))
 end)
 
 hook.Add( "DrawWorldModel", "DrawWorldModelTF2", function( swep,flags )
+	if not IsValid(swep) or swep.IsTFWeapon then return end
 
 	swep.WModel = ClientsideModel(swep.WorldModel)
 
@@ -2831,8 +2853,9 @@ hook.Add("EntityEmitSound", "MVMVoices", function(snd)
 					elseif (snd.Entity:IsPlayer() and snd.Entity:Crouching()) then
 						snd.Volume = 1 * (groundspeed * 0.000006)
 					else
-						if (CLIENT and snd.Entity:EntIndex() == LocalPlayer():EntIndex()) then
-							if (LocalPlayer():ShouldDrawLocalPlayer()) then
+						local isLocalPlayer, lp = IsTFLocalPlayer(snd.Entity)
+						if isLocalPlayer then
+							if lp:ShouldDrawLocalPlayer() then
 								if (snd.Entity:GetNWBool("Taunting",false) == true) then
 									snd.Volume = 0
 								else
@@ -2901,8 +2924,9 @@ hook.Add("EntityEmitSound", "MVMVoices", function(snd)
 					elseif (snd.Entity:IsPlayer() and snd.Entity:Crouching()) then
 						snd.Volume = 1 * (groundspeed * 0.000006)
 					else
-						if (CLIENT and snd.Entity:EntIndex() == LocalPlayer():EntIndex()) then
-							if (LocalPlayer():ShouldDrawLocalPlayer()) then
+						local isLocalPlayer, lp = IsTFLocalPlayer(snd.Entity)
+						if isLocalPlayer then
+							if lp:ShouldDrawLocalPlayer() then
 								if (snd.Entity:GetNWBool("Taunting",false) == true) then
 									snd.Volume = 0
 								else
@@ -3005,8 +3029,9 @@ hook.Add("EntityEmitSound", "MVMVoices", function(snd)
 				elseif (snd.Entity:IsPlayer() and snd.Entity:Crouching()) then
 					snd.Volume = 1 * (groundspeed * 0.000006)
 				else
-					if (CLIENT and snd.Entity:EntIndex() == LocalPlayer():EntIndex()) then
-						if (LocalPlayer():ShouldDrawLocalPlayer()) then
+					local isLocalPlayer, lp = IsTFLocalPlayer(snd.Entity)
+					if isLocalPlayer then
+						if lp:ShouldDrawLocalPlayer() then
 							if (snd.Entity:GetNWBool("Taunting",false) == true) then
 								snd.Volume = 0
 							else
@@ -3074,7 +3099,8 @@ hook.Add("EntityEmitSound", "MVMVoices", function(snd)
 			end
 			local pl = snd.Entity
 			
-			if (CLIENT and snd.Entity:EntIndex() == LocalPlayer():EntIndex()) then
+			local isLocalPlayer, lp = IsTFLocalPlayer(snd.Entity)
+			if isLocalPlayer then
 				if (!pl:IsL4D() and !pl:IsBot()) then
 					if (pl:GetPlayerClass() != "gmodplayer") then
 						--pl:SetModel(pl:GetNWString("PlayerClassModel"))
@@ -3310,8 +3336,9 @@ hook.Add("EntityEmitSound", "MVMVoices", function(snd)
 				elseif (snd.Entity:IsPlayer() and snd.Entity:Crouching()) then
 					snd.Volume = 1 * (groundspeed * 0.000006)
 				else
-					if (snd.Entity:EntIndex() == LocalPlayer():EntIndex()) then
-						if (LocalPlayer():ShouldDrawLocalPlayer()) then
+					local isLocalPlayer, lp = IsTFLocalPlayer(snd.Entity)
+					if isLocalPlayer then
+						if lp:ShouldDrawLocalPlayer() then
 							if (snd.Entity:GetNWBool("Taunting",false) == true) then
 								snd.Volume = 0
 							else
@@ -3588,7 +3615,7 @@ hook.Add("EntityEmitSound", "MVMVoices", function(snd)
 			if (snd.Entity:IsPlayer() and snd.Entity:GetPlayerClass() == "wtfdemoman") then
 				snd.Pitch = 130
 			else
-				if (GetConVar("tf_pyrovision"):GetBool()) then
+				if TFLocalPlayerHasPyrovision() then
 					snd.SoundName = string.Replace(snd.SoundName, "PainCrticialDeath", "laughlong")
 					snd.SoundName = string.Replace(snd.SoundName, "PainSharp", "laughshort")
 					snd.SoundName = string.Replace(snd.SoundName, "PainSevere", "laughhappy")
@@ -3620,7 +3647,7 @@ hook.Add("EntityEmitSound", "MVMVoices", function(snd)
 				snd.SoundName = string.Replace(snd.SoundName, ".wav", ".mp3") 
 			end
 			return true
-		elseif IsValid(snd.Entity) and string.find(snd.SoundName, "vo/") and GetConVar("tf_pyrovision"):GetBool() then
+		elseif IsValid(snd.Entity) and string.find(snd.SoundName, "vo/") and TFLocalPlayerHasPyrovision() then
 			if (snd.Entity:GetInfoNum("tf_special_dsp_type",-1) > 0) then
 				snd.DSP = snd.Entity:GetInfoNum("tf_special_dsp_type",-1);
 			end
@@ -3697,7 +3724,7 @@ hook.Add("EntityEmitSound", "MVMVoices", function(snd)
 					end
 				end
 			end
-			if (GetConVar("tf_pyrovision"):GetBool()) then
+			if TFLocalPlayerHasPyrovision() then
 				snd.SoundName = string.Replace(snd.SoundName, "PainCrticialDeath", "laughlong")
 				snd.SoundName = string.Replace(snd.SoundName, "PainSharp", "laughshort")
 				snd.SoundName = string.Replace(snd.SoundName, "PainSevere", "laughhappy")
@@ -3734,7 +3761,7 @@ hook.Add("EntityEmitSound", "MVMVoices", function(snd)
 			if (snd.Entity:GetInfoNum("tf_special_dsp_type",-1) > 0) then
 				snd.DSP = snd.Entity:GetInfoNum("tf_special_dsp_type",-1);
 			end
-			if (GetConVar("tf_pyrovision"):GetBool()) then
+			if TFLocalPlayerHasPyrovision() then
 				snd.SoundName = string.Replace(snd.SoundName, "painsharp", "laughshort")
 				snd.SoundName = string.Replace(snd.SoundName, "painsevere", "laughhappy")
 				snd.SoundName = string.Replace(snd.SoundName, "paincrticialdeath", "laughlong")

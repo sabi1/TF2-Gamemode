@@ -16,6 +16,23 @@ local function IsAllowedInVisualizer(playerTeam, visualizerTeam)
 	return true
 end
 
+local function ParseHammerTeamNum(value)
+	local t = tonumber(value)
+	if t == 2 then return TEAM_RED end
+	if t == 3 then return TEAM_BLU end
+	return nil
+end
+
+local function IsPlayableVisualizerTeam(teamNum)
+	return teamNum == TEAM_RED or teamNum == TEAM_BLU
+end
+
+local function RawHammerTeamFromInternal(teamNum)
+	if teamNum == TEAM_RED then return 2 end
+	if teamNum == TEAM_BLU then return 3 end
+	return 0
+end
+
 local function IsMvMMap()
 	local map = string.lower(game.GetMap() or "")
 	return string.find(map, "mvm_", 1, true) ~= nil
@@ -35,6 +52,31 @@ local function IsEntityInsideVisualizer(self, ent)
 	local pos = ent:WorldSpaceCenter()
 	return pos.x >= mins.x and pos.y >= mins.y and pos.z >= mins.z
 		and pos.x <= maxs.x and pos.y <= maxs.y and pos.z <= maxs.z
+end
+
+local function RefreshVisualizerTeamBinding(self)
+	if not IsValid(self) then return end
+
+	if IsValid(self.RespawnRoom) and IsPlayableVisualizerTeam(self.RespawnRoom.TeamNum) then
+		self.TeamNum = self.RespawnRoom.TeamNum
+		self.Team = RawHammerTeamFromInternal(self.TeamNum)
+		self:SetNWInt("TeamNum", self.TeamNum)
+		self:SetNWInt("Team", self.Team)
+		return
+	end
+
+	if not self.RespawnRoomName or self.RespawnRoomName == "" then return end
+
+	for _, ent in ipairs(ents.FindByName(self.RespawnRoomName)) do
+		if IsValid(ent) and ent:GetClass() == "func_respawnroom" and IsPlayableVisualizerTeam(ent.TeamNum) then
+			self.RespawnRoom = ent
+			self.TeamNum = ent.TeamNum
+			self.Team = RawHammerTeamFromInternal(self.TeamNum)
+			self:SetNWInt("TeamNum", self.TeamNum)
+			self:SetNWInt("Team", self.Team)
+			return
+		end
+	end
 end
 
 local function AddVisualizerInvuln(ent)
@@ -82,6 +124,8 @@ function ENT:Initialize()
 	self.TeamNum = self.TeamNum or 0
 	self.Pos = pos 
 	self.Players = {}
+	self:SetNWInt("TeamNum", self.TeamNum)
+	self:SetNWInt("Team", self.Team)
 	self:SetSolid(SOLID_BBOX)
 	self:SetCustomCollisionCheck( true ) 
 end 
@@ -89,13 +133,15 @@ end
 function ENT:KeyValue(key,value)
 	key = string.lower(key)
 	if key =="respawnroomname" then
-		for k,v in ipairs(ents.GetAll()) do
-			local t = tostring(value)
-			if (v:GetName() == t) then
-				self.RespawnRoom = v
-				self.TeamNum = v.TeamNum
-				--print(t)
-			end
+		self.RespawnRoomName = tostring(value)
+		RefreshVisualizerTeamBinding(self)
+	elseif key == "teamnum" then
+		local parsed = ParseHammerTeamNum(value)
+		if parsed then
+			self.TeamNum = parsed
+			self.Team = tonumber(value) or RawHammerTeamFromInternal(parsed)
+			self:SetNWInt("TeamNum", self.TeamNum)
+			self:SetNWInt("Team", self.Team)
 		end
 	end
 	--print(key, value, tostring(value), self.RespawnRoom)
@@ -131,6 +177,8 @@ function ENT:OnRemove()
 end
 
 function ENT:Think()
+	RefreshVisualizerTeamBinding(self)
+
 	if IsMvMMap() then
 		-- Prune stale tracked players (death/teleport/respawn or brush transitions missing EndTouch).
 		for ply, _ in pairs(self.Players or {}) do
@@ -157,8 +205,10 @@ hook.Add( "ShouldCollide", "RespawnRoomVisualizerCollision", function( ent1, ent
 
     -- If players are about to collide with each other, then they won't collide.
     if ( ent1:GetClass() == "func_respawnroomvisualizer" and ent2:IsPlayer() ) then 
+		RefreshVisualizerTeamBinding(ent1)
 		return not IsAllowedInVisualizer(ent2:Team(), ent1.TeamNum)
     elseif ( ent2:GetClass() == "func_respawnroomvisualizer" and ent1:IsPlayer() ) then 
+		RefreshVisualizerTeamBinding(ent2)
 		return not IsAllowedInVisualizer(ent1:Team(), ent2.TeamNum)
 	end
 

@@ -8,6 +8,7 @@ include("sv_gamelogic.lua")
 include("sv_hl2replace.lua")
 include("sv_damage.lua")
 include("sv_gargoyle.lua")
+include("sv_halloween_boss.lua")
 include("shd_gravitygun.lua")
 include("sv_chat.lua")  
 include("sv_loadout.lua")   
@@ -33,6 +34,7 @@ util.AddNetworkString("TFGestureAnim")
 util.AddNetworkString("UpdatePhonemes")
 util.AddNetworkString("TF_PayloadSyncFull")
 util.AddNetworkString("TF_PayloadSyncDelta")
+util.AddNetworkString("TF_RomevisionOffer")
 
 -- Quickfix for Valve's typo in tf_reponse_rules.txt 
 
@@ -2845,7 +2847,19 @@ function GM:ShowSpare2(ply)
 end
 
 function GM:HealPlayer(healer, pl, h, effect, allowoverheal)
-	local health_given = pl:GiveHealth(h, false, allowoverheal)
+	local heal_amount = h
+	if heal_amount > 0 and IsValid(pl) and pl.InCond then
+		local heal_mult = 1
+		if TF_COND_MEDIGUN_DEBUFF and pl:InCond(TF_COND_MEDIGUN_DEBUFF) then
+			heal_mult = heal_mult * 0.75
+		end
+		if TF_COND_HEALING_DEBUFF and pl:InCond(TF_COND_HEALING_DEBUFF) then
+			heal_mult = heal_mult * 0.5
+		end
+		heal_amount = heal_amount * heal_mult
+	end
+
+	local health_given = pl:GiveHealth(heal_amount, false, allowoverheal)
 	----print(health_given)
 	if effect then
 		if pl:IsPlayer() then
@@ -2949,15 +2963,15 @@ end
 RunConsoleCommand("sk_player_head", "1")
 RunConsoleCommand("sv_friction", "4")
 RunConsoleCommand("sv_stopspeed", "100")
+RunConsoleCommand("sv_accelerate", "10")
+RunConsoleCommand("sv_airaccelerate", "10")
 --Disables use key on objects (Can Be Re-enabled)
 -- WHAT WERE YOU THINKING
 RunConsoleCommand("sv_playerpickupallowed", "1")
---Sets the gravity to 800 (Can be set back to default "600")
-RunConsoleCommand("sv_gravity", "600")
---Sets to a impact force similar to TF2 so things to go flying balls of the walls!
-RunConsoleCommand("phys_impactforcescale", "0.05")
---Ditto
-RunConsoleCommand("phys_pushscale", "0.10")
+-- Mirror TF2 movement/physics defaults from Source.
+RunConsoleCommand("sv_gravity", "800")
+RunConsoleCommand("phys_impactforcescale", "1.0")
+RunConsoleCommand("phys_pushscale", "1.0")
 
 function GM:PlayerNoClip( pl )
 	if GetConVar("sbox_noclip"):GetInt() <= 0 then 

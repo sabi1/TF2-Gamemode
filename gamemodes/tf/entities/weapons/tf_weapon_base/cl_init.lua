@@ -1,6 +1,30 @@
 AddCSLuaFile()
 include('shared.lua')
 
+local debugWorldModels = CreateClientConVar("tf_debug_worldmodels", "0", true, false)
+local forceWorldModelDraw = CreateClientConVar("tf_force_worldmodel_draw", "0", true, false)
+local nextWorldModelDebug = 0
+
+local function DebugWorldModelState(tag, pl, wep)
+	if not debugWorldModels:GetBool() then return end
+	if CurTime() < nextWorldModelDebug then return end
+	nextWorldModelDebug = CurTime() + 1
+	local ownerText = IsValid(pl) and (pl:Nick() .. " [" .. pl:EntIndex() .. "]") or "nil"
+	local wepClass = IsValid(wep) and wep:GetClass() or "nil"
+	local itemName = IsValid(wep) and wep.GetItemData and wep:GetItemData() and wep:GetItemData().name or "nil"
+	local model = IsValid(wep) and wep.WModel and wep.WModel.GetModel and wep.WModel:GetModel() or "nil"
+	local nodraw = IsValid(wep) and IsValid(wep.WModel) and wep.WModel:GetNoDraw() or false
+	print(string.format("[tf_debug_worldmodels] %s owner=%s wep=%s item=%s wmodel_valid=%s nodraw=%s model=%s",
+		tag,
+		ownerText,
+		tostring(wepClass),
+		tostring(itemName),
+		tostring(IsValid(wep) and IsValid(wep.WModel)),
+		tostring(nodraw),
+		tostring(model)
+	))
+end
+
 
 SWEP.PrintName			= "Scripted Weapon"
 
@@ -21,25 +45,30 @@ hook.Add("HUDPaint", "testlol", function()
 end)]]
 
 hook.Add("Think", "TFCheckWeaponChanged", function()
-	for _,v in pairs(player.GetAll()) do
-		if v:GetActiveWeapon() ~= v.LastActiveWeapon then
-			if IsValid(v.LastActiveWeapon) and v.LastActiveWeapon.ClearParticles then
-				v.LastActiveWeapon:ClearParticles()
-			end
-			
-			--MsgFN("Old weapon : %s", tostring(v.LastActiveWeapon))
-			if IsValid(v.LastActiveWeapon) and v.LastActiveWeapon.NextDeployed and v.LastActiveWeapon.Holster then
-				v.LastActiveWeapon:Holster()
-			end
-			v.LastActiveWeapon = v:GetActiveWeapon()
-			if IsValid(v.LastActiveWeapon) and not v.LastActiveWeapon.NextDeployed and v.LastActiveWeapon.Deploy then
-				v.LastActiveWeapon:Deploy()
-			end
-			--MsgFN("New weapon : %s", tostring(v.LastActiveWeapon))
-			
-			if IsValid(v.LastActiveWeapon) and v.LastActiveWeapon.ResetParticles then
-				v.LastActiveWeapon:ResetParticles()
-			end
+	local v = LocalPlayer()
+	if not IsValid(v) then return end
+	local active = v:GetActiveWeapon()
+	local last = v.LastActiveWeapon
+	if not IsValid(active) then
+		active = last
+	end
+	if active ~= last then
+		if IsValid(v.LastActiveWeapon) and v.LastActiveWeapon.ClearParticles then
+			v.LastActiveWeapon:ClearParticles()
+		end
+		
+		--MsgFN("Old weapon : %s", tostring(v.LastActiveWeapon))
+		if IsValid(v.LastActiveWeapon) and v.LastActiveWeapon.NextDeployed and v.LastActiveWeapon.Holster then
+			v.LastActiveWeapon:Holster()
+		end
+		v.LastActiveWeapon = active
+		if IsValid(v.LastActiveWeapon) and not v.LastActiveWeapon.NextDeployed and v.LastActiveWeapon.Deploy then
+			v.LastActiveWeapon:Deploy()
+		end
+		--MsgFN("New weapon : %s", tostring(v.LastActiveWeapon))
+		
+		if IsValid(v.LastActiveWeapon) and v.LastActiveWeapon.ResetParticles then
+			v.LastActiveWeapon:ResetParticles()
 		end
 	end
 end)
@@ -48,40 +77,53 @@ function SWEP:InitializeCModel()
 end
 
 function SWEP:InitializeWModel2()
-	if not self.WorldModelOverride then return end
 --Msg("InitializeWModel2\n")
 	local wmodel = self.WorldModelOverride2 or self.WorldModelOverride or self.WorldModel
+	if (not isstring(wmodel)) or wmodel == "" then
+		local item = self.GetItemData and self:GetItemData() or nil
+		wmodel = (item and item.model_world) or (item and item.model_player) or self.WorldModel
+	end
+	if (not isstring(wmodel)) or wmodel == "" then return end
+	local mergeEffects = bit.bor(EF_BONEMERGE, EF_BONEMERGE_FASTCULL, EF_PARENT_ANIMATES)
 	
 	if IsValid(self.WModel2) then
-		--self.WModel2:SetModel(wmodel)
+		if self.WModel2:GetModel() ~= wmodel then
+			self.WModel2:SetModel(wmodel)
+		end
 	else
 		self.WModel2 = ClientsideModel(wmodel)
 		if not IsValid(self.WModel2) then return end
-		
-		--self.WModel2:SetPos(self.Owner:GetPos())
-		--self.WModel2:SetAngles(self.Owner:GetAngles())
-		--self.WModel2:AddEffects(bit.bor(EF_BONEMERGE, EF_BONEMERGE_FASTCULL))
-		--self.WModel2:SetParent(self.Owner)
-		--self.WModel2:SetNoDraw(true)
-		--self.WModel2:SetColor(Color(255, 255, 255))
-		
-		if wmodel == "models/weapons/c_models/c_shotgun/c_shotgun.mdl" then
-			--self.WModel2:SetMaterial("models/weapons/w_shotgun_tf/w_shotgun_tf")
+		if self.WModel2.SetAutomaticFrameAdvance then
+			self.WModel2:SetAutomaticFrameAdvance(true)
 		end
 	end
 	
 	if IsValid(self.WModel2) then
+		local parent = IsValid(self.Owner) and self.Owner or self
+		if self.WModel2:GetParent() ~= parent then
+			self.WModel2:SetParent(parent)
+		end
+		self.WModel2:AddEffects(mergeEffects)
+		self.WModel2:SetNoDraw(true)
 		self.WModel2.Player = self.Owner
 		self.WModel2.Weapon = self
 		
 		if self.MaterialOverride then
-			--self.WModel2:SetMaterial(self.MaterialOverride)
+			self.WModel2:SetMaterial(self.MaterialOverride)
 		end
 	end
 end
 
 function SWEP:InitializeAttachedModels()
 --Msg("InitializeAttachedModels\n")
+	local mergeEffects = bit.bor(EF_BONEMERGE, EF_BONEMERGE_FASTCULL, EF_PARENT_ANIMATES)
+	local appliedMat = self.CustomMaterialOverride2 or self.MaterialOverride or self.WeaponMaterial or ""
+	if isstring(appliedMat) and appliedMat ~= "" then
+		local test = Material(appliedMat)
+		if not test or test:IsError() then
+			appliedMat = ""
+		end
+	end
 	if IsValid(self.AttachedWModel) then
 		if self.AttachedWorldModel then
 			self.AttachedWModel:SetModel(self.AttachedWorldModel)
@@ -89,23 +131,29 @@ function SWEP:InitializeAttachedModels()
 			self.AttachedWModel:Remove()
 		end
 	elseif self.AttachedWorldModel then
-		local ent = (IsValid(self.WModel2) and self.WModel2) or self
+		local ent = (IsValid(self.WModel2) and self.WModel2) or (IsValid(self.WModel) and self.WModel) or self
 		
 		self.AttachedWModel = ClientsideModel(self.AttachedWorldModel)
+		if self.AttachedWModel.SetAutomaticFrameAdvance then
+			self.AttachedWModel:SetAutomaticFrameAdvance(true)
+		end
 		self.AttachedWModel:SetPos(ent:GetPos())
 		self.AttachedWModel:SetAngles(ent:GetAngles())
-		self.AttachedWModel:AddEffects(EF_BONEMERGE)
+		self.AttachedWModel:AddEffects(mergeEffects)
 		self.AttachedWModel:SetParent(ent)
 		self.AttachedWModel:SetNoDraw(true)
 	end
 	
 	if IsValid(self.AttachedWModel) then
+		local worldParent = (IsValid(self.WModel2) and self.WModel2) or (IsValid(self.WModel) and self.WModel) or self
+		if self.AttachedWModel:GetParent() ~= worldParent then
+			self.AttachedWModel:SetParent(worldParent)
+		end
+		self.AttachedWModel:AddEffects(mergeEffects)
 		self.AttachedWModel.Player = self.Owner
 		self.AttachedWModel.Weapon = self
 		
-		if self.MaterialOverride then
-			self.AttachedWModel:SetMaterial(self.MaterialOverride)
-		end
+		self.AttachedWModel:SetMaterial(appliedMat)
 	end
 	
 	if IsValid(self.AttachedVModel) then
@@ -120,20 +168,26 @@ function SWEP:InitializeAttachedModels()
 		if not IsValid(ent) then return end
 		
 		self.AttachedVModel = ClientsideModel(self.AttachedViewModel)
+		if self.AttachedVModel.SetAutomaticFrameAdvance then
+			self.AttachedVModel:SetAutomaticFrameAdvance(true)
+		end
 		self.AttachedVModel:SetPos(ent:GetPos())
 		self.AttachedVModel:SetAngles(ent:GetAngles())
-		self.AttachedVModel:AddEffects(EF_BONEMERGE)
+		self.AttachedVModel:AddEffects(mergeEffects)
 		self.AttachedVModel:SetParent(ent)
 		self.AttachedVModel:SetNoDraw(true)
 	end
 	
 	if IsValid(self.AttachedVModel) then
+		local viewParent = (IsValid(self.CModel) and self.CModel) or (IsValid(self.Owner) and IsValid(self.Owner:GetViewModel()) and self.Owner:GetViewModel()) or nil
+		if IsValid(viewParent) and self.AttachedVModel:GetParent() ~= viewParent then
+			self.AttachedVModel:SetParent(viewParent)
+		end
+		self.AttachedVModel:AddEffects(mergeEffects)
 		self.AttachedVModel.Player = self.Owner
 		self.AttachedVModel.Weapon = self
 		
-		if self.MaterialOverride then
-			self.AttachedVModel:SetMaterial(self.MaterialOverride)
-		end
+		self.AttachedVModel:SetMaterial(appliedMat)
 	end
 end
 
@@ -280,12 +334,25 @@ end
 -- Instead of using using DrawWorldModel to render the world model, do it here (at least it guarantees that it will be always drawn if the player is visible)
 -- any potential problem with this?
 hook.Add("PostPlayerDraw", "ForceDrawTFWorldModel", function(pl)
+	if not forceWorldModelDraw:GetBool() then return end
 	if pl.RenderingWorldModel then
 		render.SetBlend(1)
 		return
 	end
-	
-	if IsValid(pl:GetActiveWeapon()) then
+
+	if not IsValid(pl) then return end
+	local wep = pl:GetActiveWeapon()
+	if not IsValid(wep) or not wep.IsTFWeapon or not isfunction(wep.DrawWorldModel) then return end
+	if pl == LocalPlayer() and not pl:ShouldDrawLocalPlayer() then return end
+	if pl:GetNWBool("NoWeapon", false) then return end
+	DebugWorldModelState("postplayerdraw", pl, wep)
+	pl.RenderingWorldModel = true
+	local ok, err = pcall(function()
+		wep:DrawWorldModel()
+	end)
+	pl.RenderingWorldModel = false
+	if not ok then
+		ErrorNoHalt(string.format("ForceDrawTFWorldModel failed for %s: %s\n", tostring(wep), tostring(err)))
 	end
 end)
 
@@ -293,6 +360,7 @@ end)
 -- as the player will be redrawn using that material as well
 -- Just make players invisible if their world model is being rendered
 hook.Add("PrePlayerDraw", "TFWorldModelHidePlayer", function(pl)
+	if not forceWorldModelDraw:GetBool() then return end
 	if pl.RenderingWorldModel then
 		render.SetBlend(0)
 	end

@@ -1,0 +1,30 @@
+return {
+  prop_models = {
+    "models/props_halloween/pumpkin_02.mdl",
+    "models/props_halloween/pumpkin_03.mdl",
+    "models/egypt/palm_tree/palm_tree.mdl",
+    "models/props_spytech/control_room_console01.mdl",
+    "models/props_spytech/work_table001.mdl",
+    "models/props_coalmines/boulder1.mdl",
+    "models/props_coalmines/boulder2.mdl",
+    "models/props_farm/concrete_block001.mdl",
+    "models/props_farm/welding_machine01.mdl",
+    "models/props_medieval/medieval_resupply.mdl",
+    "models/props_medieval/target/target.mdl",
+    "models/props_swamp/picnic_table.mdl",
+    "models/props_manor/baby_grand_01.mdl",
+    "models/props_manor/bookcase_132_02.mdl",
+    "models/props_manor/chair_01.mdl",
+    "models/props_manor/couch_01.mdl",
+    "models/props_manor/grandfather_clock_01.mdl",
+    "models/props_viaduct_event/coffin_simple_closed.mdl",
+    "models/props_2fort/miningcrate001.mdl",
+    "models/props_gameplay/resupply_locker.mdl",
+    "models/props_2fort/oildrum.mdl",
+    "models/props_lakeside/wood_crate_01.mdl",
+    "models/props_well/hand_truck01.mdl",
+    "models/props_vehicles/mining_car_metal.mdl",
+    "models/props_2fort/tire002.mdl",
+    "models/props_well/computer_cart01.mdl"
+  }
+}

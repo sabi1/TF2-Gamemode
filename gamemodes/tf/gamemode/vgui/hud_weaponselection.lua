@@ -189,6 +189,41 @@ specialslots["gmod_tool"] = 6
 local physgunIcon = Material("entities/weapon_physgun.png")
 DEFAULT_ICONS["weapon_physgun"] = physgunIcon
 
+local function resolveWeaponSelectionIconPath(wepEnt, itemData)
+	if IsValid(wepEnt) and wepEnt.GetResolvedInventoryImage then
+		local resolved = wepEnt:GetResolvedInventoryImage()
+		if isstring(resolved) and resolved ~= "" then
+			return resolved
+		end
+	end
+
+	if tf_item and tf_item.ResolveInventoryImageForItemData and istable(itemData) then
+		local props = istable(itemData.SteamProperties) and itemData.SteamProperties or nil
+		if (not props) and IsValid(wepEnt) and wepEnt.GetAttributes then
+			local attrs = wepEnt:GetAttributes()
+			if istable(attrs) and #attrs > 0 then
+				props = { attributes = {} }
+				for _, att in ipairs(attrs) do
+					if istable(att) then
+						props.attributes[#props.attributes + 1] = {
+							id = att.id or att.attribute_id or att.defindex,
+							value = att.value,
+							attribute_class = att.attribute_class,
+						}
+					end
+				end
+			end
+		end
+
+		local resolved = tf_item.ResolveInventoryImageForItemData(itemData, props)
+		if isstring(resolved) and resolved ~= "" then
+			return resolved
+		end
+	end
+
+	return istable(itemData) and itemData.image_inventory or nil
+end
+
 local function weaponHasSelectableAmmo(wep)
 	if not IsValid(wep) then return false end
 	if wep.Hidden then return false end
@@ -299,8 +334,14 @@ function PANEL:UpdateLoadout()
 			t:SetVisible(true)
 			local w = tf_items.ItemsByID[l.id]
 			if w then
-				if w.image_inventory then
-					t.itemImage = surface.GetTextureID(w.image_inventory)
+				local iconPath = resolveWeaponSelectionIconPath(l.ent, w)
+				if isstring(iconPath) and iconPath ~= "" then
+					local mat = Material(iconPath)
+					if mat and not mat:IsError() then
+						t.itemImage = surface.GetTextureID(iconPath)
+					else
+						t.itemImage = nil
+					end
 				else
 					t.itemImage = nil
 				end

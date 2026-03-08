@@ -187,7 +187,7 @@ function ENT:Think()
 		return false
 	end
 	
-	if GetConVar("tf_pyrovision"):GetBool() then
+	if TF2_IsPyrovisionEnabled(CLIENT and LocalPlayer() or self:GetOwner()) then
 		self.HitSound = Sound("Weapon_Rainblower.FireHit")
 		self.HitLoopSound = Sound("Weapon_Rainblower.FireHit")
 	end

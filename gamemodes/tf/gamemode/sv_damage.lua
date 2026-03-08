@@ -672,15 +672,18 @@ function GM:EntityTakeDamage(  ent, dmginfo )
 	end)
 	-- Friendly fire
 	if (attacker:IsPlayer() and (attacker:GetPlayerClass() == "giantblastsoldier" || attacker:GetPlayerClass() == "steelgauntletpusher")) then
-	
-		local dir = -ent:GetAimVector() * 45
-		local dir2 = dir:Angle()
-		dir2.p = math.Clamp(-dir2.p - 45,-90,90)
-		dir2 = dir2:Forward()
-		timer.Simple(0.1, function()
-			ent:SetVelocity((((-ent:GetAimVector() * 45) * 10) + Vector(0,0,245)) + dmginfo:GetDamageForce() * 45)
-		end)
-		ent:SetThrownByExplosion(true)
+		if ent.InCond and TF_COND_IMMUNE_TO_PUSHBACK and ent:InCond(TF_COND_IMMUNE_TO_PUSHBACK) then
+			dmginfo:SetDamageForce(Vector(0, 0, 0))
+		else
+			local dir = -ent:GetAimVector() * 45
+			local dir2 = dir:Angle()
+			dir2.p = math.Clamp(-dir2.p - 45,-90,90)
+			dir2 = dir2:Forward()
+			timer.Simple(0.1, function()
+				ent:SetVelocity((((-ent:GetAimVector() * 45) * 10) + Vector(0,0,245)) + dmginfo:GetDamageForce() * 45)
+			end)
+			ent:SetThrownByExplosion(true)
+		end
 	end
 
 
@@ -781,15 +784,18 @@ function GM:EntityTakeDamage(  ent, dmginfo )
 		end
 	end
 	if ent:IsTFPlayer() then
+		local immune_to_pushback = ent.InCond and TF_COND_IMMUNE_TO_PUSHBACK and ent:InCond(TF_COND_IMMUNE_TO_PUSHBACK)
 		-- Increased bullet force
-		if dmginfo:IsBulletDamage() then
+		if immune_to_pushback then
+			dmginfo:SetDamageForce(Vector(0, 0, 0))
+		elseif dmginfo:IsBulletDamage() then
 			dmginfo:SetDamageForce(dmginfo:GetDamageForce() * BulletForceMultiplier)
 		elseif dmginfo:IsExplosionDamage() then
 			dmginfo:SetDamageForce(dmginfo:GetDamageForce() * BlastForceMultiplier)
 		end  
 		
 		-- Overexaggerated explosion force
-		if (ent:IsNPC() or ent:IsPlayer()) and ent:ShouldReceiveDamageForce() and dmginfo:IsExplosionDamage() then
+		if not immune_to_pushback and (ent:IsNPC() or ent:IsPlayer()) and ent:ShouldReceiveDamageForce() and dmginfo:IsExplosionDamage() then
 			local force = dmginfo:GetDamageForce() * 0.025
 			if ent:IsPlayer() and attacker==ent then
 				-- Rocket jumping
@@ -854,7 +860,11 @@ function GM:EntityTakeDamage(  ent, dmginfo )
 	end
 	-- Increased explosion force
 	if dmginfo:IsExplosionDamage() then
-		dmginfo:SetDamageForce(dmginfo:GetDamageForce() * (inflictor.BlastForceMultiplier or 1) * BlastForceMultiplier)
+		if ent.InCond and TF_COND_IMMUNE_TO_PUSHBACK and ent:InCond(TF_COND_IMMUNE_TO_PUSHBACK) then
+			dmginfo:SetDamageForce(Vector(0, 0, 0))
+		else
+			dmginfo:SetDamageForce(dmginfo:GetDamageForce() * (inflictor.BlastForceMultiplier or 1) * BlastForceMultiplier)
+		end
 	end
 	
 	if gamemode.Call("ShouldCrit", ent, inflictor, attacker, hitgroup, dmginfo) then
@@ -900,6 +910,16 @@ function GM:EntityTakeDamage(  ent, dmginfo )
 				else
 					dmginfo:ScaleDamage(1)
 				end
+			end
+		end
+	end
+
+	if ent:IsTFPlayer() and ent.InCond and TF_COND_PREVENT_DEATH and ent:InCond(TF_COND_PREVENT_DEATH) then
+		local hp_after_damage = ent:Health() - dmginfo:GetDamage()
+		if hp_after_damage <= 0 and ent:Health() > 1 then
+			dmginfo:SetDamage(ent:Health() - 1)
+			if ent.RemoveCond then
+				ent:RemoveCond(TF_COND_PREVENT_DEATH)
 			end
 		end
 	end
@@ -1015,10 +1035,14 @@ function GM:EntityTakeDamage(  ent, dmginfo )
 		dmginfo:SetDamage(0)
 	end
 	if (ent:IsPlayer()) then
-		if (ent:IsMiniBoss()) then
-			dmginfo:SetDamageForce(((dmginfo:GetDamageForce() / ent:GetModelScale())) * 0.3)
+		if ent.InCond and TF_COND_IMMUNE_TO_PUSHBACK and ent:InCond(TF_COND_IMMUNE_TO_PUSHBACK) then
+			dmginfo:SetDamageForce(Vector(0, 0, 0))
 		else
-			dmginfo:SetDamageForce((dmginfo:GetDamageForce() / ent:GetModelScale()))
+			if (ent:IsMiniBoss()) then
+				dmginfo:SetDamageForce(((dmginfo:GetDamageForce() / ent:GetModelScale())) * 0.3)
+			else
+				dmginfo:SetDamageForce((dmginfo:GetDamageForce() / ent:GetModelScale()))
+			end
 		end
 	end
 end

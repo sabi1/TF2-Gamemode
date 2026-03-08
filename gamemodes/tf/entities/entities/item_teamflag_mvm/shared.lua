@@ -413,8 +413,13 @@ function ENT:Capture(activator, captureZone)
 	end
 
 	self:TriggerOutput("OnCapture", outputActivator)
-	if IsValid(captureZone) and captureZone.TriggerOutput then
-		captureZone:TriggerOutput("OnCapture", outputActivator)
+	if IsValid(outputActivator) and outputActivator.Team then
+		local teamNum = outputActivator:Team()
+		if teamNum == TEAM_RED then
+			self:TriggerOutput("OnCapTeam1", outputActivator)
+		elseif teamNum == TEAM_BLU then
+			self:TriggerOutput("OnCapTeam2", outputActivator)
+		end
 	end
 
 	self:Return(true)

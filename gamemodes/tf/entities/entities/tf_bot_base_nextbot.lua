@@ -151,6 +151,11 @@ local ITEM_TO_WEAPON_CLASS = {
 	fists = "tf_weapon_fists",
 }
 
+local CLASS_MODEL_ALIAS = {
+	heavyweapons = "heavy",
+	demo = "demoman",
+}
+
 local function classFromItemToken(token)
 	if token == "" then return nil end
 	if string.find(token, "medigun", 1, true) then return "tf_weapon_medigun" end
@@ -181,11 +186,12 @@ local function detectSlotForWeapon(className)
 	return 0
 end
 
-local function makeWeaponEntry(className)
+local function makeWeaponEntry(className, worldModel)
 	local slot = detectSlotForWeapon(className)
 	return {
 		__isFakeWeapon = true,
 		class = className,
+		worldModel = worldModel,
 		slot = slot,
 		IsMeleeWeapon = slot == 2,
 		IsSecondaryWeapon = slot == 1,
@@ -198,6 +204,77 @@ local function makeWeaponEntry(className)
 		GetClass = function(self) return self.class end,
 		GetSlot = function(self) return self.slot end,
 	}
+end
+
+local function findItemDataByName(rawName)
+	if not isstring(rawName) then return nil end
+	local trimmed = string.Trim(rawName)
+	if trimmed == "" then return nil end
+	local items = tf_items and tf_items.Items
+	if not istable(items) then return nil end
+
+	local direct = items[trimmed]
+	if istable(direct) then return direct end
+
+	local noThe = string.gsub(trimmed, "^[Tt][Hh][Ee]%s+", "")
+	if noThe ~= trimmed then
+		direct = items[noThe]
+		if istable(direct) then return direct end
+	end
+
+	local lower = string.lower(trimmed)
+	for _, item in pairs(items) do
+		if not istable(item) then continue end
+		local name = string.lower(tostring(item.name or ""))
+		local itemName = string.lower(tostring(item.item_name or ""))
+		if name == lower or itemName == lower then
+			return item
+		end
+	end
+
+	return nil
+end
+
+local function resolveModelPlayerForClass(itemData, className)
+	if not istable(itemData) then return nil end
+
+	local perClass = itemData.model_player_per_class
+	if istable(perClass) then
+		local cls = string.lower(tostring(className or "scout"))
+		local lookup = perClass[cls]
+			or perClass[CLASS_MODEL_ALIAS[cls] or ""]
+			or perClass[string.upper(cls)]
+			or perClass[string.upper(CLASS_MODEL_ALIAS[cls] or "")]
+		if isstring(lookup) and lookup ~= "" then
+			return lookup
+		end
+	end
+
+	if isstring(itemData.model_player) and itemData.model_player ~= "" then
+		return itemData.model_player
+	end
+
+	return nil
+end
+
+local function resolveWeaponWorldModel(weaponClass, modelOverride)
+	if isstring(modelOverride) and modelOverride ~= "" and util.IsValidModel(modelOverride) then
+		return modelOverride
+	end
+
+	local key = string.lower(tostring(weaponClass or ""))
+	local fromMap = WEAPON_WORLD_MODEL_BY_CLASS[key]
+	if isstring(fromMap) and util.IsValidModel(fromMap) then
+		return fromMap
+	end
+
+	local stored = weapons.GetStored and weapons.GetStored(key) or nil
+	local world = stored and stored.WorldModel or nil
+	if isstring(world) and world ~= "" and util.IsValidModel(world) then
+		return world
+	end
+
+	return nil
 end
 
 local function pickModelForClass(className, isMiniBoss)
@@ -354,6 +431,7 @@ function ENT:SetPlayerClass(className)
 	self.playerclass = self._tfClass
 	self:SetModel(pickModelForClass(self._tfClass, self:IsMiniBoss()))
 	self:SetSkin((self:Team() == TEAM_BLU or self:Team() == TF_TEAM_PVE_INVADERS) and 1 or 0)
+	self._wearableModelOverride = nil
 	self:BuildDefaultClassLoadout()
 	self:RefreshWeaponAttachment()
 	self:RefreshWearableAttachment()
@@ -436,11 +514,26 @@ function ENT:ApplyItemLoadout(items)
 	end
 	if not istable(items) then return end
 
+	local wearableModel = nil
+
 	for _, raw in ipairs(items) do
+		local rawText = tostring(raw or "")
+		local rawLower = string.lower(string.Trim(rawText))
+		local itemData = findItemDataByName(rawText)
 		local token = normalizeItemToken(raw)
-		local wc = classFromItemToken(token)
+		local wc = nil
+
+		if string.StartWith(rawLower, "tf_weapon_") then
+			wc = rawLower
+		elseif istable(itemData) and isstring(itemData.item_class) and string.StartWith(string.lower(itemData.item_class), "tf_weapon_") then
+			wc = string.lower(itemData.item_class)
+		else
+			wc = classFromItemToken(token)
+		end
+
 		if wc then
-			local entry = makeWeaponEntry(wc)
+			local worldModel = resolveModelPlayerForClass(itemData, self:GetPlayerClass())
+			local entry = makeWeaponEntry(wc, worldModel)
 			local replaced = false
 			for i, existing in ipairs(self._virtualWeapons) do
 				if tonumber(existing.slot) == tonumber(entry.slot) then
@@ -452,17 +545,33 @@ function ENT:ApplyItemLoadout(items)
 			if not replaced then
 				self._virtualWeapons[#self._virtualWeapons + 1] = entry
 			end
+		elseif not wearableModel and istable(itemData) then
+			local itemClass = string.lower(tostring(itemData.item_class or ""))
+			local slot = string.lower(tostring(itemData.item_slot or ""))
+			local isWearable = itemClass == "tf_wearable"
+				or string.find(itemClass, "wearable", 1, true) ~= nil
+				or slot == "head"
+				or slot == "misc"
+			if isWearable then
+				local mdl = resolveModelPlayerForClass(itemData, self:GetPlayerClass())
+				if isstring(mdl) and mdl ~= "" and util.IsValidModel(mdl) then
+					wearableModel = mdl
+				end
+			end
 		end
 	end
 
 	self._activeWeapon = self._virtualWeapons[1]
+	self._wearableModelOverride = wearableModel
 	self:RefreshWeaponAttachment()
+	self:RefreshWearableAttachment()
 end
 
 function ENT:RefreshWeaponAttachment()
 	local active = self:GetActiveWeapon()
 	local weaponClass = active and ((active.GetClass and active:GetClass()) or active.class) or nil
-	local model = WEAPON_WORLD_MODEL_BY_CLASS[string.lower(tostring(weaponClass or ""))]
+	local overrideModel = active and active.worldModel or nil
+	local model = resolveWeaponWorldModel(weaponClass, overrideModel)
 	if not model or not util.IsValidModel(model) then
 		if IsValid(self._weaponProp) then
 			self._weaponProp:Remove()
@@ -480,6 +589,8 @@ function ENT:RefreshWeaponAttachment()
 		prop:SetOwner(self)
 		prop:Spawn()
 		prop:Activate()
+		prop:SetMoveType(MOVETYPE_NONE)
+		prop:AddEffects(bit.bor(EF_BONEMERGE, EF_BONEMERGE_FASTCULL))
 		self._weaponProp = prop
 	else
 		self._weaponProp:SetModel(model)
@@ -496,7 +607,7 @@ end
 
 function ENT:RefreshWearableAttachment()
 	local cls = normalizeClassToken(self:GetPlayerClass())
-	local model = CLASS_WEARABLE_MODEL[cls]
+	local model = self._wearableModelOverride or CLASS_WEARABLE_MODEL[cls]
 	if not model or not util.IsValidModel(model) then
 		if IsValid(self._wearableProp) then
 			self._wearableProp:Remove()
@@ -514,6 +625,8 @@ function ENT:RefreshWearableAttachment()
 		prop:SetOwner(self)
 		prop:Spawn()
 		prop:Activate()
+		prop:SetMoveType(MOVETYPE_NONE)
+		prop:AddEffects(bit.bor(EF_BONEMERGE, EF_BONEMERGE_FASTCULL))
 		self._wearableProp = prop
 	else
 		self._wearableProp:SetModel(model)
@@ -526,6 +639,19 @@ function ENT:RefreshWearableAttachment()
 	self._wearableProp:SetParent(self)
 	self._wearableProp:SetLocalPos(Vector(0, 0, 0))
 	self._wearableProp:SetLocalAngles(Angle(0, 0, 0))
+end
+
+function ENT:Think()
+	if SERVER then
+		if IsValid(self._weaponProp) and self._weaponProp:GetParent() ~= self then
+			self:RefreshWeaponAttachment()
+		end
+		if IsValid(self._wearableProp) and self._wearableProp:GetParent() ~= self then
+			self:RefreshWearableAttachment()
+		end
+	end
+	self:NextThink(CurTime() + 0.25)
+	return true
 end
 
 function ENT:BodyUpdate()

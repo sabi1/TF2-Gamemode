@@ -97,6 +97,241 @@ local OBJECTIVE_CLASS = {
     sentrybuster = "sentrybuster",
 }
 
+local ROMEVISION_PROVIDER_ITEM_ID = 30065 -- The Hardy Laurel
+
+local ROME_PROMO_ITEM_IDS = {
+    30143, -- tw_demobot_armor
+    30144, -- tw_demobot_helmet
+    30145, -- tw_engineerbot_armor
+    30146, -- tw_engineerbot_helmet
+    30147, -- tw_heavybot_armor
+    30148, -- tw_heavybot_helmet
+    30149, -- tw_medibot_chariot
+    30150, -- tw_medibot_hat
+    30151, -- tw_pyrobot_armor
+    30152, -- tw_pyrobot_helmet
+    30153, -- tw_scoutbot_armor
+    30154, -- tw_scoutbot_hat
+    30155, -- tw_sniperbot_armor
+    30156, -- tw_sniperbot_helmet
+    30157, -- tw_soldierbot_armor
+    30158, -- tw_soldierbot_helmet
+    30159, -- tw_spybot_armor
+    30160, -- tw_spybot_hood
+    30161, -- tw_sentrybuster
+}
+
+local ROME_PROMO_BY_CLASS = {
+    scout = {30154, 30153},
+    sniper = {30156, 30155},
+    soldier = {30158, 30157},
+    demoman = {30144, 30143},
+    medic = {30150, 30149},
+    heavy = {30148, 30147},
+    pyro = {30152, 30151},
+    spy = {30160, 30159},
+    engineer = {30146, 30145},
+    sentrybuster = {30161},
+}
+
+local function NormalizeItemNameToken(name)
+    local text = string.lower(string.Trim(tostring(name or "")))
+    text = string.gsub(text, "^the%s+", "")
+    text = string.gsub(text, "%s+", " ")
+    return text
+end
+
+local function EntityHasItemIndex(ent, wantedId)
+    if not IsValid(ent) or not wantedId then return false end
+    if not isfunction(ent.GetTFItems) then return false end
+
+    for _, item in ipairs(ent:GetTFItems()) do
+        if not IsValid(item) then continue end
+        if item.ItemIndex and tonumber(item:ItemIndex()) == wantedId then
+            return true
+        end
+    end
+
+    return false
+end
+
+local function PlayerHasRomevisionProviderItem(ply)
+    if not IsValid(ply) then return false end
+
+    if EntityHasItemIndex(ply, ROMEVISION_PROVIDER_ITEM_ID) then
+        return true
+    end
+
+    if isfunction(ply.GetTFItems) then
+        for _, item in ipairs(ply:GetTFItems()) do
+            if not IsValid(item) then continue end
+            local data = item.GetItemData and item:GetItemData() or nil
+            local name = NormalizeItemNameToken(data and data.name)
+            if name == "hardy laurel" then
+                return true
+            end
+        end
+    end
+
+    for _, itemName in ipairs(ToArray(ply.ItemLoadout)) do
+        if NormalizeItemNameToken(itemName) == "hardy laurel" then
+            return true
+        end
+    end
+
+    return false
+end
+
+local function IsRomevisionAvailableForMvM()
+    local map = string.lower(game.GetMap() or "")
+    if not string.find(map, "mvm_", 1, true) then
+        return false
+    end
+
+    for _, ply in ipairs(player.GetHumans()) do
+        if IsValid(ply) and ply:Team() ~= TEAM_SPECTATOR and PlayerHasRomevisionProviderItem(ply) then
+            return true
+        end
+    end
+
+    return false
+end
+
+local function GetRomevisionProviderId(ply)
+    if not IsValid(ply) then return "" end
+    local steamId64 = ply.SteamID64 and ply:SteamID64() or nil
+    if isstring(steamId64) and steamId64 ~= "" and steamId64 ~= "0" then
+        return steamId64
+    end
+    return "ent:" .. tostring(ply:EntIndex())
+end
+
+local function GetRomevisionProviders()
+    local out = {}
+    local seen = {}
+
+    for _, ply in ipairs(player.GetHumans()) do
+        if not IsValid(ply) or ply:Team() == TEAM_SPECTATOR then continue end
+        if not PlayerHasRomevisionProviderItem(ply) then continue end
+
+        local id = GetRomevisionProviderId(ply)
+        if id == "" or seen[id] then continue end
+        seen[id] = true
+
+        out[#out + 1] = {
+            id = id,
+            name = ply:Nick(),
+            ent = ply,
+        }
+    end
+
+    return out
+end
+
+local function SendRomevisionOffer(target, providerId, playerName)
+    if not isstring(providerId) or providerId == "" then return end
+    if not isstring(playerName) or playerName == "" then return end
+
+    net.Start("TF_RomevisionOffer")
+        net.WriteString(providerId)
+        net.WriteString(playerName)
+    if IsValid(target) then
+        net.Send(target)
+    else
+        net.Broadcast()
+    end
+end
+
+local function SendCurrentRomevisionOffersToPlayer(target)
+    if not IsValid(target) then return end
+    if not IsRomevisionAvailableForMvM() then return end
+
+    for _, provider in ipairs(GetRomevisionProviders()) do
+        SendRomevisionOffer(target, provider.id, provider.name)
+    end
+end
+
+local function GetBotRomePromoItemIds(bot)
+    if not IsValid(bot) then return nil end
+
+    local objective = string.lower(tostring(bot.TF_MVM_Objective or ""))
+    if objective == "destroysentries" or objective == "sentrybuster" then
+        return ROME_PROMO_BY_CLASS.sentrybuster
+    end
+
+    return ROME_PROMO_BY_CLASS[NormalizeClass(bot:GetPlayerClass() or "")]
+end
+
+local function GiveBotPromoItem(bot, itemId)
+    if not IsValid(bot) or not itemId then return false end
+    if EntityHasItemIndex(bot, itemId) then return true end
+
+    local itemIdKey = tostring(itemId)
+
+    if bot.GiveItem then
+        bot:GiveItem(itemIdKey)
+        return EntityHasItemIndex(bot, itemId)
+    end
+
+    local itemData = tf_items and tf_items.ItemsByID and (tf_items.ItemsByID[itemId] or tf_items.ItemsByID[itemIdKey]) or nil
+    if itemData and bot.EquipInLoadout and isstring(itemData.name) and itemData.name ~= "" then
+        bot:EquipInLoadout(itemData.name)
+        return true
+    end
+
+    return false
+end
+
+local function ApplyRomevisionPromoToBot(bot)
+    if not IsValid(bot) or not bot.IsMVMRobot then return false end
+    if not IsRomevisionAvailableForMvM() then return false end
+
+    local itemIds = GetBotRomePromoItemIds(bot)
+    if not istable(itemIds) or #itemIds == 0 then return false end
+
+    local addedAny = false
+    for _, itemId in ipairs(itemIds) do
+        if GiveBotPromoItem(bot, itemId) then
+            addedAny = true
+        end
+    end
+
+    if addedAny then
+        bot.TF_MVM_RomevisionEquipped = true
+    end
+
+    return addedAny
+end
+
+local function RefreshMvMRomevisionState()
+    local available = IsRomevisionAvailableForMvM()
+    local previous = TF_MVM._RomevisionAvailable
+    local currentProviders = GetRomevisionProviders()
+    local currentProviderSet = {}
+
+    for _, provider in ipairs(currentProviders) do
+        currentProviderSet[provider.id] = provider.name
+    end
+
+    TF_MVM._RomevisionAvailable = available
+    SetGlobalBool("TF_MVM_RomevisionAvailable", available)
+
+    local previousProviderSet = TF_MVM._RomevisionProviders or {}
+    TF_MVM._RomevisionProviders = currentProviderSet
+
+    for providerId, playerName in pairs(currentProviderSet) do
+        if previousProviderSet[providerId] == nil then
+            SendRomevisionOffer(nil, providerId, playerName)
+        end
+    end
+
+    if available and previous ~= true and TF_MVM and TF_MVM.Runtime and TF_MVM.Runtime.ManagedBots then
+        for bot, _ in pairs(TF_MVM.Runtime.ManagedBots) do
+            ApplyRomevisionPromoToBot(bot)
+        end
+    end
+end
+
 local function IsPopStrictEnabled()
     local cv = GetConVar("tf_mvm_pop_strict")
     if not cv then return true end
@@ -463,6 +698,7 @@ end
 local function NormalizeAttrToken(token)
     token = TrimLower(token)
     token = string.gsub(token, "[%s_%-]", "")
+    token = string.gsub(token, "[^%w]", "")
     return token
 end
 
@@ -880,11 +1116,43 @@ local function ApplyCharacterAndItemAttributes(bot, def)
 end
 
 local function ApplyBotItems(bot, items)
+    local function ResolveLoadoutItemName(raw)
+        if not isstring(raw) then return nil end
+        local text = string.Trim(raw)
+        if text == "" then return nil end
+
+        text = string.gsub(text, "^[Tt][Hh][Ee]%s+", "")
+        local itemsDb = tf_items and tf_items.Items or nil
+        if not istable(itemsDb) then
+            return text
+        end
+
+        if itemsDb[text] then
+            return text
+        end
+
+        local lower = string.lower(text)
+        for key, item in pairs(itemsDb) do
+            if not istable(item) then continue end
+            local keyLower = string.lower(tostring(key or ""))
+            local nameLower = string.lower(tostring(item.name or ""))
+            local itemNameLower = string.lower(tostring(item.item_name or ""))
+            if keyLower == lower or nameLower == lower or itemNameLower == lower then
+                return tostring(key)
+            end
+        end
+
+        return text
+    end
+
     for _, item in ipairs(ToArray(items)) do
         if not IsValid(bot) then return end
 
-        if bot.EquipInLoadout then
-            bot:EquipInLoadout(string.Replace(item,"the ", ""))
+        if bot.EquipInLoadout and isstring(item) then
+            local itemName = ResolveLoadoutItemName(item)
+            if isstring(itemName) and itemName ~= "" then
+                bot:EquipInLoadout(itemName)
+            end
         elseif isstring(item) then
             local weaponClass = item
             if not string.StartWith(weaponClass, "tf_weapon_") then
@@ -1143,6 +1411,15 @@ local function GetValveAIBackend()
 end
 
 local function ShouldUseNextBotSpawner()
+    local forcePlayer = GetConVar("tf_mvm_force_player_bots")
+    if forcePlayer == nil then
+        CreateConVar("tf_mvm_force_player_bots", "1", {FCVAR_ARCHIVE, FCVAR_NOTIFY}, "Force MvM spawner to use player bots instead of tf_bot_base_nextbot.")
+        forcePlayer = GetConVar("tf_mvm_force_player_bots")
+    end
+    if forcePlayer and forcePlayer:GetBool() then
+        return false
+    end
+
     local enabled = GetConVar("tf_bot_valve_ai_enable")
     if enabled and not enabled:GetBool() then
         return false
@@ -1260,12 +1537,14 @@ function SPAWNER:SpawnTFBot(runtime, rawDef, spawnState, whereOverride, missionI
                 bot:RefreshWeaponAttachment()
             end
         end
+        ApplyRomevisionPromoToBot(bot)
         ApplyWeaponRestrictionSelection(bot, bot.TF_MVM_WeaponRestriction)
         ApplyTeleportToHintIfRequested(bot)
         -- POP support: apply CharacterAttributes and ItemAttributes to spawned bot weapons.
         ApplyCharacterAndItemAttributes(bot, appliedDef)
         timer.Simple(0, function()
             if IsValid(bot) then
+                ApplyRomevisionPromoToBot(bot)
                 ApplyCharacterAndItemAttributes(bot, appliedDef)
                 ApplyWeaponRestrictionSelection(bot, bot.TF_MVM_WeaponRestriction)
                 ClampDemoMvMMovement(bot)
@@ -1477,6 +1756,24 @@ function SPAWNER:SpawnMissionBot(runtime, missionDef, missionId)
     end
 
     return self:SpawnTFBot(runtime, botDef, nil, missionDef.Where, missionId)
+end
+
+do
+    local nextRefreshAt = 0
+
+    hook.Add("Think", "TF_MVM_RomevisionSync", function()
+        local now = CurTime()
+        if now < nextRefreshAt then return end
+        nextRefreshAt = now + 1
+        RefreshMvMRomevisionState()
+    end)
+
+    hook.Add("PlayerInitialSpawn", "TF_MVM_RomevisionInitialOffer", function(ply)
+        timer.Simple(2, function()
+            if not IsValid(ply) then return end
+            SendCurrentRomevisionOffersToPlayer(ply)
+        end)
+    end)
 end
 
 return SPAWNER

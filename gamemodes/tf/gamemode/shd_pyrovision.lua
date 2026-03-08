@@ -1,17 +1,116 @@
+TF_VISION_FILTER_PYRO = TF_VISION_FILTER_PYRO or 0x01
+TF_VISION_FILTER_ROME = TF_VISION_FILTER_ROME or 0x04
+
+local function GetSchemaAttributeValue(item, attributeClass)
+	if not istable(item) or not isstring(attributeClass) or attributeClass == "" then return nil end
+
+	local attrs = item.attributes_by_id or item.attributes
+	if not istable(attrs) then return nil end
+
+	for _, attr in pairs(attrs) do
+		if istable(attr) and attr.attribute_class == attributeClass and attr.value ~= nil then
+			return tonumber(attr.value) or attr.value
+		end
+	end
+
+	return nil
+end
+
+local function GetItemVisionOptInFlags(itemEnt)
+	if not IsValid(itemEnt) then return 0 end
+
+	local flags = 0
+	if isfunction(itemEnt.GetAttributeValue) then
+		flags = tonumber(itemEnt:GetAttributeValue("vision_opt_in_flags", 0)) or 0
+	end
+
+	if flags == 0 and isfunction(itemEnt.GetItemData) then
+		flags = tonumber(GetSchemaAttributeValue(itemEnt:GetItemData(), "vision_opt_in_flags")) or 0
+	end
+
+	return flags
+end
+
+local function GetObservedTarget(ply)
+	if not IsValid(ply) or not ply.IsPlayer or not ply:IsPlayer() then return nil end
+	if not ply.GetObserverTarget then return nil end
+	local target = ply:GetObserverTarget()
+	if IsValid(target) and target:IsPlayer() then
+		return target
+	end
+	return nil
+end
+
+function TF2_GetVisionFilterFlags(ply, options)
+	options = options or {}
+
+	local flags = 0
+	local manualPyrovision = GetConVar("tf_pyrovision")
+	if manualPyrovision and manualPyrovision:GetBool() and not options.ignoreManual then
+		flags = bit.bor(flags, TF_VISION_FILTER_PYRO)
+	end
+
+	if IsValid(ply) and ply.GetTFItems and not options.ignoreLoadout then
+		for _, item in ipairs(ply:GetTFItems()) do
+			flags = bit.bor(flags, GetItemVisionOptInFlags(item))
+		end
+	end
+
+	local romevisionOptIn = GetConVar("tf_romevision_opt_in")
+	if romevisionOptIn
+		and romevisionOptIn:GetBool()
+		and GetGlobalBool("TF_MVM_RomevisionAvailable", false)
+		and string.find(string.lower(game.GetMap() or ""), "mvm_", 1, true)
+	then
+		flags = bit.bor(flags, TF_VISION_FILTER_ROME)
+	end
+
+	if CLIENT and IsValid(ply) and ply == LocalPlayer() and not options.ignoreSpectator then
+		local observed = GetObservedTarget(ply)
+		if IsValid(observed) then
+			flags = bit.bor(flags, TF2_GetVisionFilterFlags(observed, {
+				ignoreSpectator = true,
+			}))
+		end
+	end
+
+	return flags
+end
+
+function TF2_IsPyrovisionEnabled(ply)
+	if not IsValid(ply) then
+		if CLIENT and IsValid(LocalPlayer()) then
+			ply = LocalPlayer()
+		end
+	end
+
+	return bit.band(TF2_GetVisionFilterFlags(ply), TF_VISION_FILTER_PYRO) ~= 0
+end
+
+function TF2_IsRomevisionEnabled(ply)
+	if not IsValid(ply) then
+		if CLIENT and IsValid(LocalPlayer()) then
+			ply = LocalPlayer()
+		end
+	end
+
+	return bit.band(TF2_GetVisionFilterFlags(ply), TF_VISION_FILTER_ROME) ~= 0
+end
+
 if CLIENT then
  
 	local Suffixes = {"rt", "lf", "up", "ft", "dn", "bk"}
 	local Skybox = GetConVarString("sv_skyname")
 	local Replacement = "rj/sky_pyroland_01" 
 	for k,v in pairs(Suffixes) do
-		if GetConVar("tf_pyrovision"):GetBool() then 
+		if TF2_IsPyrovisionEnabled(LocalPlayer()) then 
 			Material(Skybox..v):SetTexture("$basetexture", Replacement..v)
 		end
 	end
 	 
 	function replace(str,strb,text,rembump,texture2)
 	 
-		if GetConVar("tf_pyrovision"):GetBool() then 
+		if TF2_IsPyrovisionEnabled(LocalPlayer()) then 
 			local SourceMaterial = Material(str)
 			local ReplacementMaterial = Material(strb)
 			local D = ReplacementMaterial:GetTexture("$basetexture")

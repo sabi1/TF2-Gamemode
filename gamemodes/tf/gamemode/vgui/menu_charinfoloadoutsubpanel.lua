@@ -57,6 +57,8 @@ local LOADOUT_SLOT_COUNT = 7
 local TAUNT_SLOT_COUNT = 8
 local TAUNT_FORCED_SLOT_BASE = 100
 local ActiveTauntLoadoutPanel
+local getResolvedItemImagePath
+local getDecoratedDisplayName
 
 local function normalizeTauntLoadoutSplit(split)
 	local out = {}
@@ -244,8 +246,8 @@ local function openTauntLoadoutPanel(parent)
 		for i = 1, TAUNT_SLOT_COUNT do
 			local itemId = tonumber(tauntLoadout[i])
 			local item = itemId and itemsById[itemId] or nil
-			local displayName = item and (tf_lang.GetRaw(item.item_name) or item.name) or (tf_lang.GetRaw("Hud_Menu_Taunt_NoItem") or "No Item")
-			local imagePath = item and item.image_inventory or nil
+			local displayName = item and getDecoratedDisplayName(item, item.SteamProperties) or (tf_lang.GetRaw("Hud_Menu_Taunt_NoItem") or "No Item")
+			local imagePath = item and getResolvedItemImagePath(item, item.SteamProperties) or nil
 
 			local itemTex = surface.GetTextureID(imagePath or "")
 			if not imagePath or imagePath == "" then
@@ -397,9 +399,75 @@ local function getLocalizedTokenText(token)
 	return resolved
 end
 
+local function findPropertyAttributeByID(properties, attrID, fallback)
+	if not istable(properties) or not istable(properties.attributes) then return fallback end
+	local want = tonumber(attrID)
+	if not want then return fallback end
+
+	for _, pair in ipairs(properties.attributes) do
+		if istable(pair) and tonumber(pair[1]) == want then
+			return pair[2]
+		end
+	end
+
+	return fallback
+end
+
+getResolvedItemImagePath = function(item, properties)
+	if not istable(item) then return nil end
+	if tf_item and tf_item.ResolveInventoryImageForItemData then
+		local resolved = tf_item.ResolveInventoryImageForItemData(item, properties)
+		if isstring(resolved) and resolved ~= "" then
+			return resolved
+		end
+	end
+	if isstring(item.image_inventory) and item.image_inventory ~= "" then
+		return item.image_inventory
+	end
+	return nil
+end
+
+getDecoratedDisplayName = function(item, properties)
+	if not istable(item) then return "UNKNOWN ITEM" end
+	if istable(properties) and isstring(properties.custom_name) and properties.custom_name ~= "" then
+		return properties.custom_name
+	end
+
+	local baseName = getLocalizedTokenText(item.item_name) or item.name or "UNKNOWN ITEM"
+	local isWeapon = isstring(item.item_class) and string.StartWith(item.item_class, "tf_weapon_")
+	if not isWeapon then
+		return baseName
+	end
+
+	local paintkitID = tonumber(findPropertyAttributeByID(properties, 834, item.static_attrs and item.static_attrs.paintkit_proto_def_index))
+	local festive = tonumber(findPropertyAttributeByID(properties, 2053, 0)) or 0
+	local fullName = baseName
+
+	if paintkitID then
+		local paintName = nil
+		if tf_item and tf_item.GetPaintkitDisplayNameForItemData then
+			paintName = tf_item.GetPaintkitDisplayNameForItemData(item, properties)
+		end
+		if not isstring(paintName) or paintName == "" then
+			paintName = "Paintkit " .. tostring(paintkitID)
+		end
+		fullName = paintName .. " " .. fullName
+	end
+
+	if festive > 0 then
+		local festivePrefix = (tf_lang and tf_lang.GetRaw and tf_lang.GetRaw("ItemNameFestive", true)) or "Festivized "
+		if not isstring(festivePrefix) or festivePrefix == "" then
+			festivePrefix = "Festivized "
+		end
+		fullName = festivePrefix .. fullName
+	end
+
+	return fullName
+end
+
 local function getTooltipDisplayName(item)
 	if not istable(item) then return "UNKNOWN ITEM" end
-	return getLocalizedTokenText(item.item_name) or item.name or "UNKNOWN ITEM"
+	return getDecoratedDisplayName(item, item.SteamProperties)
 end
 
 local function getTooltipQuality(item)
@@ -412,13 +480,16 @@ end
 
 local function getTooltipLevelText(item)
 	if not istable(item) then return nil end
-	local level = tonumber(item.min_ilevel) or tonumber(item.item_level) or tonumber(item.max_ilevel) or 1
+	local level = tonumber(item.SteamProperties and item.SteamProperties.level) or tonumber(item.min_ilevel) or tonumber(item.item_level) or tonumber(item.max_ilevel) or 1
 	local typeName = getLocalizedTokenText(item.item_type_name) or (isstring(item.item_slot) and string.upper(string.sub(item.item_slot, 1, 1)) .. string.sub(item.item_slot, 2) .. " Item") or "Item"
 	return string.format("Level %d %s", math.floor(level), typeName)
 end
 
 local function getTooltipDescription(item)
 	if not istable(item) then return nil end
+	if item.SteamProperties and isstring(item.SteamProperties.custom_desc) and item.SteamProperties.custom_desc ~= "" then
+		return item.SteamProperties.custom_desc
+	end
 	return getLocalizedTokenText(item.item_description)
 end
 
@@ -427,7 +498,7 @@ local function makeLoadoutItemEntry(item)
 		return {"NONE", "Normal", surface.GetTextureID(""), {}, nil, nil, nil, nil}
 	end
 
-	local tex = surface.GetTextureID(isstring(item.image_inventory) and item.image_inventory or "")
+	local tex = surface.GetTextureID(getResolvedItemImagePath(item, item.SteamProperties) or "")
 	return {
 		getTooltipDisplayName(item),
 		getTooltipQuality(item),
@@ -438,6 +509,141 @@ local function makeLoadoutItemEntry(item)
 		getTooltipDescription(item),
 		nil,
 	}
+end
+
+local function getClientLoadoutSlotProperties(className, displaySlot)
+	if not istable(TFClientLoadoutProperties) or not isstring(className) then return nil end
+
+	local classProps = TFClientLoadoutProperties[className]
+	if not istable(classProps) then return nil end
+
+	local slotIndex = tonumber(displaySlot)
+	if className == "spy" then
+		if slotIndex == 1 then
+			slotIndex = 2
+		elseif slotIndex == 2 then
+			slotIndex = 1
+		end
+	end
+
+	return classProps[slotIndex]
+end
+
+local function getClientLoadoutSlotPropertiesRaw(className, slotIndex)
+	if not istable(TFClientLoadoutProperties) or not isstring(className) then return nil end
+	local classProps = TFClientLoadoutProperties[className]
+	if not istable(classProps) then return nil end
+	return classProps[tonumber(slotIndex)]
+end
+
+local function getPropertyAttributeByClass(properties, className, fallback)
+	if not istable(properties) or not istable(properties.attributes) or not isstring(className) then
+		return fallback
+	end
+
+	for _, pair in ipairs(properties.attributes) do
+		local attrID = istable(pair) and tonumber(pair[1]) or nil
+		if attrID and tf_items and tf_items.AttributesByID and istable(tf_items.AttributesByID[attrID]) then
+			local def = tf_items.AttributesByID[attrID]
+			if def.attribute_class == className then
+				return pair[2]
+			end
+		end
+	end
+
+	return fallback
+end
+
+local function decodeItemTintColor(raw)
+	local n = tonumber(raw)
+	if not n or n <= 0 then return nil end
+	n = math.floor(n)
+	if n > 0xFFFFFF then
+		n = bit.band(n, 0xFFFFFF)
+	end
+
+	local r = bit.band(bit.rshift(n, 16), 0xFF)
+	local g = bit.band(bit.rshift(n, 8), 0xFF)
+	local b = bit.band(n, 0xFF)
+	return Color(r, g, b, 255)
+end
+
+local function getUnusualParticleSystemFromProperties(properties)
+	if not istable(properties) then return nil end
+	local idx = tonumber(getPropertyAttributeByClass(properties, "set_attached_particle_static", nil))
+	if not idx then
+		idx = tonumber(getPropertyAttributeByClass(properties, "attach particle effect static", nil))
+	end
+	if not idx then return nil end
+	local def = tf_items and tf_items.Particles and tf_items.Particles[idx] or nil
+	if istable(def) and isstring(def.system) and def.system ~= "" then
+		return def.system
+	end
+	return nil
+end
+
+local function getFestiveAttachedModelForPreview(item, properties)
+	if not istable(item) or not istable(properties) then return nil end
+
+	local festive = tonumber(getPropertyAttributeByClass(properties, "is_festivized", 0)) or 0
+	if festive <= 0 then return nil end
+
+	local festiveModels = item.visuals and item.visuals.attached_models_festive or nil
+	if (not istable(festiveModels)) and tf_item and tf_item.ResolvePaintkitVisualsForData then
+		local paintkitVisuals = tf_item.ResolvePaintkitVisualsForData(item, properties)
+		festiveModels = paintkitVisuals and paintkitVisuals.attached_models_festive or nil
+	end
+	if not istable(festiveModels) then return nil end
+
+	local festiveEntry = festiveModels[0] or festiveModels["0"]
+	if not istable(festiveEntry) then
+		for _, candidate in pairs(festiveModels) do
+			if istable(candidate) and isstring(candidate.model) and candidate.model ~= "" then
+				festiveEntry = candidate
+				break
+			end
+		end
+	end
+
+	if istable(festiveEntry) and isstring(festiveEntry.model) and festiveEntry.model ~= "" then
+		return festiveEntry.model
+	end
+	return nil
+end
+
+local function applyDecoratedPanelVisual(panel, item, properties)
+	if not IsValid(panel) then return end
+
+	panel.FallbackModel = nil
+	panel.overridematerial = nil
+
+	if not istable(item) then return end
+
+	local resolvedImage = getResolvedItemImagePath(item, properties)
+	local hasResolvedIcon = false
+	if isstring(resolvedImage) and resolvedImage ~= "" then
+		local mat = Material(resolvedImage)
+		hasResolvedIcon = mat and not mat:IsError()
+	end
+
+	local materialOverride = nil
+	if tf_item and tf_item.ResolveMaterialOverrideForItemData then
+		materialOverride = tf_item.ResolveMaterialOverrideForItemData(item, properties, LocalPlayer())
+	end
+
+	local paintkitID = tonumber(getPropertyAttributeByClass(properties, "paintkit_proto_def_index", item.static_attrs and item.static_attrs.paintkit_proto_def_index))
+	local festive = tonumber(getPropertyAttributeByClass(properties, "is_festivized", 0)) or 0
+	local needsDecoratedHandling = (paintkitID and paintkitID > 0) or festive > 0 or (isstring(materialOverride) and materialOverride ~= "")
+
+	if not needsDecoratedHandling then return end
+	if hasResolvedIcon then return end
+
+	panel.FallbackModel = item.model_player or item.model_world
+	if isstring(materialOverride) and materialOverride ~= "" then
+		panel.overridematerial = materialOverride
+	end
+	panel.itemImage = surface.GetTextureID("backpack/weapons/c_models/c_bat")
+	panel.tooltip_image = panel.itemImage
 end
 
 local function makeLoadoutPlaceholder(label)
@@ -774,6 +980,11 @@ function PANEL:PerformLayout()
 	for k, v in ipairs(Items) do
 		local t = self.ItemPanels[k]
 		if IsValid(t) then
+			local slotProperties = getClientLoadoutSlotProperties(oldclass, k)
+			local slotItem = v[5]
+			local slotImagePath = getResolvedItemImagePath(slotItem, slotProperties or (slotItem and slotItem.SteamProperties))
+			local slotImage = surface.GetTextureID(slotImagePath or "")
+			local slotName = slotItem and getDecoratedDisplayName(slotItem, slotProperties or slotItem.SteamProperties) or nil
 			local x, y, xoffset = getSlotPanelLayout(k)
 			local unscaledTall = math.max(40, math.floor(slotTall / Scale))
 
@@ -784,18 +995,19 @@ function PANEL:PerformLayout()
 			t.text_ypos = math.max(32, math.floor(unscaledTall * 0.78))
 			t.text_xpos = 0
 			t.text_wide = math.max(80, math.floor(slotWide / Scale))
-			t.itemImage = v[3]
-			t.text = v[1]
+			t.itemImage = (slotImagePath and slotImage) or v[3]
+			t.text = slotName or v[1]
 			t.attributes = nil
 			t.tooltip_attributes = v[4]
-			t.tooltip_name = v[1]
-			t.tooltip_image = v[3]
+			t.tooltip_name = slotName or v[1]
+			t.tooltip_image = (slotImagePath and slotImage) or v[3]
 			t.tooltip_leveltext = v[6]
 			t.tooltip_description = v[7]
 			t.tooltip_flavor = v[8]
 			t.number = nil
 			t:SetQuality(v[2])
 			t:SetAttributePanel(self.AttributePanel, xoffset, tooltipOffsetY)
+			applyDecoratedPanelVisual(t, slotItem, slotProperties)
 
 			if not useSwappedLoadoutSlots then
 				if (k == 1) then
@@ -1024,48 +1236,109 @@ function PANEL:PerformLayout()
 		for name, wep in pairs(tf_items.Items) do
 			if istable(wep) then
 				if wep.id == tonumber(loadout[4]) then
+					local slotProps = getClientLoadoutSlotPropertiesRaw(oldclass, 4)
 					local wearableModel = getWearablePreviewModel(wep, oldclass)
 					if isstring(wearableModel) then
-
-						t:AddModel(3, wearableModel, {
+						local modelKeys = {
 							Parent = 1,
-						})
+						}
+						local tint = decodeItemTintColor(slotProps and getPropertyAttributeByClass(slotProps, "set_item_tint_rgb", nil) or nil)
+						if tint then
+							modelKeys.TintColor = tint
+						end
+						local unusual = getUnusualParticleSystemFromProperties(slotProps)
+						if unusual then
+							modelKeys.ParticleSystem = unusual
+						end
+						t:AddModel(3, wearableModel, modelKeys)
 					end
 
 				elseif wep.id == tonumber(loadout[5]) then
+					local slotProps = getClientLoadoutSlotPropertiesRaw(oldclass, 5)
 					local wearableModel = getWearablePreviewModel(wep, oldclass)
 					if isstring(wearableModel) then
-
-						t:AddModel(4, wearableModel, {
+						local modelKeys = {
 							Parent = 1,
-						})
+						}
+						local tint = decodeItemTintColor(slotProps and getPropertyAttributeByClass(slotProps, "set_item_tint_rgb", nil) or nil)
+						if tint then
+							modelKeys.TintColor = tint
+						end
+						local unusual = getUnusualParticleSystemFromProperties(slotProps)
+						if unusual then
+							modelKeys.ParticleSystem = unusual
+						end
+						t:AddModel(4, wearableModel, modelKeys)
 					end
 
 				elseif wep.id == tonumber(loadout[6]) then
+					local slotProps = getClientLoadoutSlotPropertiesRaw(oldclass, 6)
 					local wearableModel = getWearablePreviewModel(wep, oldclass)
 					if isstring(wearableModel) then
-
-						t:AddModel(5, wearableModel, {
+						local modelKeys = {
 							Parent = 1,
-						})
+						}
+						local tint = decodeItemTintColor(slotProps and getPropertyAttributeByClass(slotProps, "set_item_tint_rgb", nil) or nil)
+						if tint then
+							modelKeys.TintColor = tint
+						end
+						local unusual = getUnusualParticleSystemFromProperties(slotProps)
+						if unusual then
+							modelKeys.ParticleSystem = unusual
+						end
+						t:AddModel(5, wearableModel, modelKeys)
 					end
 
 				end
 				local oldclass2 = oldclass
 				if (oldclass == "spy") then
 					if wep.id == tonumber(loadout[2]) then
-
-						t:AddModel(2,wep.model_world or wep.model_player,{
+						local weaponProps = getClientLoadoutSlotPropertiesRaw(oldclass, 2)
+						local weaponKeys = {
 							Parent = 1,
-						})
+						}
+						if tf_item and tf_item.ResolveMaterialOverrideForItemData then
+							local matOverride = tf_item.ResolveMaterialOverrideForItemData(wep, weaponProps, LocalPlayer())
+							if isstring(matOverride) and matOverride ~= "" then
+								weaponKeys.MaterialOverride = matOverride
+							end
+						end
+						local unusual = getUnusualParticleSystemFromProperties(weaponProps)
+						if unusual then
+							weaponKeys.ParticleSystem = unusual
+						end
+						t:AddModel(2, wep.model_world or wep.model_player, weaponKeys)
+						local festiveModel = getFestiveAttachedModelForPreview(wep, weaponProps)
+						if isstring(festiveModel) and festiveModel ~= "" then
+							t:AddModel(6, festiveModel, {
+								Parent = 2,
+							})
+						end
 						t:StartAnimation(1,ACT_MP_STAND_SECONDARY)
 					end
 				else
 					if wep.id == tonumber(loadout[1]) then
-
-						t:AddModel(2,wep.model_world or wep.model_player,{
+						local weaponProps = getClientLoadoutSlotPropertiesRaw(oldclass, 1)
+						local weaponKeys = {
 							Parent = 1,
-						})
+						}
+						if tf_item and tf_item.ResolveMaterialOverrideForItemData then
+							local matOverride = tf_item.ResolveMaterialOverrideForItemData(wep, weaponProps, LocalPlayer())
+							if isstring(matOverride) and matOverride ~= "" then
+								weaponKeys.MaterialOverride = matOverride
+							end
+						end
+						local unusual = getUnusualParticleSystemFromProperties(weaponProps)
+						if unusual then
+							weaponKeys.ParticleSystem = unusual
+						end
+						t:AddModel(2, wep.model_world or wep.model_player, weaponKeys)
+						local festiveModel = getFestiveAttachedModelForPreview(wep, weaponProps)
+						if isstring(festiveModel) and festiveModel ~= "" then
+							t:AddModel(6, festiveModel, {
+								Parent = 2,
+							})
+						end
 						if (oldclass == "spy") then
 							t:StartAnimation(1,ACT_MP_STAND_BUILDING)
 						else
@@ -1658,7 +1931,7 @@ local function createBackpackPicker(title, oldclass, canEquipFn, onEquipFn)
 		model.text_wide = 150
 		model.text_ypos = 60
 		model.itemImage_low = nil
-		model.text = tf_lang.GetRaw(item.item_name) or item.name or "UNKNOWN ITEM"
+		model.text = getDecoratedDisplayName(item, item.SteamProperties)
 		model.centerytext = true
 
 		local quality = 0
@@ -1667,20 +1940,18 @@ local function createBackpackPicker(title, oldclass, canEquipFn, onEquipFn)
 		end
 		model:SetQuality(quality)
 
+		local resolvedImage = getResolvedItemImagePath(item, item.SteamProperties)
 		local invMat
-		if isstring(item.image_inventory) and item.image_inventory ~= "" then
-			invMat = Material(item.image_inventory)
+		if isstring(resolvedImage) and resolvedImage ~= "" then
+			invMat = Material(resolvedImage)
 		end
 		if (not invMat) or invMat:IsError() then
 			model.FallbackModel = item.model_player
 			model.itemImage = surface.GetTextureID("backpack/weapons/c_models/c_bat")
 		else
-			model.itemImage = surface.GetTextureID(item.image_inventory)
+			model.itemImage = surface.GetTextureID(resolvedImage)
 		end
-
-		if item.attributes and item.attributes["material override"] and item.attributes["material override"].value then
-			model.overridematerial = item.attributes["material override"].value
-		end
+		applyDecoratedPanelVisual(model, item, item.SteamProperties)
 
 		if istable(item.attributes) then
 			model.attributes = item.attributes
@@ -1804,6 +2075,155 @@ local function getSteamInventorySet()
 	return set, nil, tonumber(container and container.status)
 end
 
+local QualityNameByID = nil
+
+local function getQualityNameFromID(id)
+	local n = tonumber(id)
+	if not n then return nil end
+
+	if not istable(QualityNameByID) then
+		QualityNameByID = {}
+		for name, value in pairs(tf_items and tf_items.Qualities or {}) do
+			if isstring(name) and tonumber(value) then
+				QualityNameByID[tonumber(value)] = name
+			end
+		end
+	end
+
+	return QualityNameByID[n]
+end
+
+local function buildSteamItemPropertiesForMenu(itemData)
+	if not istable(itemData) then return nil end
+
+	local props = {}
+	local defindex = tonumber(itemData.defindex)
+	if defindex then props.defindex = defindex end
+
+	local quality = tonumber(itemData.quality)
+	if quality then props.quality = quality end
+
+	local level = tonumber(itemData.level)
+	if level then props.level = level end
+
+	if isstring(itemData.custom_name) and itemData.custom_name ~= "" then
+		props.custom_name = itemData.custom_name
+	end
+	if isstring(itemData.custom_desc) and itemData.custom_desc ~= "" then
+		props.custom_desc = itemData.custom_desc
+	end
+
+	if istable(itemData.attributes) then
+		local attrs = {}
+		for _, att in ipairs(itemData.attributes) do
+			if istable(att) then
+				local id = tonumber(att.defindex or att.attribute_class or att.id)
+				local attrDef = id and tf_items and tf_items.AttributesByID and tf_items.AttributesByID[id] or nil
+				local rawFloat = tonumber(att.float_value)
+				local rawValue = tonumber(att.value)
+				local value = nil
+
+				if attrDef and tonumber(attrDef.stored_as_integer) == 1 then
+					value = rawValue
+				elseif attrDef and attrDef.attribute_type == "string" then
+					value = att.value
+				elseif rawFloat ~= nil and (rawFloat == 0 or math.abs(rawFloat) > 0.000001) then
+					value = rawFloat
+				else
+					value = rawValue or rawFloat
+				end
+
+				if id and value ~= nil then
+					attrs[#attrs + 1] = { id, value }
+				end
+			end
+		end
+
+		if #attrs > 0 then
+			props.attributes = attrs
+		end
+	end
+
+	if next(props) == nil then return nil end
+	return props
+end
+
+local function getSteamInventoryInstances()
+	local raw = file.Read("tf_loadout.json", "DATA")
+	if not isstring(raw) or raw == "" then return nil, "missing_file" end
+	raw = string.gsub(raw, "^\239\187\191", "")
+	raw = string.Trim(raw)
+
+	local parsed = util.JSONToTable(raw)
+	if not istable(parsed) then
+		local wrapped = string.match(raw, "(%b{})")
+		if isstring(wrapped) and wrapped ~= "" then
+			parsed = util.JSONToTable(wrapped)
+		end
+	end
+	if not istable(parsed) then
+		return nil, "invalid_json"
+	end
+
+	local container = parsed.result
+	if not istable(container) then
+		container = parsed.response
+	end
+	if not istable(container) then
+		container = parsed
+	end
+
+	local items = container and container.items
+	if not istable(items) then
+		return nil, "missing_items", tonumber(container and container.status)
+	end
+
+	local instances = {}
+	for _, invItem in ipairs(items) do
+		if istable(invItem) then
+			local defindex = tonumber(invItem.defindex or invItem.itemdefid or invItem.item_def_index)
+			local baseItem = defindex and tf_items and tf_items.ItemsByID and tf_items.ItemsByID[defindex] or nil
+			if istable(baseItem) then
+				local item = table.Copy(baseItem)
+				item.InventoryInstanceID = tonumber(invItem.id or invItem.original_id)
+				item.SchemaID = tonumber(baseItem.id) or defindex
+				item.SteamItemData = invItem
+				item.SteamProperties = buildSteamItemPropertiesForMenu(invItem)
+
+				local qualityName = getQualityNameFromID(invItem.quality)
+				if isstring(qualityName) and qualityName ~= "" then
+					item.item_quality = qualityName
+				end
+
+				if item.SteamProperties and isstring(item.SteamProperties.custom_name) and item.SteamProperties.custom_name ~= "" then
+					item.item_name = item.SteamProperties.custom_name
+				end
+				if item.SteamProperties and isstring(item.SteamProperties.custom_desc) and item.SteamProperties.custom_desc ~= "" then
+					item.item_description = item.SteamProperties.custom_desc
+				end
+
+				instances[#instances + 1] = item
+			end
+		end
+	end
+
+	return instances, nil, tonumber(container and container.status)
+end
+
+local function syncClientLoadoutProperties(className, slot, properties)
+	if not isstring(className) then return end
+	local slotIndex = tonumber(slot)
+	if not slotIndex then return end
+
+	TFClientLoadoutProperties = TFClientLoadoutProperties or {}
+	TFClientLoadoutProperties[className] = TFClientLoadoutProperties[className] or {}
+	TFClientLoadoutProperties[className][slotIndex] = properties
+
+	net.Start("TF_UpdateLoadoutProperties")
+		net.WriteTable(TFClientLoadoutProperties)
+	net.SendToServer()
+end
+
 local function getWearableTargetSlot(className, itemId)
 	local convar = GetConVar("loadout_" .. className)
 	if not convar then return 4 end
@@ -1911,7 +2331,7 @@ function TF_OpenStandaloneBackpack(initialClassName, initialClassIndex, forcedLo
 	local loadout_rect = surface.GetTextureID("vgui/loadout_rect")
 	local loadout_rect_mouseover = surface.GetTextureID("vgui/loadout_rect_mouseover")
 	local activeClass = initialClassName or classIndexToName[initialClassIndex or 1] or "scout"
-	local steamSet
+	local steamInstances
 	local steamErr
 	local steamStatus
 	local currentPage = 1
@@ -1988,12 +2408,39 @@ function TF_OpenStandaloneBackpack(initialClassName, initialClassIndex, forcedLo
 		return nil
 	end
 
+	local function parseResLength(rawValue, baseLength)
+		if isnumber(rawValue) then
+			return rawValue
+		end
+		if not isstring(rawValue) then
+			return nil
+		end
+		local raw = string.Trim(rawValue)
+		local numeric = tonumber(raw)
+		if numeric then
+			return numeric
+		end
+		local fillOffset = string.match(raw, "^f([%+%-]?%d+%.?%d*)$")
+		if fillOffset then
+			return baseLength + tonumber(fillOffset)
+		end
+		return nil
+	end
+
 	local function resToFrame(rawValue, baseLength, frameLength, fallbackValue)
 		local basePos = parseResCoord(rawValue, baseLength)
 		if not basePos then
 			return fallbackValue
 		end
 		return math.floor((basePos / baseLength) * frameLength)
+	end
+
+	local function resLengthToScreen(rawValue, baseLength, screenLength, fallbackValue)
+		local baseLen = parseResLength(rawValue, baseLength)
+		if not baseLen then
+			return fallbackValue
+		end
+		return math.max(1, math.floor((baseLen / baseLength) * screenLength))
 	end
 
 	local backpackLayout = {
@@ -2016,10 +2463,10 @@ function TF_OpenStandaloneBackpack(initialClassName, initialClassIndex, forcedLo
 	}
 
 	local sw, sh = ScrW(), ScrH()
-	local frameX = math.max(18, math.floor(sw * 0.015))
-	local frameY = math.max(48, math.floor(sh * 0.105))
-	local frameW = sw - (frameX * 2)
-	local frameH = sh - frameY - math.max(18, math.floor(sh * 0.06))
+	local frameX = resToFrame(getResString(backpackResRoot, "xpos", "0"), 640, sw, math.max(18, math.floor(sw * 0.015)))
+	local frameY = resToFrame(getResString(backpackResRoot, "ypos", "0"), 480, sh, math.max(48, math.floor(sh * 0.105)))
+	local frameW = resLengthToScreen(getResString(backpackResRoot, "wide", "f0"), 640, sw, sw - (frameX * 2))
+	local frameH = resLengthToScreen(getResString(backpackResRoot, "tall", ""), 480, sh, sh - frameY - math.max(18, math.floor(sh * 0.06)))
 	local headerH = math.max(116, math.floor(frameH * 0.17))
 	local footerH = math.max(74, math.floor(frameH * 0.11))
 	local tabY = frameY - math.max(42, math.floor(24 * Scale))
@@ -2289,20 +2736,24 @@ function TF_OpenStandaloneBackpack(initialClassName, initialClassIndex, forcedLo
 
 	local matValidity = {}
 	local function hasValidInventoryImage(item)
-		if not istable(item) or not isstring(item.image_inventory) or item.image_inventory == "" then
+		if not istable(item) then
 			return false
 		end
-		if matValidity[item.image_inventory] ~= nil then
-			return matValidity[item.image_inventory]
+		local imagePath = getResolvedItemImagePath(item, item.SteamProperties)
+		if not isstring(imagePath) or imagePath == "" then
+			return false
 		end
-		local mat = Material(item.image_inventory)
+		if matValidity[imagePath] ~= nil then
+			return matValidity[imagePath]
+		end
+		local mat = Material(imagePath)
 		local ok = mat ~= nil and (not mat:IsError())
-		matValidity[item.image_inventory] = ok
+		matValidity[imagePath] = ok
 		return ok
 	end
 
 	local function getItemDisplayName(item)
-		return tf_lang.GetRaw(item.item_name) or item.name or "UNKNOWN ITEM"
+		return getTooltipDisplayName(item)
 	end
 
 	local function refreshLoadoutViewNow()
@@ -2380,6 +2831,10 @@ function TF_OpenStandaloneBackpack(initialClassName, initialClassIndex, forcedLo
 				ent:SetAngles(Angle(0, RealTime() * 18 % 360, 0))
 			end
 		end
+		local inspectMaterial = tf_item and tf_item.ResolveMaterialOverrideForItemData and tf_item.ResolveMaterialOverrideForItemData(item, item.SteamProperties, LocalPlayer()) or nil
+		if isstring(inspectMaterial) and inspectMaterial ~= "" and IsValid(modelPanel.Entity) then
+			modelPanel.Entity:SetMaterial(inspectMaterial)
+		end
 	end
 
 	local slotOrder = {
@@ -2405,6 +2860,7 @@ function TF_OpenStandaloneBackpack(initialClassName, initialClassIndex, forcedLo
 	local qualitySortRank = {
 		normal = 1,
 		unique = 2,
+		paintkitweapon = 2,
 		vintage = 3,
 		genuine = 4,
 		strange = 5,
@@ -2442,9 +2898,37 @@ function TF_OpenStandaloneBackpack(initialClassName, initialClassIndex, forcedLo
 			return Color(141, 130, 112, 255)
 		end
 
-		local qualityKey = "QualityColor" .. getQualityDisplayName(item)
-		if Colors and Colors[qualityKey] then
-			return Colors[qualityKey]
+		local function tryQualityColor(suffix)
+			if not Colors or not isstring(suffix) or suffix == "" then return nil end
+			local exact = "QualityColor" .. suffix
+			if Colors[exact] then return Colors[exact] end
+			local lower = "QualityColor" .. string.lower(suffix)
+			if Colors[lower] then return Colors[lower] end
+			local upperFirst = "QualityColor" .. string.upper(string.sub(suffix, 1, 1)) .. string.sub(suffix, 2)
+			if Colors[upperFirst] then return Colors[upperFirst] end
+			return nil
+		end
+
+		local qualityColor = tryQualityColor(getQualityDisplayName(item))
+		if qualityColor then
+			return qualityColor
+		end
+
+		local rarity = string.lower(tostring(item and item.item_rarity or ""))
+		local rarityToQuality = {
+			common = "rarity1",
+			uncommon = "rarity2",
+			rare = "rarity3",
+			mythical = "rarity4",
+			legendary = "rarity4",
+			ancient = "rarity4",
+		}
+		local rarityQuality = rarityToQuality[rarity]
+		if rarityQuality then
+			local rarityColor = tryQualityColor(rarityQuality)
+			if rarityColor then
+				return rarityColor
+			end
 		end
 		return Color(238, 210, 68, 255)
 	end
@@ -2464,7 +2948,7 @@ function TF_OpenStandaloneBackpack(initialClassName, initialClassIndex, forcedLo
 	end
 
 	function panel:BuildItems()
-		steamSet, steamErr, steamStatus = getSteamInventorySet()
+		steamInstances, steamErr, steamStatus = getSteamInventoryInstances()
 
 		for _, child in ipairs(itemicons:GetChildren()) do
 			child:Remove()
@@ -2474,19 +2958,23 @@ function TF_OpenStandaloneBackpack(initialClassName, initialClassIndex, forcedLo
 		end
 
 		local rawCandidates = {}
-		for _, item in pairs(tf_items.Items or {}) do
-			local defindex = istable(item) and tonumber(item.id) or nil
-			if istable(item) and defindex then
+		for _, item in ipairs(steamInstances or {}) do
+			if istable(item) then
 				if item.item_slot == "primary" or item.item_slot == "secondary" or item.item_slot == "melee" or item.item_slot == "head" or item.item_slot == "misc" or item.item_slot == "action" or item.item_slot == "taunt" or isActionSlotItem(item) or isTauntItem(item) then
-					local owned = steamSet and steamSet[defindex]
-					if owned or (showStockItems and isStockItem(item)) then
-						rawCandidates[#rawCandidates + 1] = item
-					end
+					rawCandidates[#rawCandidates + 1] = item
+				end
+			end
+		end
+		if showStockItems then
+			for _, item in pairs(tf_items.Items or {}) do
+				local defindex = istable(item) and tonumber(item.id) or nil
+				if istable(item) and defindex and isStockItem(item) then
+					rawCandidates[#rawCandidates + 1] = item
 				end
 			end
 		end
 
-		if not steamSet then
+		if not steamInstances then
 			local detail = ""
 			if steamErr == "missing_file" then
 				detail = "No Steam inventory cache found. Run 'tf_merge_loadout' first."
@@ -2529,13 +3017,13 @@ function TF_OpenStandaloneBackpack(initialClassName, initialClassIndex, forcedLo
 			local dedupById = {}
 			local dedupByFallback = {}
 			for _, item in ipairs(rawCandidates) do
-				local id = tonumber(item.id)
+				local id = tonumber(item.InventoryInstanceID or item.id)
 				local key
 				if id then
 					key = "id:" .. tostring(id)
 				else
 					local nameKey = string.lower(getItemDisplayName(item))
-					key = "fallback:" .. nameKey .. "|" .. tostring(item.image_inventory or "")
+					key = "fallback:" .. nameKey .. "|" .. tostring(getResolvedItemImagePath(item, item.SteamProperties) or "")
 				end
 
 				local existing = dedupById[key] or dedupByFallback[key]
@@ -2745,18 +3233,20 @@ function TF_OpenStandaloneBackpack(initialClassName, initialClassIndex, forcedLo
 
 			model:SetQuality(getQualityDisplayName(item))
 
+			local resolvedImage = getResolvedItemImagePath(item, item.SteamProperties)
 			local invMat
-			if isstring(item.image_inventory) and item.image_inventory ~= "" then
-				invMat = Material(item.image_inventory)
+			if isstring(resolvedImage) and resolvedImage ~= "" then
+				invMat = Material(resolvedImage)
 			end
 			if (not invMat) or invMat:IsError() then
 				model.FallbackModel = item.model_player
 				model.itemImage = surface.GetTextureID("backpack/weapons/c_models/c_bat")
 				model.tooltip_image = model.itemImage
 			else
-				model.itemImage = surface.GetTextureID(item.image_inventory)
+				model.itemImage = surface.GetTextureID(resolvedImage)
 				model.tooltip_image = model.itemImage
 			end
+			applyDecoratedPanelVisual(model, item, item.SteamProperties)
 
 			local compatible = classCanUseItem(item, activeClass)
 			local slotCompatible = forcedSlot == nil or forcedSlot == false
@@ -2834,7 +3324,8 @@ function TF_OpenStandaloneBackpack(initialClassName, initialClassIndex, forcedLo
 				if tauntForcedSlot then
 					updateTauntLoadout(tauntForcedSlot, item.id, activeClass)
 				else
-					updateLoadout(slot, item.id, true, activeClass)
+					updateLoadout(slot, item.SchemaID or item.id, true, activeClass)
+					syncClientLoadoutProperties(activeClass, slot, item.SteamProperties)
 				end
 				surface.PlaySound(item.mouse_pressed_sound or "ui/item_hat_pickup.wav")
 				refreshLoadoutViewNow()

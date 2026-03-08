@@ -201,6 +201,8 @@ function ENT:SetAndResumeTimer(sec, setmax)
 	self.TimerLastUpdated = CurTime()
 	self.TimerPaused = nil
 	
+	self:BroadcastKothTimerState()
+
 	if self==GAMEMODE.CurrentHUDTimer then
 		umsg.Start("TF_SetAndResumeTimer")
 			umsg.Float(sec)
@@ -221,6 +223,8 @@ function ENT:SetAndResumeTimer2(sec, setmax)
 	self.TimerReference = sec
 	self.TimerLastUpdated = CurTime()
 	self.TimerPaused = nil
+
+	self:BroadcastKothTimerState()
 	
 	if self==GAMEMODE.CurrentHUDTimer then
 		umsg.Start("TF_SetAndResumeTimerWaiting")
@@ -241,6 +245,8 @@ function ENT:SetAndPauseTimer(sec, setmax)
 	sec = math.Clamp(sec, 0, maxLen)
 	
 	self.TimerPaused = sec
+
+	self:BroadcastKothTimerState()
 	
 	if self==GAMEMODE.CurrentHUDTimer then
 		umsg.Start("TF_SetAndPauseTimer")
@@ -537,9 +543,91 @@ function ENT:Input_SetMaxTime(activator, caller, data)
 end
 
 function ENT:OnRemove()
+	self:BroadcastKothTimerRemoved()
+
 	umsg.Start("TF_RemoveTimer")
 	umsg.End()
 end
+
+function ENT:GetKothTimerTeam()
+	if not string.StartWith(string.lower(game.GetMap() or ""), "koth_") then
+		return nil
+	end
+
+	local props = self.Properties or {}
+	local teamNum = tonumber(props.teamnum or props.team)
+	if teamNum == TEAM_RED or teamNum == TEAM_BLU then
+		return teamNum
+	end
+
+	local name = string.lower(self:GetName() or "")
+	if string.find(name, "red", 1, true) then
+		return TEAM_RED
+	end
+	if string.find(name, "blue", 1, true) or string.find(name, "blu", 1, true) then
+		return TEAM_BLU
+	end
+
+	return nil
+end
+
+function ENT:BroadcastKothTimerState(recipient)
+	local teamNum = self:GetKothTimerTeam()
+	if not teamNum then return end
+
+	local ref = tonumber(self.TimerPaused or self.TimerReference or 0) or 0
+	local maxTime = tonumber(self.TimerLength or self.MaxLength or ref) or ref
+	if not isnumber(maxTime) or maxTime <= 0 or maxTime >= math.huge then
+		maxTime = ref
+	end
+
+	umsg.Start("TF_KothTimerState", recipient)
+		umsg.Char(teamNum)
+		umsg.Float(ref)
+		umsg.Float(maxTime)
+		umsg.Bool(self.TimerPaused ~= nil)
+		umsg.Bool(self.IsSetupPhase and true or false)
+		umsg.Bool(self.WaitingForPlayers and true or false)
+	umsg.End()
+end
+
+function ENT:BroadcastKothTimerRemoved(recipient)
+	local teamNum = self:GetKothTimerTeam()
+	if not teamNum then return end
+
+	umsg.Start("TF_KothTimerRemoved", recipient)
+		umsg.Char(teamNum)
+	umsg.End()
+end
+
+local function SyncKothTimersToPlayer(ply)
+	if not IsValid(ply) or not ply:IsPlayer() then return end
+	if not string.StartWith(string.lower(game.GetMap() or ""), "koth_") then return end
+
+	for _, timerEnt in ipairs(ents.FindByClass("team_round_timer")) do
+		if IsValid(timerEnt) and timerEnt.BroadcastKothTimerState then
+			timerEnt:BroadcastKothTimerState(ply)
+		end
+	end
+end
+
+hook.Add("PlayerInitialSpawn", "TF_KothTimerSync_InitialSpawn", function(ply)
+	timer.Simple(1.0, function()
+		SyncKothTimersToPlayer(ply)
+	end)
+end)
+
+hook.Add("PlayerSpawn", "TF_KothTimerSync_Spawn", function(ply)
+	timer.Simple(0.25, function()
+		SyncKothTimersToPlayer(ply)
+	end)
+end)
+
+hook.Add("OnPlayerChangedTeam", "TF_KothTimerSync_TeamChange", function(ply)
+	timer.Simple(0.25, function()
+		SyncKothTimersToPlayer(ply)
+	end)
+end)
 function ENT:Input_AutoCountdown(activator, caller, data)
 	self.AutoCountdown = (tonumber(data)==1)
 end

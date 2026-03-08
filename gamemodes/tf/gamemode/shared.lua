@@ -136,6 +136,164 @@ do
 end
 
 do
+	local function StartsWithMapPrefix(map, prefix)
+		return string.StartWith(map, prefix)
+	end
+
+	local hudModeDetectCache = {
+		nextProbeAt = 0,
+		lastMode = "unknown",
+	}
+
+	local function HasClass(className)
+		if not ents or not ents.FindByClass then return false end
+		local found = ents.FindByClass(className)
+		return istable(found) and #found > 0
+	end
+
+	local function DetectHudModeFromEntities()
+		-- Order matters: pick the most specific logic first.
+		if HasClass("tf_logic_mann_vs_machine") or HasClass("info_populator") or HasClass("item_teamflag_mvm") then
+			return "mvm"
+		end
+		if HasClass("tf_logic_koth") then
+			return "koth"
+		end
+		if HasClass("passtime_logic") or HasClass("trigger_passtime_ball") or HasClass("info_passtime_ball_spawn") then
+			return "passtime"
+		end
+		if HasClass("tf_logic_player_destruction") then
+			return "pd"
+		end
+		if HasClass("tf_logic_robot_destruction") then
+			return "rd"
+		end
+		if HasClass("team_train_watcher") or HasClass("tf_logic_multiple_escort") then
+			return "payload"
+		end
+		if HasClass("tf_logic_arena") then
+			return "arena"
+		end
+		if HasClass("tf_logic_hybrid_ctf_cp") then
+			return "cp"
+		end
+		if HasClass("team_control_point_master") or HasClass("tf_logic_cp_timer") then
+			return "cp"
+		end
+		if HasClass("item_teamflag") then
+			return "ctf"
+		end
+		return nil
+	end
+
+	local function DetectHudModeFromMapName()
+		local map = string.lower(game.GetMap() or "")
+		if StartsWithMapPrefix(map, "koth_") then return "koth" end
+		if StartsWithMapPrefix(map, "cp_") then return "cp" end
+		if StartsWithMapPrefix(map, "tc_") then return "cp" end
+		if StartsWithMapPrefix(map, "ctf_") then return "ctf" end
+		if StartsWithMapPrefix(map, "pl_") or StartsWithMapPrefix(map, "plr_") then return "payload" end
+		if StartsWithMapPrefix(map, "arena_") then return "arena" end
+		if StartsWithMapPrefix(map, "pass_") then return "passtime" end
+		if StartsWithMapPrefix(map, "pd_") then return "pd" end
+		if StartsWithMapPrefix(map, "rd_") then return "rd" end
+		if StartsWithMapPrefix(map, "sd_") then return "sd" end
+		if StartsWithMapPrefix(map, "mvm_") then return "mvm" end
+		return "unknown"
+	end
+
+	-- Unified HUD mode resolver used by client HUD panels.
+	-- This keeps mode-specific RES/HUD selection consistent across implemented and upcoming modes.
+	function TF_GetHudGameMode(forceRefresh)
+		local now = CurTime and CurTime() or 0
+		if not forceRefresh and hudModeDetectCache.nextProbeAt > now and hudModeDetectCache.lastMode ~= "unknown" then
+			return hudModeDetectCache.lastMode
+		end
+		hudModeDetectCache.nextProbeAt = now + 2
+
+		local mode = DetectHudModeFromEntities()
+		if not mode and TF_IsMvMMap and TF_IsMvMMap(forceRefresh) then
+			mode = "mvm"
+		end
+		if not mode then
+			mode = DetectHudModeFromMapName()
+		end
+
+		hudModeDetectCache.lastMode = mode or "unknown"
+		return hudModeDetectCache.lastMode
+	end
+
+	function TF_IsControlPointHudMode(forceRefresh)
+		local mode = TF_GetHudGameMode(forceRefresh)
+		return mode == "cp" or mode == "koth" or mode == "arena"
+	end
+
+	function TF_IsCtfHudMode(forceRefresh)
+		return TF_GetHudGameMode(forceRefresh) == "ctf"
+	end
+
+	function TF_IsPayloadHudMode(forceRefresh)
+		return TF_GetHudGameMode(forceRefresh) == "payload"
+	end
+
+	local HUD_RES_BY_MODE = {
+		cp = {
+			objectiveStatus = "resource/ui/hudobjectivestatus.res",
+			controlPointIcon = "resource/ui/controlpointicon.res",
+			controlPointProgress = "resource/ui/controlpointprogressbar.res",
+			roundTimer = "resource/ui/hudobjectivetimepanel.res",
+		},
+		koth = {
+			objectiveStatus = "resource/ui/hudobjectivestatus.res",
+			controlPointIcon = "resource/ui/controlpointicon.res",
+			controlPointProgress = "resource/ui/controlpointprogressbar.res",
+			roundTimer = "resource/ui/hudobjectivetimepanel.res",
+			kothTimer = "resource/ui/hudobjectivekothtimepanel.res",
+		},
+		ctf = {
+			flagPanel = "resource/ui/hudobjectiveflagpanel.res",
+			roundTimer = "resource/ui/hudobjectivetimepanel.res",
+		},
+		payload = {
+			escort = "resource/ui/objectivestatusescort.res",
+			multiEscort = "resource/ui/objectivestatusmultipleescort.res",
+			roundTimer = "resource/ui/hudobjectivetimepanel.res",
+		},
+		mvm = {
+			wave = "resource/ui/wavestatuspanel.res",
+			status = "resource/ui/hudmannvsmachinestatus.res",
+			tournament = "resource/ui/hudtournament.res",
+			tournamentSetup = "resource/ui/hudtournamentsetup.res",
+		},
+		-- Prepared entries for modes still being implemented.
+		passtime = {
+			objective = "resource/ui/hudpasstime.res",
+			ballStatus = "resource/ui/hudpasstimeballstatus.res",
+		},
+		pd = {
+			objective = "resource/ui/hudobjectiveplayerdestruction.res",
+		},
+		rd = {
+			objective = "resource/ui/hudobjectiverobotdestruction.res",
+			status = "resource/ui/robotdestructionstatus.res",
+		},
+		arena = {
+			playerCount = "resource/ui/hudarenaplayercount.res",
+			capCountdown = "resource/ui/hudarenacappointcountdown.res",
+		},
+	}
+
+	function TF_GetHudResPath(mode, key, fallback)
+		mode = tostring(mode or TF_GetHudGameMode() or "unknown")
+		local modeMap = HUD_RES_BY_MODE[mode]
+		if modeMap and modeMap[key] then
+			return modeMap[key]
+		end
+		return fallback
+	end
+end
+
+do
 	local PLAYER = FindMetaTable("Player")
 	if PLAYER and PLAYER.Nick and not PLAYER._TFBotDisplayNamePatched then
 		local rawNick = PLAYER.Nick
@@ -1751,6 +1909,8 @@ CreateConVar( "tf_enable_server_footsteps", "0", {FCVAR_SERVER_CAN_EXECUTE, FCVA
 CreateConVar( "civ2_randomizer", "0", {FCVAR_SERVER_CAN_EXECUTE, FCVAR_REPLICATED, FCVAR_NOTIFY, FCVAR_ARCHIVE}, "Randomize sounds and NPCs" )
 CreateConVar( "tf_use_hl_hull_size", "0", {FCVAR_SERVER_CAN_EXECUTE, FCVAR_NOTIFY, FCVAR_ARCHIVE}, "Whether or not players use the HL2 hull size found on coop." ) 
 CreateConVar( "tf_pyrovision", "0", {FCVAR_SERVER_CAN_EXECUTE, FCVAR_NOTIFY, FCVAR_ARCHIVE}, "Whether or not pyrovision may be enabled" )
+CreateConVar( "tf_romevision_opt_in", "0", {FCVAR_SERVER_CAN_EXECUTE, FCVAR_NOTIFY, FCVAR_ARCHIVE}, "Enable Romevision in Mann vs. Machine mode when available." )
+CreateConVar( "tf_romevision_skip_prompt", "0", {FCVAR_SERVER_CAN_EXECUTE, FCVAR_NOTIFY, FCVAR_ARCHIVE}, "If nonzero, skip the prompt about sharing Romevision." )
 CreateConVar( "tf_kill_on_change_class", "1", {FCVAR_SERVER_CAN_EXECUTE, FCVAR_NOTIFY, FCVAR_ARCHIVE}, "Whether or not players will die if they change class." )
 CreateConVar( "tf_flashlight", "1", {FCVAR_SERVER_CAN_EXECUTE, FCVAR_NOTIFY, FCVAR_ARCHIVE}, "Whether or not players will have a flashlight as a TF2 Class" )
 CreateConVar( "tf_muselk_zombies", "0", {FCVAR_SERVER_CAN_EXECUTE, FCVAR_NOTIFY, FCVAR_ARCHIVE}, "Zombies")
@@ -1786,7 +1946,509 @@ CreateConVar( "civ2_enable_be_the_bosses", "0", {FCVAR_SERVER_CAN_EXECUTE, FCVAR
 hook.Add( "EntityEmitSound", "TimeWarpSounds", function( t )
 end )
 
-concommand.Add("tf_spydisguise", function(ply, cmd)
+local TF_SPY_DISGUISE_CLASSES = {
+	{ id = 1, name = "scout", display = "Scout" },
+	{ id = 2, name = "soldier", display = "Soldier" },
+	{ id = 3, name = "pyro", display = "Pyro" },
+	{ id = 4, name = "demoman", display = "Demoman" },
+	{ id = 5, name = "heavy", display = "Heavy" },
+	{ id = 6, name = "engineer", display = "Engineer" },
+	{ id = 7, name = "medic", display = "Medic" },
+	{ id = 8, name = "sniper", display = "Sniper" },
+	{ id = 9, name = "spy", display = "Spy" },
+}
+
+local TF_SPY_FALLBACK_NAMES = {
+	"Jeremy",
+	"Jane",
+	"Mundy",
+	"Ludwig",
+	"Dell",
+	"Misha",
+	"Tavish",
+	"Beatrice",
+	"Archibald",
+	"Charlie",
+	"Alex",
+	"Taylor",
+	"Morgan",
+	"Sam",
+}
+
+local TF_SPY_CLASS_HEALTH = {
+	scout = 125,
+	soldier = 200,
+	pyro = 175,
+	demoman = 175,
+	heavy = 300,
+	engineer = 125,
+	medic = 150,
+	sniper = 125,
+	spy = 125,
+}
+
+local TF_SPY_DISGUISE_FALLBACK_MODELS = {
+	scout = {
+		weapons = {
+			"models/weapons/c_models/c_scattergun.mdl",
+			"models/weapons/c_models/c_pistol.mdl",
+			"models/weapons/c_models/c_bat.mdl",
+		},
+		cosmetics = {
+			"models/player/items/scout/scout_cap.mdl",
+			"models/player/items/scout/scout_ttg_max_pistol.mdl",
+			"models/player/items/scout/scout_fedora.mdl",
+		},
+	},
+	soldier = {
+		weapons = {
+			"models/weapons/w_models/w_rocketlauncher.mdl",
+			"models/weapons/c_models/c_shotgun/c_shotgun.mdl",
+			"models/weapons/c_models/c_shovel.mdl",
+		},
+		cosmetics = {
+			"models/player/items/soldier/soldier_helmet.mdl",
+			"models/player/items/soldier/soldier_hat.mdl",
+			"models/player/items/soldier/soldier_spartan.mdl",
+		},
+	},
+	pyro = {
+		weapons = {
+			"models/weapons/c_models/c_flamethrower/c_flamethrower.mdl",
+			"models/weapons/c_models/c_shotgun/c_shotgun.mdl",
+			"models/weapons/c_models/c_fireaxe_pyro/c_fireaxe_pyro.mdl",
+		},
+		cosmetics = {
+			"models/player/items/pyro/pyro_hat.mdl",
+			"models/player/items/pyro/pyro_headgear.mdl",
+			"models/player/items/pyro/attendant_demo.mdl",
+		},
+	},
+	demoman = {
+		weapons = {
+			"models/weapons/w_models/w_grenadelauncher.mdl",
+			"models/weapons/w_models/w_stickybomb_launcher.mdl",
+			"models/weapons/c_models/c_bottle/c_bottle.mdl",
+		},
+		cosmetics = {
+			"models/player/items/demo/demo_hat.mdl",
+			"models/player/items/demo/demo_afro.mdl",
+			"models/player/items/demo/demo_hood.mdl",
+		},
+	},
+	heavy = {
+		weapons = {
+			"models/weapons/c_models/c_minigun/c_minigun.mdl",
+			"models/weapons/c_models/c_shotgun/c_shotgun.mdl",
+			"models/weapons/c_models/c_fists/c_fists.mdl",
+		},
+		cosmetics = {
+			"models/player/items/heavy/heavy_hat.mdl",
+			"models/player/items/heavy/heavy_ushanka.mdl",
+			"models/player/items/heavy/heavy_big_chief.mdl",
+		},
+	},
+	engineer = {
+		weapons = {
+			"models/weapons/c_models/c_shotgun/c_shotgun.mdl",
+			"models/weapons/c_models/c_pistol/c_pistol.mdl",
+			"models/weapons/c_models/c_wrench/c_wrench.mdl",
+		},
+		cosmetics = {
+			"models/player/items/engineer/engineer_hat.mdl",
+			"models/player/items/engineer/engineer_traincap.mdl",
+			"models/player/items/engineer/engineer_lamp_hat.mdl",
+		},
+	},
+	medic = {
+		weapons = {
+			"models/weapons/c_models/c_syringegun/c_syringegun.mdl",
+			"models/weapons/c_models/c_medigun/c_medigun.mdl",
+			"models/weapons/c_models/c_bonesaw/c_bonesaw.mdl",
+		},
+		cosmetics = {
+			"models/player/items/medic/medic_hat.mdl",
+			"models/player/items/medic/medic_winterhat.mdl",
+			"models/player/items/medic/medic_beret.mdl",
+		},
+	},
+	sniper = {
+		weapons = {
+			"models/weapons/c_models/c_sniperrifle/c_sniperrifle.mdl",
+			"models/weapons/c_models/c_smg/c_smg.mdl",
+			"models/weapons/c_models/c_club/c_club.mdl",
+		},
+		cosmetics = {
+			"models/player/items/sniper/sniper_hat.mdl",
+			"models/player/items/sniper/sniper_jawguard.mdl",
+			"models/player/items/sniper/sniper_davy_crockett.mdl",
+		},
+	},
+	spy = {
+		weapons = {
+			"models/weapons/c_models/c_revolver/c_revolver.mdl",
+			"models/weapons/c_models/c_knife/c_knife.mdl",
+			"models/weapons/c_models/c_watch/c_watch.mdl",
+		},
+		cosmetics = {
+			"models/player/items/spy/spy_hat.mdl",
+			"models/player/items/spy/spy_fez.mdl",
+			"models/player/items/spy/spy_fedora.mdl",
+		},
+	},
+}
+
+local function tf_spy_pick_valid_random_model(models)
+	if not istable(models) then return "" end
+	local candidates = {}
+	for _, mdl in ipairs(models) do
+		if isstring(mdl) and mdl ~= "" and util.IsValidModel(mdl) then
+			candidates[#candidates + 1] = mdl
+		end
+	end
+	if #candidates == 0 then return "" end
+	return table.Random(candidates) or ""
+end
+
+local function tf_spy_pick_valid_random_models(models, count)
+	if not istable(models) then return {} end
+	local pool = {}
+	for _, mdl in ipairs(models) do
+		if isstring(mdl) and mdl ~= "" and util.IsValidModel(mdl) then
+			pool[#pool + 1] = mdl
+		end
+	end
+	if #pool == 0 then return {} end
+	local out = {}
+	local want = math.min(math.max(tonumber(count) or 0, 0), #pool)
+	for i = 1, want do
+		local idx = math.random(1, #pool)
+		out[#out + 1] = table.remove(pool, idx)
+	end
+	return out
+end
+
+local function tf_spy_build_fallback_profile(className)
+	local key = string.lower(tostring(className or "spy"))
+	local modelSet = TF_SPY_DISGUISE_FALLBACK_MODELS[key] or TF_SPY_DISGUISE_FALLBACK_MODELS.spy
+	local hp = tonumber(TF_SPY_CLASS_HEALTH[key]) or 125
+	return {
+		name = table.Random(TF_SPY_FALLBACK_NAMES) or "Mercenary",
+		weaponModel = tf_spy_pick_valid_random_model(modelSet and modelSet.weapons or nil),
+		cosmeticModels = tf_spy_pick_valid_random_models(modelSet and modelSet.cosmetics or nil, math.random(1, 2)),
+		health = math.max(math.floor(hp * math.Rand(0.65, 1.0)), 1),
+		maxHealth = math.max(hp, 1),
+	}
+end
+
+local function tf_spy_get_class_data(classArg)
+	if classArg == nil then
+		return table.Random(TF_SPY_DISGUISE_CLASSES)
+	end
+
+	local asNumber = tonumber(classArg)
+	if asNumber then
+		for _, classData in ipairs(TF_SPY_DISGUISE_CLASSES) do
+			if classData.id == asNumber then
+				return classData
+			end
+		end
+	end
+
+	local normalized = string.lower(string.Trim(tostring(classArg)))
+	for _, classData in ipairs(TF_SPY_DISGUISE_CLASSES) do
+		if classData.name == normalized then
+			return classData
+		end
+	end
+
+	return table.Random(TF_SPY_DISGUISE_CLASSES)
+end
+
+local function tf_spy_parse_team_index(ply, teamArg)
+	local n = tonumber(teamArg)
+	if n == 0 or n == 1 then
+		return n
+	end
+
+	local raw = string.lower(string.Trim(tostring(teamArg or "")))
+	if raw == "red" then return 0 end
+	if raw == "blue" or raw == "blu" then return 1 end
+
+	if IsValid(ply) and ply:Team() == TEAM_RED then
+		return 1
+	end
+	return 0
+end
+
+local function tf_spy_team_from_index(teamIndex)
+	return teamIndex == 1 and TEAM_BLU or TEAM_RED
+end
+
+local function tf_spy_get_class_display(className)
+	for _, classData in ipairs(TF_SPY_DISGUISE_CLASSES) do
+		if classData.name == className then
+			return classData.display
+		end
+	end
+	return className
+end
+
+local function tf_spy_find_disguise_target(spy, disguiseTeam, className)
+	local classMatches = {}
+	local teamMatches = {}
+
+	for _, p in ipairs(player.GetAll()) do
+		if IsValid(p) and p ~= spy and p:Alive() and p:Team() == disguiseTeam then
+			teamMatches[#teamMatches + 1] = p
+			if string.lower(tostring(p:GetPlayerClass() or "")) == className then
+				classMatches[#classMatches + 1] = p
+			end
+		end
+	end
+
+	if #classMatches > 0 then
+		return table.Random(classMatches)
+	end
+	if #teamMatches > 0 then
+		return table.Random(teamMatches)
+	end
+	return nil
+end
+
+local function tf_spy_apply_npc_relationships(spy, friendly)
+	for _, ent in ipairs(ents.GetAll()) do
+		if not IsValid(ent) or not ent:IsNPC() then continue end
+		if ent:IsFriendly(spy) then continue end
+		ent:AddEntityRelationship(spy, friendly and D_LI or D_HT, 99)
+	end
+end
+
+local function tf_spy_set_disguise_nw(ply, className, classDisplay, disguiseTeam, target, fallbackProfile)
+	local fallback = istable(fallbackProfile) and fallbackProfile or nil
+	local hasTarget = IsValid(target)
+	local targetName = hasTarget and target:Name() or ((fallback and isstring(fallback.name) and fallback.name ~= "") and fallback.name or "")
+	local targetHealth = hasTarget and math.max(target:Health(), 1) or math.max(tonumber(fallback and fallback.health) or math.floor((ply:GetMaxHealth() or 125) * 0.75), 1)
+	local targetMaxHealth = hasTarget and math.max(target:GetMaxHealth(), 1) or math.max(tonumber(fallback and fallback.maxHealth) or (ply:GetMaxHealth() or 125), 1)
+	local fallbackWeaponModel = (not hasTarget and fallback and isstring(fallback.weaponModel)) and fallback.weaponModel or ""
+	local fallbackCosmetics = (not hasTarget and fallback and istable(fallback.cosmeticModels)) and table.concat(fallback.cosmeticModels, "|") or ""
+
+	ply:SetNWString("TFSpyDisguiseClass", className or "")
+	ply:SetNWString("TFSpyDisguiseClassDisplay", classDisplay or "")
+	ply:SetNWInt("TFSpyDisguiseTeam", disguiseTeam or -1)
+	ply:SetNWEntity("TFSpyDisguiseTarget", hasTarget and target or NULL)
+	ply:SetNWString("TFSpyDisguiseTargetName", targetName)
+	ply:SetNWInt("TFSpyDisguiseTargetUserID", hasTarget and target:UserID() or -1)
+	ply:SetNWInt("TFSpyDisguiseHealth", targetHealth)
+	ply:SetNWInt("TFSpyDisguiseMaxHealth", targetMaxHealth)
+	ply:SetNWString("TFSpyDisguiseFallbackWeaponModel", fallbackWeaponModel)
+	ply:SetNWString("TFSpyDisguiseFallbackCosmeticModels", fallbackCosmetics)
+end
+
+local function tf_spy_clear_disguise_nw(ply)
+	ply:SetNWString("TFSpyDisguiseClass", "")
+	ply:SetNWString("TFSpyDisguiseClassDisplay", "")
+	ply:SetNWInt("TFSpyDisguiseTeam", -1)
+	ply:SetNWEntity("TFSpyDisguiseTarget", NULL)
+	ply:SetNWString("TFSpyDisguiseTargetName", "")
+	ply:SetNWInt("TFSpyDisguiseTargetUserID", -1)
+	ply:SetNWInt("TFSpyDisguiseHealth", 0)
+	ply:SetNWInt("TFSpyDisguiseMaxHealth", 0)
+	ply:SetNWString("TFSpyDisguiseFallbackWeaponModel", "")
+	ply:SetNWString("TFSpyDisguiseFallbackCosmeticModels", "")
+end
+
+if SERVER and not GetConVar("tf_debug_spy_disguise") then
+	CreateConVar("tf_debug_spy_disguise", "0", {FCVAR_REPLICATED, FCVAR_NOTIFY, FCVAR_ARCHIVE}, "Enable verbose Spy disguise/undisguise debug logging.")
+end
+
+local function tf_spy_disguise_debug_enabled()
+	if not SERVER then return false end
+	local cvar = GetConVar("tf_debug_spy_disguise")
+	return cvar and cvar:GetBool() or false
+end
+
+local function tf_spy_disguise_debug_player_tag(ply)
+	if not IsValid(ply) then return "invalid" end
+	local nick = isfunction(ply.Nick) and ply:Nick() or "unknown"
+	return string.format("%s<%d>", nick, ply:EntIndex())
+end
+
+local function tf_spy_disguise_debug(ply, msg, includeTrace)
+	if not tf_spy_disguise_debug_enabled() then return end
+	print(string.format("[tf_debug_spy_disguise] t=%.3f ply=%s %s", CurTime(), tf_spy_disguise_debug_player_tag(ply), tostring(msg)))
+	if includeTrace and debug and debug.traceback then
+		print(debug.traceback("[tf_debug_spy_disguise] stack", 3))
+	end
+end
+
+function TF_RemoveSpyDisguise(ply, silent)
+	if not SERVER then return false end
+	if not IsValid(ply) or not ply:IsPlayer() then return false end
+
+	tf_spy_disguise_debug(
+		ply,
+		string.format(
+			"TF_RemoveSpyDisguise(silent=%s) before: cond_disguising=%s cond_disguised=%s class_nw=%s team_nw=%d",
+			tostring(silent),
+			tostring(ply:InCond(TF_COND_DISGUISING)),
+			tostring(ply:InCond(TF_COND_DISGUISED)),
+			tostring(ply:GetNWString("TFSpyDisguiseClass", "")),
+			tonumber(ply:GetNWInt("TFSpyDisguiseTeam", -1)) or -1
+		),
+		true
+	)
+
+	local wasDisguised = ply:InCond(TF_COND_DISGUISED) or ply:InCond(TF_COND_DISGUISING)
+
+	ply:RemoveCond(TF_COND_DISGUISED)
+	ply:RemoveCond(TF_COND_DISGUISING)
+	tf_spy_clear_disguise_nw(ply)
+	tf_spy_apply_npc_relationships(ply, false)
+
+	timer.Remove("TFSpyDisguiseFinish" .. ply:EntIndex())
+
+	if wasDisguised and not silent then
+		ply:EmitSound("player/spy_disguise.wav", 65, 100)
+	end
+
+	tf_spy_disguise_debug(
+		ply,
+		string.format(
+			"TF_RemoveSpyDisguise done: wasDisguised=%s after: cond_disguising=%s cond_disguised=%s class_nw=%s",
+			tostring(wasDisguised),
+			tostring(ply:InCond(TF_COND_DISGUISING)),
+			tostring(ply:InCond(TF_COND_DISGUISED)),
+			tostring(ply:GetNWString("TFSpyDisguiseClass", ""))
+		),
+		false
+	)
+
+	return wasDisguised
+end
+
+function TF_DisguiseSpyPlayer(ply, classArg, teamArg)
+	if not SERVER then return false end
+	if not IsValid(ply) or not ply:IsPlayer() or not ply:Alive() then
+		tf_spy_disguise_debug(ply, "TF_DisguiseSpyPlayer aborted: invalid/dead player", false)
+		return false
+	end
+	if ply:GetPlayerClass() ~= "spy" then
+		tf_spy_disguise_debug(ply, string.format("TF_DisguiseSpyPlayer aborted: class=%s", tostring(ply:GetPlayerClass())), false)
+		return false
+	end
+
+	local classData = tf_spy_get_class_data(classArg)
+	if not classData then
+		tf_spy_disguise_debug(ply, string.format("TF_DisguiseSpyPlayer aborted: invalid classArg=%s", tostring(classArg)), false)
+		return false
+	end
+
+	local teamIndex = tf_spy_parse_team_index(ply, teamArg)
+	local disguiseTeam = tf_spy_team_from_index(teamIndex)
+
+	ply.TFSpyDisguiseSequence = (ply.TFSpyDisguiseSequence or 0) + 1
+	local seq = ply.TFSpyDisguiseSequence
+
+	ply:AddCond(TF_COND_DISGUISING)
+	ply:RemoveCond(TF_COND_DISGUISED)
+
+	tf_spy_disguise_debug(
+		ply,
+		string.format(
+			"TF_DisguiseSpyPlayer start: class=%s display=%s teamIndex=%d disguiseTeam=%d seq=%d prevNWClass=%s",
+			tostring(classData.name),
+			tostring(classData.display),
+			tonumber(teamIndex) or -1,
+			tonumber(disguiseTeam) or -1,
+			tonumber(seq) or -1,
+			tostring(ply:GetNWString("TFSpyDisguiseClass", ""))
+		),
+		false
+	)
+
+	if ply:GetNoDraw() == false then
+		if ply:Team() == TEAM_RED or ply:Team() == TEAM_NEUTRAL then
+			ParticleEffectAttach("spy_start_disguise_red", PATTACH_ABSORIGIN_FOLLOW, ply, 1)
+		else
+			ParticleEffectAttach("spy_start_disguise_blue", PATTACH_ABSORIGIN_FOLLOW, ply, 1)
+		end
+	end
+
+	local disguiseTime = ply:GetNWBool("Disguised", false) and 0.5 or 2.0
+	timer.Remove("TFSpyDisguiseFinish" .. ply:EntIndex())
+	timer.Create("TFSpyDisguiseFinish" .. ply:EntIndex(), disguiseTime, 1, function()
+		if not IsValid(ply) or not ply:Alive() then
+			tf_spy_disguise_debug(ply, "TFSpyDisguiseFinish aborted: invalid/dead player", false)
+			return
+		end
+		if ply.TFSpyDisguiseSequence ~= seq then
+			tf_spy_disguise_debug(
+				ply,
+				string.format("TFSpyDisguiseFinish aborted: sequence mismatch current=%s expected=%s", tostring(ply.TFSpyDisguiseSequence), tostring(seq)),
+				false
+			)
+			return
+		end
+		if ply:GetPlayerClass() ~= "spy" then
+			tf_spy_disguise_debug(ply, string.format("TFSpyDisguiseFinish aborted: class changed to %s", tostring(ply:GetPlayerClass())), false)
+			return
+		end
+
+		local target = tf_spy_find_disguise_target(ply, disguiseTeam, classData.name)
+		local fallbackProfile = nil
+		if not IsValid(target) then
+			fallbackProfile = tf_spy_build_fallback_profile(classData.name)
+		end
+		tf_spy_set_disguise_nw(ply, classData.name, classData.display, disguiseTeam, target, fallbackProfile)
+		ply:RemoveCond(TF_COND_DISGUISING)
+		ply:AddCond(TF_COND_DISGUISED)
+		tf_spy_apply_npc_relationships(ply, true)
+
+		tf_spy_disguise_debug(
+			ply,
+			string.format(
+				"TFSpyDisguiseFinish applied: class=%s target=%s(%d) fallback=%s weapon=%s cosmetics=%s cond_disguised=%s",
+				tostring(classData.name),
+				IsValid(target) and target:Name() or "none",
+				IsValid(target) and target:EntIndex() or -1,
+				tostring(not IsValid(target)),
+				tostring(fallbackProfile and fallbackProfile.weaponModel or ""),
+				tostring(fallbackProfile and table.concat(fallbackProfile.cosmeticModels or {}, ",") or ""),
+				tostring(ply:InCond(TF_COND_DISGUISED))
+			),
+			false
+		)
+
+		-- Force AI to immediately re-evaluate hostility after disguise completes.
+		for _, ent in ipairs(ents.GetAll()) do
+			if not IsValid(ent) or ent == ply then continue end
+			if ent.TargetEnt == ply then
+				ent.TargetEnt = nil
+			end
+			if ent.GetEnemy and ent.SetEnemy and ent:GetEnemy() == ply then
+				ent:SetEnemy(NULL)
+			end
+		end
+
+		if IsValid(ply:GetWeapon("tf_weapon_knife")) then
+			ply:SelectWeapon("tf_weapon_knife")
+		end
+
+		ply:EmitSound("player/spy_disguise.wav", 65, 100)
+	end)
+
+	return true
+end
+
+concommand.Add("tf_spydisguise", function(ply, _, args)
+	if not SERVER then return end
+	TF_DisguiseSpyPlayer(ply, args and args[1] or nil, args and args[2] or nil)
+end)
+
+hook.Add("PlayerDeath", "TFSpyDisguiseClearOnDeath", function(victim)
+	if not IsValid(victim) or not victim:IsPlayer() then return end
+	TF_RemoveSpyDisguise(victim, true)
 end)
 
 
@@ -2214,11 +2876,50 @@ function GM:EntityDeathnoticeName(ent, nolocalize)
 end
 
 function GM:EntityTargetIDName(ent, nolocalize)
+	if CLIENT and IsValid(ent) and ent:IsPlayer() and ent:GetNWBool("Disguised", false) then
+		local lp = LocalPlayer()
+		local disguiseTeam = ent:GetNWInt("TFSpyDisguiseTeam", -1)
+		if IsValid(lp) and lp ~= ent and disguiseTeam == lp:Team() then
+			local target = ent:GetNWEntity("TFSpyDisguiseTarget")
+			if IsValid(target) then
+				return target:Name()
+			end
+			local targetName = ent:GetNWString("TFSpyDisguiseTargetName", "")
+			if targetName ~= "" then
+				return targetName
+			end
+		end
+	end
+
 	if ent.GetTargetIDName then
 		return ent:GetTargetIDName(nolocalize)
 	else
 		return self:EntityName(ent, nolocalize)
 	end
+end
+
+function GM:GetEntityVisibleTeamForViewer(ent, viewer)
+	local teamNum = self:EntityTeam(ent)
+	if not IsValid(ent) or not ent:IsPlayer() then
+		return teamNum
+	end
+
+	if not IsValid(viewer) or not viewer:IsPlayer() then
+		return teamNum
+	end
+
+	if viewer == ent then
+		return teamNum
+	end
+
+	if ent:GetNWBool("Disguised", false) and not ent:GetNWBool("Cloaked", false) then
+		local disguiseTeam = ent:GetNWInt("TFSpyDisguiseTeam", -1)
+		if disguiseTeam == viewer:Team() then
+			return disguiseTeam
+		end
+	end
+
+	return teamNum
 end
 
 function GM:EntityTeam(ent)
@@ -2634,6 +3335,7 @@ include("shd_playerclasses.lua")
 include("ply_extension.lua")
 include("ent_extension.lua")
 include("shd_playerstates.lua")
+include("shd_parity.lua")
 
 include("shd_maphooks.lua")
 concommand.Add("+inspect", function(pl)

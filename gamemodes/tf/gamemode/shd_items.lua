@@ -487,13 +487,50 @@ function META:GetFullName()
 	end
 	
 	local q = (self.GetQuality and self:GetQuality()) or 0
-	return GetItemFullName(item, q)
+	local fullName = GetItemFullName(item, q)
+
+	if self.IsWeapon and self:IsWeapon() then
+		local paintName = nil
+		if self.GetPaintkitDisplayName then
+			paintName = self:GetPaintkitDisplayName()
+		elseif self.GetPaintkitID and self:GetPaintkitID() then
+			paintName = "Paintkit " .. tostring(self:GetPaintkitID())
+		end
+
+		if isstring(paintName) and paintName ~= "" then
+			fullName = paintName .. " " .. fullName
+		end
+
+		if self.IsFestivized and self:IsFestivized() then
+			local festivePrefix = (tf_lang and tf_lang.GetRaw and tf_lang.GetRaw("ItemNameFestive", true)) or "Festivized "
+			if not isstring(festivePrefix) or festivePrefix == "" then
+				festivePrefix = "Festivized "
+			end
+			fullName = festivePrefix .. fullName
+		end
+	end
+
+	return fullName
 end
 
 function META:GetNameColor()
 	local q = tonumber((self.GetQuality and self:GetQuality()) or 0) or 0
 	local qualityKey = QUALITY_COLORS[q]
 	if not qualityKey then
+		local item = (self.GetItemData and self:GetItemData()) or nil
+		local rarity = string.lower(tostring(item and item.item_rarity or ""))
+		local rarityToQuality = {
+			common = "rarity1",
+			uncommon = "rarity2",
+			rare = "rarity3",
+			mythical = "rarity4",
+			legendary = "rarity4",
+			ancient = "rarity4",
+		}
+		local rarityKey = rarityToQuality[rarity]
+		if rarityKey and Colors["QualityColor" .. rarityKey] then
+			return Colors["QualityColor" .. rarityKey]
+		end
 		return Colors.QualityColorUnique
 	end
 
@@ -523,6 +560,21 @@ end
 if SERVER then
 
 META = FindMetaTable("Player")
+
+local function ItemVisualDebugEnabled()
+	local c = GetConVar("tf_debug_item_visuals")
+	return c and c:GetBool() or false
+end
+
+local function FindAttrInPairList(pairsList, attrId)
+	if not istable(pairsList) then return nil end
+	for _, pair in ipairs(pairsList) do
+		if istable(pair) and tonumber(pair[1]) == tonumber(attrId) then
+			return pair[2]
+		end
+	end
+	return nil
+end
 
 function META:EmptyLoadoutSlot(slot, noupdate)
 	if not self.ItemLoadout or not self.ItemProperties then return end
@@ -746,6 +798,22 @@ function META:GiveItem(itemname, properties)
 		end
 		
 		if properties.attributes and weapon.SetExtraAttributes then
+			if ItemVisualDebugEnabled() then
+				local paintkit = FindAttrInPairList(properties.attributes, 834)
+				local wear = FindAttrInPairList(properties.attributes, 725)
+				local festive = FindAttrInPairList(properties.attributes, 2053)
+				if paintkit ~= nil or wear ~= nil or festive ~= nil then
+					print(string.format(
+						"[tf_debug_item_visuals] GiveItemApplyProps ply=%s item=%s class=%s paintkit=%s wear=%s festive=%s",
+						tostring(self:Nick()),
+						tostring(itemname),
+						tostring(class),
+						tostring(paintkit),
+						tostring(wear),
+						tostring(festive)
+					))
+				end
+			end
 			weapon:SetExtraAttributes(properties.attributes)
 		end
 	end

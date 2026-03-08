@@ -137,8 +137,19 @@ function PANEL:Paint(w, h)
 					if self.overridematerial then
 						self.wep.Entity:SetMaterial(self.overridematerial)
 					end
+				else
+					if IsValid(self.wep.Entity) and self.FallbackModel and self.wep.Entity:GetModel() ~= self.FallbackModel then
+						self.wep:SetModel(self.FallbackModel)
+					end
+					if IsValid(self.wep.Entity) then
+						self.wep.Entity:SetMaterial(self.overridematerial or "")
+					end
 				end
 			else
+				if ispanel(self.wep) then
+					self.wep:Remove()
+					self.wep = nil
+				end
 				if rx>ry then
 					if self.model_tall<=50 then
 						surface.DrawTexturedRect(x - sx * 0.96, y - sy * 1.52, 2.21*sx, 2.55*sy)

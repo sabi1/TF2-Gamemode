@@ -39,6 +39,20 @@ SWEP.Moving = false
 
 SWEP.MovedBuildingLevel = 1
 
+local function tf_spy_current_disguise_class(owner)
+	if not IsValid(owner) or owner:GetPlayerClass() ~= "spy" then
+		return nil
+	end
+	if not owner.InCond or not owner:InCond(TF_COND_DISGUISED) then
+		return nil
+	end
+	local className = string.lower(owner:GetNWString("TFSpyDisguiseClass", ""))
+	if className == "" then
+		return nil
+	end
+	return className
+end
+
 function SWEP:SetupDataTables()
 	self:CallBaseFunction("SetupDataTables")
 	self:DTVar("Int", 1, "BuildGroup")
@@ -1113,20 +1127,20 @@ function SWEP:Deploy()
 				--self.WModel2:SetMaterial(self.WeaponMaterial or 0)
 			end
 		end
-		if self.Owner:GetModel() == "models/player/scout.mdl" or  self.Owner:GetModel() == "models/player/soldier.mdl" or  self.Owner:GetModel() == "models/player/pyro.mdl" or  self.Owner:GetModel() == "models/player/demo.mdl" or  self.Owner:GetModel() == "models/player/heavy.mdl" or  self.Owner:GetModel() == "models/player/engineer.mdl" or  self.Owner:GetModel() == "models/player/medic.mdl" or  self.Owner:GetModel() == "models/player/sniper.mdl" or  self.Owner:GetModel() == "models/player/hwm/spy.mdl" then
-			
+		local disguiseClass = tf_spy_current_disguise_class(self.Owner)
+		if disguiseClass then
 			animent2 = ents.Create( 'base_gmodentity' ) -- The entity used for the death animation	
-			if self.Owner:GetModel() == "models/player/engineer.mdl" or self.Owner:GetModel() == "models/player/scout.mdl" then
+			if disguiseClass == "engineer" or disguiseClass == "scout" then
 				animent2:SetModel("models/weapons/c_models/c_pistol/c_pistol.mdl")
-			elseif self.Owner:GetModel() == "models/player/soldier.mdl" or self.Owner:GetModel() == "models/player/pyro.mdl" or self.Owner:GetModel() == "models/player/heavy.mdl" then
+			elseif disguiseClass == "soldier" or disguiseClass == "pyro" or disguiseClass == "heavy" then
 				animent2:SetModel("models/weapons/c_models/c_shotgun/c_shotgun.mdl")
-			elseif self.Owner:GetModel() == "models/player/spy.mdl" then
+			elseif disguiseClass == "spy" then
 				animent2:SetModel("models/weapons/w_models/w_revolver.mdl")
-			elseif self.Owner:GetModel() == "models/player/sniper.mdl" then
+			elseif disguiseClass == "sniper" then
 				animent2:SetModel("models/weapons/c_models/c_smg/c_smg.mdl")
-			elseif self.Owner:GetModel() == "models/player/medic.mdl" then
+			elseif disguiseClass == "medic" then
 				animent2:SetModel("models/weapons/c_models/c_medigun/c_medigun.mdl")
-			elseif self.Owner:GetModel() == "models/player/demo.mdl" then
+			elseif disguiseClass == "demo" then
 				animent2:SetModel("models/weapons/w_models/w_grenadelauncher.mdl")
 			end
 			animent2:SetAngles(self.Owner:GetAngles())
