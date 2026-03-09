@@ -608,9 +608,10 @@ tf_util.AddDebugInfo("move_z", function()
 end)]]
 
 hook.Add("RenderScreenspaceEffects", "RenderPlayerStateOverlay", function()
-	if IsValid(LocalPlayer()) then
-		LocalPlayer():DrawStateOverlay()
-	end
+	local lp = LocalPlayer()
+	if not IsValid(lp) then return end
+	if not isfunction(lp.DrawStateOverlay) then return end
+	lp:DrawStateOverlay()
 end)
 
 concommand.Add("muzzlepos", function(pl)

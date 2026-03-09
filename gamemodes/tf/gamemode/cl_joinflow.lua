@@ -15,6 +15,33 @@ local function jfLog(msg)
 	MsgN("[TFJoinFlow] " .. tostring(msg))
 end
 
+local function resolveLuaPath(relPath)
+	local normalized = string.Replace(relPath or "", "\\", "/")
+	if normalized == "" then return nil end
+
+	local gmName = engine.ActiveGamemode and engine.ActiveGamemode() or "tf"
+	local candidates = {
+		normalized,
+		"gamemodes/" .. tostring(gmName) .. "/gamemode/" .. normalized
+	}
+
+	if GM and GM.Folder then
+		local gmFolder = string.Replace(tostring(GM.Folder), "\\", "/")
+		candidates[#candidates + 1] = gmFolder .. "/gamemode/" .. normalized
+		if not string.StartWith(gmFolder, "gamemodes/") then
+			candidates[#candidates + 1] = "gamemodes/" .. gmFolder .. "/gamemode/" .. normalized
+		end
+	end
+
+	for _, p in ipairs(candidates) do
+		if file.Exists(p, "LUA") then
+			return p
+		end
+	end
+
+	return nil
+end
+
 local function ensurePanelClass(className, retries)
 	if vgui.GetControlTable(className) then
 		return true
@@ -28,25 +55,31 @@ local function ensurePanelClass(className, retries)
 		forcedFile = "vgui/menu_motdpanel.lua"
 	end
 	if forcedFile then
-		jfLog("force include " .. forcedFile .. " for " .. className)
+		local includePath = resolveLuaPath(forcedFile)
+		if not includePath then
+			jfLog("panel source missing for " .. className .. ": " .. forcedFile)
+			return false
+		end
+
+		jfLog("force include " .. includePath .. " for " .. className)
 		local loaded = false
 		if CompileFile then
-			local chunk = CompileFile(forcedFile)
+			local chunk = CompileFile(includePath)
 			if isfunction(chunk) then
 				local ok, err = pcall(chunk)
 				if not ok then
-					jfLog("compile run failed for " .. forcedFile .. ": " .. tostring(err))
+					jfLog("compile run failed for " .. includePath .. ": " .. tostring(err))
 				else
 					loaded = true
 				end
 			else
-				jfLog("compile failed for " .. forcedFile)
+				jfLog("compile failed for " .. includePath)
 			end
 		end
 		if not loaded then
-			local ok, err = pcall(include, forcedFile)
+			local ok, err = pcall(include, includePath)
 			if not ok then
-				jfLog("include failed for " .. forcedFile .. ": " .. tostring(err))
+				jfLog("include failed for " .. includePath .. ": " .. tostring(err))
 			end
 		end
 		if vgui.GetControlTable(className) then
@@ -125,15 +158,6 @@ function TFJoinFlow:OpenTeamSelect(initialFlow)
 	if IsValid(self.TeamPanel) and self.TeamPanel:IsVisible() then
 		jfLog("OpenTeamSelect ignored: already visible")
 		return
-	end
-
-	-- Always reload the current team panel script from disk so swaps between
-	-- backups take effect without requiring a full reconnect/restart.
-	do
-		local ok, err = pcall(include, "vgui/menu_teamselectpanel.lua")
-		if not ok then
-			jfLog("team panel include failed: " .. tostring(err))
-		end
 	end
 
 	if not vgui.GetControlTable("TFTeamSelectPanel") then

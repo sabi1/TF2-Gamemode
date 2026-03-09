@@ -217,9 +217,14 @@ function SWEP:IsBombInSensorCone(ent)
 	return dot >= self.SensorCos
 end
 
-function SWEP:InitOwner()
-	self.Owner:SetNWInt("NumBombs", 0)
-	self.Owner.Bombs = {}
+function SWEP:InitOwner(owner)
+	owner = owner or self.Owner or self.CurrentOwner
+	if not IsValid(owner) then return nil end
+
+	self.CurrentOwner = owner
+	owner:SetNWInt("NumBombs", 0)
+	owner.Bombs = {}
+	return owner
 end
 
 function SWEP:CreateSounds()
@@ -399,14 +404,15 @@ function SWEP:DetonateProjectiles(nosound, noexplode)
 		local owner = (IsValid(self.Owner) and self.Owner) or self.CurrentOwner
 		
 		if not self or not self:IsValid() then return end
+		if not IsValid(owner) then return end
 		
 		if not owner.Bombs then
-			self:InitOwner()
+			owner = self:InitOwner(owner)
 		end
 		
 		local det = false
 		
-		if not owner.Bombs then return end
+		if not IsValid(owner) or not owner.Bombs then return end
 		
 		for k=#owner.Bombs,1,-1 do
 			local bomb = owner.Bombs[k]

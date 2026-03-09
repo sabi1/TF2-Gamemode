@@ -1,7 +1,8 @@
 {
   "health_base": 3000,
   "health_per_player": 200,
-  "min_players": 10,
+  "health_max": 7800,
+  "min_players": 0,
   "speed": 400,
   "attack_range": 200,
   "attack_cooldown": 1.0,
@@ -13,9 +14,10 @@
   "chase_duration": 30,
   "stand_and_swing_range": 100,
   "it_warn_interval": 7,
-  "terrify_radius": 500,
+  "terrify_radius": 1000,
   "terrify_interval": 20,
   "terrify_duration": 2,
+  "weapon_model": "models/weapons/c_models/c_headtaker/c_headtaker.mdl",
   "emerge_time": 3,
   "emerge_height": 200
 }

@@ -809,6 +809,22 @@ local function AcquireEnemyTarget(bot)
 		target = bestTarget
 	end
 
+	-- Long-range fallback: keep momentum by selecting a distant enemy player
+	-- when nothing is currently nearby/trackable.
+	if not IsValid(target) then
+		local bestTarget, bestDist = nil, math.huge
+		for _, v in ipairs(player.GetAll()) do
+			if IsValid(v) and v:IsPlayer() and v:Alive() and IsValidTarget(bot, v) then
+				local d = bot:GetPos():DistToSqr(v:GetPos())
+				if d < bestDist then
+					bestDist = d
+					bestTarget = v
+				end
+			end
+		end
+		target = bestTarget
+	end
+
 	bot._nextTargetReselectTime = now + GetTargetChooseInterval(bot)
 	if IsValid(target) and IsValidTarget(bot, target) then
 		return target
@@ -963,6 +979,131 @@ function bombAvailable(bot)
 	return table.Count(npcs) > 0
 end
 
+local GetObjectivePos
+
+local function GetControlPointOwnerTeam(cp)
+	if not IsValid(cp) then return 0 end
+	if cp.GetOwnerTeam then
+		local owner = tonumber(cp:GetOwnerTeam())
+		if owner then return owner end
+	end
+	return tonumber(cp.OwnerTeam or (cp.Properties and cp.Properties.point_default_owner) or 0) or 0
+end
+
+local function TeamCanCaptureControlPoint(cp, teamNum)
+	if not IsValid(cp) then return false end
+	if not teamNum then return false end
+	if cp.Locked then return false end
+	if istable(cp.TeamCanCap) and cp.TeamCanCap[teamNum] ~= nil then
+		return cp.TeamCanCap[teamNum] and true or false
+	end
+	return GetControlPointOwnerTeam(cp) ~= teamNum
+end
+
+local function CountCaptureAreaTeamOccupants(trigger, teamNum, fallbackPos)
+	if not IsValid(trigger) or not teamNum then return 0 end
+	local count = 0
+
+	if istable(trigger.Occupants) then
+		for ply in pairs(trigger.Occupants) do
+			if IsValid(ply) and ply:IsPlayer() and ply:Alive() and ply:Team() == teamNum then
+				count = count + 1
+			end
+		end
+		return count
+	end
+
+	local pos = fallbackPos or trigger:GetPos()
+	for _, ply in ipairs(player.GetAll()) do
+		if IsValid(ply) and ply:Alive() and ply:Team() == teamNum and ply:GetPos():DistToSqr(pos) <= (420 * 420) then
+			count = count + 1
+		end
+	end
+	return count
+end
+
+local function FindClosestEnemyNear(pos, teamNum, maxRadius)
+	if not pos then return nil end
+	local enemyTeam = (teamNum == TEAM_RED) and TEAM_BLU or TEAM_RED
+	local best
+	local bestDist = math.huge
+	local radiusSqr = (maxRadius or 900) ^ 2
+	for _, ply in ipairs(player.GetAll()) do
+		if IsValid(ply) and ply:Alive() and ply:Team() == enemyTeam then
+			local d = ply:GetPos():DistToSqr(pos)
+			if d <= radiusSqr and d < bestDist then
+				best = ply
+				bestDist = d
+			end
+		end
+	end
+	return best
+end
+
+local function controlPointAvailable(bot)
+	for _, trigger in ipairs(GetCachedEntities("trigger_capture_area")) do
+		if IsValid(trigger) and IsValid(trigger.CapturePoint) then
+			return true
+		end
+	end
+	return false
+end
+
+local function SelectControlPointObjective(bot)
+	if not IsValid(bot) then return nil end
+	local teamNum = bot:Team()
+	if teamNum ~= TEAM_RED and teamNum ~= TEAM_BLU then
+		return nil
+	end
+
+	local enemyTeam = (teamNum == TEAM_RED) and TEAM_BLU or TEAM_RED
+	local bestDecision
+	local bestScore = math.huge
+
+	for _, trigger in ipairs(GetCachedEntities("trigger_capture_area")) do
+		if not IsValid(trigger) then continue end
+		local cp = trigger.CapturePoint
+		if not IsValid(cp) or cp.Locked then continue end
+
+		local ownerTeam = GetControlPointOwnerTeam(cp)
+		local canWeCap = TeamCanCaptureControlPoint(cp, teamNum)
+		local canEnemyCap = TeamCanCaptureControlPoint(cp, enemyTeam)
+
+		local objectivePos = GetObjectivePos(cp) or GetObjectivePos(trigger)
+		if not objectivePos then continue end
+
+		local isDefendPoint = (ownerTeam == teamNum and canEnemyCap)
+		local isAttackPoint = (ownerTeam ~= teamNum and canWeCap)
+		if not isDefendPoint and not isAttackPoint then continue end
+
+		local attackers = CountCaptureAreaTeamOccupants(trigger, enemyTeam, objectivePos)
+		local defenders = CountCaptureAreaTeamOccupants(trigger, teamNum, objectivePos)
+		local score = bot:GetPos():DistToSqr(objectivePos)
+
+		if isDefendPoint then
+			if attackers > 0 then
+				score = score * 0.30
+			else
+				score = score * 0.75
+			end
+			score = score - (attackers * 90000)
+		else
+			score = score - (defenders * 30000)
+		end
+
+		if score < bestScore then
+			bestScore = score
+			bestDecision = {
+				targetPos = objectivePos,
+				defend = isDefendPoint,
+				targetEnt = isDefendPoint and FindClosestEnemyNear(objectivePos, teamNum, 1200) or nil,
+			}
+		end
+	end
+
+	return bestDecision
+end
+
 local function IsMvMMap()
 	if TF_IsMvMMap then
 		return TF_IsMvMMap()
@@ -970,7 +1111,7 @@ local function IsMvMMap()
 	return string.find(string.lower(game.GetMap() or ""), "mvm_", 1, true) ~= nil
 end
 
-local function GetObjectivePos(ent)
+GetObjectivePos = function(ent)
 	if not IsValid(ent) then return nil end
 	local pos = nil
 	if ent.Pos then
@@ -1934,9 +2075,9 @@ local function GetRandomLoadoutCandidates(className, randomizerMode)
 		local isCosmetic = IsBotCosmeticItem(item)
 		if not isWeapon and not isCosmetic then continue end
 		if not randomizerMode and (not item.used_by_classes or not item.used_by_classes[className]) then continue end
-		local name = item.name or itemName
-		if isstring(name) and not IsBadCandidate(className, randomizerMode, slot, name) then
-			bySlot[slot][#bySlot[slot] + 1] = name
+		-- Use stable item keys from tf_items.Items; display/localized names can collide.
+		if isstring(itemName) and itemName ~= "" and not IsBadCandidate(className, randomizerMode, slot, itemName) then
+			bySlot[slot][#bySlot[slot] + 1] = itemName
 		end
 	end
 
@@ -2098,7 +2239,6 @@ function TFBot_ApplyRandomLoadout(bot, opts)
 	end
 
 	local changed = false
-	--[[
 	for _, slot in ipairs(BOT_LOADOUT_SLOTS) do
 		local chosen = bot._savedRandomLoadout[slot]
 		if isstring(chosen) and chosen ~= "" then
@@ -2115,7 +2255,7 @@ function TFBot_ApplyRandomLoadout(bot, opts)
 				end
 			end
 		end
-	end]]
+	end
 	if not changed then
 		SetLoadoutReason(bot, "no_changed_slots")
 		BotLoadoutDebug(bot, "abort: no slot changed")
@@ -3207,25 +3347,17 @@ hook.Add("SetupMove", "LeadBot_Control", function(bot, mv, cmd)
 				bot.botPos = targetpos
 				
 				--bot.LastSegmented = CurTime() + math.Rand(0.5, 1)
-			--[[
-			elseif string.find(game.GetMap(), "cp_") then -- CP AI
+			elseif controlPointAvailable(bot) and not IsMvMMap() and !GAMEMODE.RoundHasWinner then -- CP AI
+				local cpDecision = SelectControlPointObjective(bot)
+				if cpDecision and cpDecision.targetPos then
+					bot.botPos = cpDecision.targetPos
+					bot.intelcarrier = nil
+					bot.shouldFollowIntelCarrier = false
 
-
-				for k, v in pairs(ents.FindByClass("trigger_capture_area")) do
-					if GAMEMODE:EntityTeam(v.CapturePoint) ~= bot:Team() then
-						intelcap = v.CapturePoint
-					else
-						fintelcap = v.CapturePoint
+					if cpDecision.defend and IsValid(cpDecision.targetEnt) then
+						bot.TargetEnt = cpDecision.targetEnt
 					end
 				end
-
-				if GAMEMODE:EntityTeam(intelcap) != ent:Team() then -- or if friendly intelligence has capture
-					targetpos = intelcap.Pos -- goto friendly cap spot
-					ignoreback = true
-				end
-
-				bot.botPos = targetpos
-			]]
 			elseif bombAvailable(bot) and IsMvMMap() and !GAMEMODE.RoundHasWinner then -- MvM objective selector (Phase 1)
 				local mvmDecision = SelectMvMAction(bot, controller, ShouldFollowIntelCarrier)
 				if mvmDecision then
@@ -3254,17 +3386,26 @@ hook.Add("SetupMove", "LeadBot_Control", function(bot, mv, cmd)
 			else
 				if (!IsValid(bot.TargetEnt) || !bot.TargetEnt:Alive()) then
 					-- our enemy doesn't exist anymore, find a random spot every 10 seconds
-					if (CurTime() > controller.LastSegmented || IsValid(bot.botPos) and bot:GetPos():Distance(bot.botPos) < bot:GetModelRadius() * 1.05) then
-						bot.botPos = controller:FindSpot("random", {radius = 12500})
-			        	controller.LastSegmented = CurTime() + 10
+					local reachedPos = isvector(bot.botPos) and bot:GetPos():DistToSqr(bot.botPos) < (bot:GetModelRadius() * 1.15) ^ 2
+					if (CurTime() > controller.LastSegmented || reachedPos) then
+						local roamPos = controller:FindSpot("random", {radius = 4500, pos = bot:GetPos(), type = "exposed"})
+						if not roamPos then
+							local navArea = navmesh.GetNearestNavArea(bot:GetPos(), false, 4000, false, false, TEAM_ANY)
+							if navArea then
+								roamPos = navArea:GetRandomPoint()
+							end
+						end
+						bot.botPos = roamPos or bot.botPos
+			        	controller.LastSegmented = CurTime() + math.Rand(3, 6)
 					end
 				else
 					if (bot:Visible(bot.TargetEnt)) then
 						bot.botPos = bot.TargetEnt:GetPos()
 					else
 						if (CurTime() > controller.LastSegmented) then
-							bot.botPos = controller:FindSpot("random", {radius = 12500, pos = bot.TargetEnt:GetPos(), type = "exposed"})
-							controller.LastSegmented = CurTime() + 10
+							local chasePos = controller:FindSpot("random", {radius = 3000, pos = bot.TargetEnt:GetPos(), type = "exposed"})
+							bot.botPos = chasePos or bot.TargetEnt:GetPos()
+							controller.LastSegmented = CurTime() + math.Rand(2, 4)
 						end
 					end
 				end
@@ -3983,11 +4124,26 @@ function table.EqualValues(t1,t2,ignore_mt)
 end
 
 concommand.Add("print_save_data", function(ply)
+	if not IsValid(ply) then return end
 	PrintTable(ply:GetSaveTable())
 end)
 concommand.Add("tf_bot_kick_all", function() for k, v in pairs(player.GetBots()) do v:Kick("Kicked from server") end end)
-concommand.Add("tf_bot_bring_all", function(ply) for k, v in pairs(player.GetBots()) do v:SetPos(ply:GetPos()) end end)
-concommand.Add("tf_bot_goto", function(ply) local bots = {} for k, v in pairs(player.GetBots()) do table.insert(bots, v) end ply:SetPos(table.Random(bots):GetPos()) end)
+concommand.Add("tf_bot_bring_all", function(ply)
+	local target = IsValid(ply) and ply or Entity(1)
+	if not IsValid(target) then return end
+	for k, v in pairs(player.GetBots()) do
+		v:SetPos(target:GetPos())
+	end
+end)
+concommand.Add("tf_bot_goto", function(ply)
+	if not IsValid(ply) then return end
+	local bots = {}
+	for k, v in pairs(player.GetBots()) do
+		table.insert(bots, v)
+	end
+	if #bots == 0 then return end
+	ply:SetPos(table.Random(bots):GetPos())
+end)
 concommand.Add("tf_bot_bring", function(ply) local bots = {} for k, v in pairs(player.GetBots()) do table.insert(bots, v) end local pos = navmesh.GetNavArea(Entity(1):GetPos(), 5):GetRandomPoint() table.Random(bots):SetPos(pos) end)
 concommand.Add("tf_bot_kill_all", function() for k, v in pairs(player.GetBots()) do v:Kill() end end)
 concommand.Add("tf_bot_kill_bots", function() for k, v in pairs(player.GetBots()) do v:Kill() end end)
@@ -4476,15 +4632,15 @@ end )
 
 
 -- CONFIGURABLE WAVE TIMES PER TEAM (seconds)
-local RESPAWN_TEAM_RED = tonumber(rawget(_G, "TEAM_RED")) or 2
-local RESPAWN_TEAM_BLU = tonumber(rawget(_G, "TEAM_BLU")) or 3
-local respawnWaveTimes = {
+RESPAWN_TEAM_RED = tonumber(rawget(_G, "TEAM_RED")) or 2
+RESPAWN_TEAM_BLU = tonumber(rawget(_G, "TEAM_BLU")) or 3
+respawnWaveTimes = {
     [RESPAWN_TEAM_RED] = 20.5,
     [RESPAWN_TEAM_BLU] = 20.5
 }
 
 -- Player queues per team
-local respawnQueue = {
+respawnQueue = {
     [RESPAWN_TEAM_RED] = {},
     [RESPAWN_TEAM_BLU] = {}
 }
@@ -4506,7 +4662,7 @@ hook.Add("PlayerDeath", "TF2_RespawnWave_Queue", function(ply)
 end)
 
 -- Respawn wave timer
-local function ProcessRespawnWave(teamID)
+function ProcessRespawnWave(teamID)
     local queue = respawnQueue[teamID]
     if not queue then return end
 
@@ -4527,7 +4683,7 @@ for teamID, waveTime in pairs(respawnWaveTimes) do
     end)
 end
 
-local function BreakTouchingEntities(ply)
+function BreakTouchingEntities(ply)
     if not IsValid(ply) or not ply:IsPlayer() then return end
 
 	if PerfEnabled() then
@@ -4561,7 +4717,7 @@ local function BreakTouchingEntities(ply)
     end
 end
 
-local function ProcessBreakablesTouchByBots()
+function ProcessBreakablesTouchByBots()
 	for _, ply in ipairs(player.GetAll()) do
 		if ply.TFBot then
 			BreakTouchingEntities(ply)
@@ -4569,17 +4725,17 @@ local function ProcessBreakablesTouchByBots()
 	end
 end
 
-local tf_bot_trigger_touch_interval = CreateConVar("tf_bot_trigger_touch_interval", "0.10", {FCVAR_ARCHIVE, FCVAR_NOTIFY}, "Interval for playerbot trigger touch emulation.")
-local triggerTouchCache = { nextRefresh = 0, ents = {} }
+tf_bot_trigger_touch_interval = CreateConVar("tf_bot_trigger_touch_interval", "0.10", {FCVAR_ARCHIVE, FCVAR_NOTIFY}, "Interval for playerbot trigger touch emulation.")
+triggerTouchCache = { nextRefresh = 0, ents = {} }
 
-local function IsTriggerLikeEntity(ent)
+function IsTriggerLikeEntity(ent)
 	if not IsValid(ent) then return false end
 	local class = string.lower(tostring(ent:GetClass() or ""))
 	if string.StartWith(class, "trigger_") then return true end
 	return class == "func_capturezone" or class == "func_flagdetectionzone"
 end
 
-local function RefreshTriggerTouchCache(now)
+function RefreshTriggerTouchCache(now)
 	if now < (triggerTouchCache.nextRefresh or 0) then
 		return triggerTouchCache.ents
 	end
@@ -4594,7 +4750,7 @@ local function RefreshTriggerTouchCache(now)
 	return out
 end
 
-local function IsPointInsideEntityOBB(ent, point)
+function IsPointInsideEntityOBB(ent, point)
 	if not IsValid(ent) or not isvector(point) then return false end
 	local mins, maxs = ent:OBBMins(), ent:OBBMaxs()
 	local lp = ent:WorldToLocal(point)
@@ -4603,7 +4759,7 @@ local function IsPointInsideEntityOBB(ent, point)
 		and lp.z >= mins.z and lp.z <= maxs.z
 end
 
-local function ProcessTriggerTouchByPlayerBots()
+function ProcessTriggerTouchByPlayerBots()
 	local now = CurTime()
 	local triggerEnts = RefreshTriggerTouchCache(now)
 

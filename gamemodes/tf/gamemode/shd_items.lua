@@ -109,7 +109,17 @@ function ParseGameItems(data, silent)
 	
 	local hatlog = ""
 	file.Write("test"..tostring(smax)..".txt", data_items)
-	for k,v in pairs(util.KeyValuesToTable(data_items)) do
+	local parsed_items = util.KeyValuesToTable(data_items) or {}
+	local normalized_items = {}
+	for k,v in pairs(parsed_items) do
+		if istable(v) then
+			normalized_items[k] = v
+		else
+			numign = numign + 1
+		end
+	end
+
+	for k,v in pairs(normalized_items) do
 		if v.item_class and classtranslate[v.item_class] then
 			v.item_class = classtranslate[v.item_class]
 		end

@@ -472,6 +472,7 @@ criterion "WeaponIsNotMace" "item_name" "!=Sun-on-a-Stick" "required" weight 10
 criterion "WeaponIsNotFish" "item_name" "!=The Holy Mackerel" "required" weight 10
 criterion "WeaponIsNotGunbai" "item_name" "!=The Fan O'War" "required" weight 10
 criterion "WeaponIsShiv" "item_name" "Tribalman's Shiv" "required" weight 10
+criterion "WeaponIsShivMelee" "item_name" "Tribalman's Shiv" "required" weight 10
 criterion "WeaponIsGunbai" "item_name" "Fan O'War" "required" weight 10
 criterion "WeaponIsNotMediGun" "playerweapon" "!=tf_weapon_medigun" "required" weight 10
 criterion "WeaponIsSodaPopper" "item_name" "Soda Popper" "required" weight 10
@@ -856,4 +857,3 @@ Criterion "SpyNotInvulnerableSpeech" "SpyInvulnerableSpeech" "!=1" "required"
 #include "talker/Medic_auto.lua"
 #include "talker/Pyro_auto.lua"
 #include "talker/Spy_auto.lua"
-

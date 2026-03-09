@@ -5,7 +5,8 @@ include("shared.lua")
 local DEFAULT_CONFIG = {
     health_base = 3000,
     health_per_player = 200,
-    min_players = 10,
+    health_max = 7800,
+    min_players = 0,
     speed = 400,
     attack_range = 200,
     attack_cooldown = 1.0,
@@ -22,6 +23,7 @@ local DEFAULT_CONFIG = {
     terrify_duration = 2,
     emerge_time = 3,
     emerge_height = 200,
+    weapon_model = "models/weapons/c_models/c_headtaker/c_headtaker.mdl",
 }
 
 local BASE_GAME_PATH = "gamemodes/tf/gamemode/halloween/headless_hatman/"
@@ -204,11 +206,12 @@ end
 function ENT:ComputeScaledHealth()
     local cfg = self.DynamicConfig or DEFAULT_CONFIG
     local hp = tonumber(cfg.health_base) or DEFAULT_CONFIG.health_base
-    local minPlayers = tonumber(cfg.min_players) or DEFAULT_CONFIG.min_players
     local perPlayer = tonumber(cfg.health_per_player) or DEFAULT_CONFIG.health_per_player
+    local hpMax = tonumber(cfg.health_max) or DEFAULT_CONFIG.health_max
     local total = collect_living_humans()
-    if total > minPlayers then
-        hp = hp + (total - minPlayers) * perPlayer
+    hp = hp + (total * perPlayer)
+    if hpMax and hpMax > 0 then
+        hp = math.min(hp, hpMax)
     end
     return math.max(1, math.floor(hp))
 end
@@ -235,21 +238,32 @@ function ENT:GetBossWeaponModel()
         return "models/weapons/c_models/c_big_mallet/c_big_mallet.mdl"
     end
 
-    return "models/weapons/c_models/c_bigaxe/c_bigaxe.mdl"
+    return "models/weapons/c_models/c_headtaker/c_headtaker.mdl"
 end
 
 function ENT:AttachWeaponModelTF2Style()
     if not IsValid(self.Axe) then return end
 
-    -- TF2 source behavior: spawn prop_dynamic and FollowEntity(this, true).
-    self.Axe:SetParent(nil)
-    self.Axe:AddEffects(bit.bor(EF_BONEMERGE, EF_BONEMERGE_FASTCULL, EF_PARENT_ANIMATES))
-    if self.Axe.FollowEntity then
-        pcall(self.Axe.FollowEntity, self.Axe, self, true)
-    else
-        self.Axe:SetParent(self)
-        self.Axe:SetLocalPos(vector_origin)
-        self.Axe:SetLocalAngles(angle_zero)
+    local mergeFx = bit.bor(EF_BONEMERGE, EF_BONEMERGE_FASTCULL, EF_PARENT_ANIMATES)
+    self.Axe:AddEffects(mergeFx)
+    if self.Axe.DrawShadow then
+        self.Axe:DrawShadow(false)
+    end
+    if self.Axe.SetNotSolid then
+        self.Axe:SetNotSolid(true)
+    end
+
+    -- Hard attach to weapon_bone so the model does not appear detached while animating.
+    self.Axe:SetParent(self)
+    if self.Axe.Fire then
+        self.Axe:Fire("SetParentAttachment", "weapon_bone", 0)
+    end
+    self.Axe:SetLocalPos(vector_origin)
+    self.Axe:SetLocalAngles(angle_zero)
+
+    local weaponBone = self:LookupBone("weapon_bone")
+    if self.Axe.FollowBone and weaponBone and weaponBone >= 0 then
+        pcall(self.Axe.FollowBone, self.Axe, self, weaponBone)
     end
 end
 
@@ -309,30 +323,53 @@ end
 
 function ENT:ApplySpookStun(victim, duration)
     if not IsValid(victim) then return end
-    local stunFlags = bit.bor(_G.TF_STUN_LOSER_STATE or 0, _G.TF_STUN_BY_TRIGGER or 0)
+    local stunBase = _G.TF_STUN_GHOSTSCARE or _G.TF_STUN_LOSER_STATE or 0
+    local stunFlags = bit.bor(stunBase, _G.TF_STUN_BY_TRIGGER or 0)
+    local ghostCond = _G.TF_COND_HALLOWEEN_GHOST_MODE
+    local stunnedCond = _G.TF_COND_STUNNED
     duration = math.max(0.1, tonumber(duration) or 2)
+    local stunnedByEngine = false
 
     if victim.StunPlayer then
-        pcall(victim.StunPlayer, victim, duration, 0, stunFlags, self)
+        local ok = pcall(victim.StunPlayer, victim, duration, 0, stunFlags, self)
+        stunnedByEngine = ok and true or false
     end
 
-    if victim.AddCond and _G.TF_COND_STUNNED then
-        pcall(victim.AddCond, victim, TF_COND_STUNNED, duration, self)
+    -- Force the Halloween ghost scare presentation even if StunPlayer degrades to regular slow.
+    if ghostCond and victim.AddCond then
+        pcall(victim.AddCond, victim, ghostCond, duration, self)
     end
 
-    if victim.AddPlayerState then
-        victim:AddPlayerState(PLAYERSTATE_STUNNED, true)
-    end
-
-    timer.Create("TF2HHHSpookFallback" .. victim:EntIndex(), duration, 1, function()
-        if not IsValid(victim) then return end
-        if victim.RemovePlayerState then
-            victim:RemovePlayerState(PLAYERSTATE_STUNNED, true)
+    -- Only apply manual stun fallback if StunPlayer could not be used.
+    if not stunnedByEngine then
+        if victim.AddCond and stunnedCond then
+            pcall(victim.AddCond, victim, stunnedCond, duration, self)
         end
-        if victim.RemoveCond and _G.TF_COND_STUNNED then
-            victim:RemoveCond(TF_COND_STUNNED, true)
+
+        if victim.AddPlayerState then
+            victim:AddPlayerState(PLAYERSTATE_STUNNED, true)
         end
-    end)
+
+        timer.Create("TF2HHHSpookFallback" .. victim:EntIndex(), duration, 1, function()
+            if not IsValid(victim) then return end
+            if victim.RemovePlayerState then
+                victim:RemovePlayerState(PLAYERSTATE_STUNNED, true)
+            end
+            if victim.RemoveCond and stunnedCond then
+                victim:RemoveCond(stunnedCond, true)
+            end
+            if victim.RemoveCond and ghostCond then
+                victim:RemoveCond(ghostCond, true)
+            end
+        end)
+    else
+        timer.Create("TF2HHHSpookGhostMode" .. victim:EntIndex(), duration, 1, function()
+            if not IsValid(victim) then return end
+            if victim.RemoveCond and ghostCond then
+                victim:RemoveCond(ghostCond, true)
+            end
+        end)
+    end
 
     if victim.EmitSound then
         victim:EmitSound("player/pl_impact_stun.wav", 90, 100)
@@ -368,10 +405,6 @@ end
 function ENT:UpdateAnimationState()
     if self.StateName == "emerge" then
         start_activity_safe(self, ACT_TRANSITION)
-        return
-    end
-    if self.AttackSwinging then
-        start_activity_safe(self, ACT_MP_ATTACK_STAND_ITEM1)
         return
     end
     if self.StateName == "terrify" then
@@ -444,15 +477,8 @@ function ENT:Initialize()
     self.Axe = ents.Create("prop_dynamic")
     if IsValid(self.Axe) then
         self.Axe:SetModel(self:GetBossWeaponModel())
-        self.Axe:SetPos(self:GetPos())
-        self.Axe:SetAngles(self:GetAngles())
         self.Axe:Spawn()
         self:AttachWeaponModelTF2Style()
-        timer.Simple(0, function()
-            if IsValid(self) then
-                self:AttachWeaponModelTF2Style()
-            end
-        end)
     end
 
     self:UpdateAnimationState()
@@ -626,10 +652,7 @@ function ENT:BeginMeleeSwing(target)
     if self.AttackSwinging then return end
     local cfg = self.DynamicConfig or DEFAULT_CONFIG
 
-    local played = add_gesture_safe(self, ACT_MP_ATTACK_STAND_ITEM1)
-    if not played then
-        play_sequence_safe(self, { "attackstand_item1", "attackstand_melee", "attack", "swing", "idle" })
-    end
+    add_gesture_safe(self, ACT_MP_ATTACK_STAND_ITEM1)
     self.AttackSwinging = true
     self.AttackTarget = target
     self.AttackHitAt = CurTime() + (tonumber(cfg.attack_hit_delay) or DEFAULT_CONFIG.attack_hit_delay)

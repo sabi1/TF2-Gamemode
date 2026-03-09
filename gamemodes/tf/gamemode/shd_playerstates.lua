@@ -217,6 +217,8 @@ function meta:UpdateStateProxies(state_override)
 end
 
 function meta:UpdateStateParticles(state_override)
+	if not IsValid(self) then return end
+
 	if SERVER and self:IsPlayer() then
 		umsg.Start("UpdatePlayerStateParticles")
 			umsg.Entity(self)

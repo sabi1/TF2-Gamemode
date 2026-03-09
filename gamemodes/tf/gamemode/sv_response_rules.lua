@@ -219,7 +219,10 @@ function Load(path)
 	end
 end
 
-local MissingCriterionErrorShown
+local MissingCriteriaWarned = {}
+local CriterionCompatAliases = {
+	WeaponIsShivMelee = "WeaponIsShiv",
+}
 
 function SelectResponse(ent, dbg)
 	for k,v in pairs(ent.TemporaryContexts or {}) do
@@ -233,12 +236,18 @@ function SelectResponse(ent, dbg)
 		local score = 0
 		for rcrit,cname in ipairs(rule.criteria) do
 			local criterion = Criteria[cname]
+			if not criterion then
+				local alias = CriterionCompatAliases[cname]
+				if alias then
+					criterion = Criteria[alias]
+				end
+			end
 			
 			if not criterion then
-				if not MissingCriterionErrorShown then
-					MissingCriterionErrorShown = true
-					ErrorNoHalt("WARNING: Criterion '"..cname.."' is required for rule '"..rname.."' but was not found")
-					ErrorNoHalt("WARNING: Outdated tf_response_rules.lua, some scenes might not function properly")
+				if not MissingCriteriaWarned[cname] then
+					MissingCriteriaWarned[cname] = true
+					ErrorNoHalt("WARNING: Criterion '"..cname.."' is required for rule '"..rname.."' but was not found\n")
+					ErrorNoHalt("WARNING: Outdated tf_response_rules.lua, some scenes might not function properly\n")
 				end
 			elseif IsMatchingCriterion(ent, criterion or {}) then
 				score = score + criterion.weight

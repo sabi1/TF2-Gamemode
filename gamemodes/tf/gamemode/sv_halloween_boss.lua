@@ -135,6 +135,18 @@ util.AddNetworkString("TF_HalloweenBossHudState")
 
 local ResolveManagedScenarioForEnt
 local FindActiveBossEntity
+local GM_REF = rawget(_G, "GAMEMODE") or rawget(_G, "GM")
+
+if not GM_REF then
+    GM_REF = {}
+    _G.GM = GM_REF
+end
+
+_G.GAMEMODE = _G.GAMEMODE or GM_REF
+
+local function GetGamemodeRef()
+    return rawget(_G, "GAMEMODE") or rawget(_G, "GM") or GM_REF
+end
 
 local function emit_sound_alias(ent, names)
     if not IsValid(ent) then return false end
@@ -153,15 +165,15 @@ local function emit_sound_alias(ent, names)
     return false
 end
 
-function GAMEMODE:GetIT()
+function GM_REF:GetIT()
     return IsValid(self.HalloweenITVictim) and self.HalloweenITVictim or NULL
 end
 
-function GAMEMODE:IsIT(ent)
+function GM_REF:IsIT(ent)
     return IsValid(ent) and self:GetIT() == ent
 end
 
-function GAMEMODE:SetIT(who)
+function GM_REF:SetIT(who)
     local oldIT = IsValid(self.HalloweenITVictim) and self.HalloweenITVictim or NULL
     local newIT = IsValid(who) and who or NULL
 
@@ -190,6 +202,15 @@ function GAMEMODE:SetIT(who)
 
     self.HalloweenITVictim = newIT
     hook.Run("TF_HalloweenITChanged", oldIT, newIT)
+end
+
+do
+    local gmLive = rawget(_G, "GAMEMODE")
+    if gmLive and gmLive ~= GM_REF then
+        gmLive.GetIT = GM_REF.GetIT
+        gmLive.IsIT = GM_REF.IsIT
+        gmLive.SetIT = GM_REF.SetIT
+    end
 end
 
 local function GetScenario()
@@ -232,7 +253,8 @@ local function StartInitialTimer(scenario, interval, variation)
 end
 
 local function IsSetupOrWaitingForPlayers()
-    if GAMEMODE and GAMEMODE.IsSetupPhase then
+    local gm = GetGamemodeRef()
+    if gm and gm.IsSetupPhase then
         return true
     end
 
@@ -396,7 +418,10 @@ local function GetLinkedControlPoints()
 end
 
 local function SetLakesideBossTruceActive(active)
-    GAMEMODE.HalloweenBossTruceActive = active and true or false
+    local gm = GetGamemodeRef()
+    if gm then
+        gm.HalloweenBossTruceActive = active and true or false
+    end
 
     local shouldLock = active and true or false
     if shouldLock then
@@ -790,8 +815,11 @@ local function ResetState()
     state.lockedPoints = {}
     state.lastHudStateKey = nil
     state.nextHudStateUpdate = 0
-    GAMEMODE.HalloweenBossTruceActive = false
-    GAMEMODE.HalloweenITVictim = NULL
+    local gm = GetGamemodeRef()
+    if gm then
+        gm.HalloweenBossTruceActive = false
+        gm.HalloweenITVictim = NULL
+    end
     BroadcastBossHudState(nil, true)
 end
 
@@ -861,7 +889,8 @@ hook.Add("TF_HalloweenBossStunned", "TF_HalloweenBoss_OnStunned", function(ent, 
 end)
 
 hook.Add("EntityTakeDamage", "TF_HalloweenBoss_LakesideTruce", function(target, dmginfo)
-    if not GAMEMODE.HalloweenBossTruceActive then return end
+    local gm = GetGamemodeRef()
+    if not gm or not gm.HalloweenBossTruceActive then return end
     if not dmginfo then return end
 
     local attacker = dmginfo:GetAttacker()
@@ -884,8 +913,8 @@ hook.Add("EntityTakeDamage", "TF_HalloweenBoss_LakesideTruce", function(target, 
         end
     end
 
-    local attackerTeam = GAMEMODE:EntityTeam(attacker)
-    local targetTeam = GAMEMODE:EntityTeam(target)
+    local attackerTeam = gm.EntityTeam and gm:EntityTeam(attacker) or (IsValid(attacker) and attacker.Team and attacker:Team() or -1)
+    local targetTeam = gm.EntityTeam and gm:EntityTeam(target) or (IsValid(target) and target.Team and target:Team() or -1)
     local gameplayAttacker = attackerTeam == TEAM_RED or attackerTeam == TEAM_BLU
     local gameplayTarget = targetTeam == TEAM_RED or targetTeam == TEAM_BLU
     if not gameplayAttacker or not gameplayTarget then return end
@@ -920,4 +949,23 @@ concommand.Add("tf_halloween_force_boss_spawn", function(ply)
 
     state.forceSpawn = true
     RunBossScheduler()
+end)
+
+-- Backward-compatible aliases for older/local command naming.
+concommand.Add("tf_halloween_boss_force_spawn", function(ply)
+	if IsValid(ply) and not ply:IsAdmin() then
+		return
+	end
+
+	state.forceSpawn = true
+	RunBossScheduler()
+end)
+
+concommand.Add("tf_force_halloween_boss_spawn", function(ply)
+	if IsValid(ply) and not ply:IsAdmin() then
+		return
+	end
+
+	state.forceSpawn = true
+	RunBossScheduler()
 end)

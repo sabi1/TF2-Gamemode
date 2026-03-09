@@ -3010,7 +3010,7 @@ hook.Add("EntityEmitSound", "MVMVoices", function(snd)
 				end
 			end
 			return true
-		elseif IsValid(snd.Entity) and snd.Entity:GetModel() and snd.Entity:IsPlayer() and snd.Entity:IsHL2() and (string.find(snd.SoundName, "fallpain") or string.find(snd.SoundName, "damage")) then
+		elseif IsValid(snd.Entity) and snd.Entity:GetModel() and snd.Entity:IsPlayer() and snd.Entity.IsHL2 and snd.Entity:IsHL2() and (string.find(snd.SoundName, "fallpain") or string.find(snd.SoundName, "damage")) then
 			snd.SoundName = string.Replace(snd.SoundName, snd.SoundName, "player/pl_fallpain"..table.Random({1,3})..".wav")
 			return true
 		elseif IsValid(snd.Entity) and snd.Entity:GetModel() and snd.Entity:IsPlayer() and (snd.Entity:GetPlayerClass() == "hl1scientist" || snd.Entity:GetPlayerClass() == "hl1barney") and (string.find(snd.SoundName, "fallpain") or string.find(snd.SoundName, "damage")) then

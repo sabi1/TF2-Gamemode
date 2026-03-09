@@ -2049,7 +2049,8 @@ hook.Add("PlayerInitialSpawn", "TF_MVM_ReadyBindF4", function(pl)
 
 	timer.Simple(1, function()
 		if not IsValid(pl) then return end
-		pl:ConCommand("bind F4 player_ready_toggle")
+		-- Server-triggered "bind" is blocked in modern GMod; provide guidance instead.
+		pl:PrintMessage(HUD_PRINTTALK, "[TF2-Gamemode] Tip: bind F4 \"player_ready_toggle\"")
 	end)
 end)
 
@@ -2310,7 +2311,7 @@ function GM:PlayerSpawn(ply)
 				if ply:Team() == TEAM_BLU then
                     for _,flag in ipairs(ents.FindByClass("item_teamflag_mvm")) do
                         if (!IsValid(flag.Carrier) and !flag.NextReturn) then
-                            if (bot:GetPlayerClass() != "engineer" and bot:GetPlayerClass() != "medic" and bot:GetPlayerClass() != "sentrybuster") then
+                            if (ply:GetPlayerClass() != "engineer" and ply:GetPlayerClass() != "medic" and ply:GetPlayerClass() != "sentrybuster") then
                                 flag:Pickup(ply)
                             end
                         end
