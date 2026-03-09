@@ -92,17 +92,6 @@ local function getNearestAreaForTeam(pos, team)
 	return navmesh.GetNearestNavArea(pos, true, 10000, true, true)
 end
 
-local function isInsideFriendlySpawnArea(bot)
-	if not IsValid(bot) then return false end
-	if bot.GetNWBool and bot:GetNWBool("InRespawnRoom", false) then
-		return true
-	end
-	local attr = getFriendlySpawnAttributeForBot(bot)
-	if not attr then return false end
-	local area = getNearestAreaForTeam(bot:GetPos(), bot:Team())
-	return hasAreaTFAttribute(area, attr)
-end
-
 local function getAreaSteerPos(area, fromPos, fallbackPos)
 	if not IsValid(area) then
 		return fallbackPos or fromPos
@@ -180,18 +169,6 @@ local function tryHardRecover(bot, st, targetPos, now)
 	if not cv_hard_recover:GetBool() then return false end
 	st.path.nextHardRecoverAt = tonumber(st.path.nextHardRecoverAt or 0)
 	if now < st.path.nextHardRecoverAt then return false end
-
-	if isInsideFriendlySpawnArea(bot) or now < tonumber(bot._tfbotSpawnRecoverGraceUntil or 0) then
-		st.path.nextHardRecoverAt = now + 0.8
-		debugLog(bot, "path_hard_recover_blocked", 0.6, string.format(
-			"hard_recover=blocked_in_spawn pos=%s target=%s graceUntil=%.2f",
-			fmtVec(bot:GetPos()),
-			fmtVec(targetPos),
-			tonumber(bot._tfbotSpawnRecoverGraceUntil or 0)
-		))
-		return false
-	end
-
 	local recoverPos = findHardRecoverPos(bot, targetPos)
 	if not isvector(recoverPos) then
 		st.path.nextHardRecoverAt = now + 1.25
@@ -556,9 +533,6 @@ function M:Drive(bot, cmd, state)
 	bot.botPos = targetPos
 
 	local now = CurTime()
-	if isInsideFriendlySpawnArea(bot) then
-		bot._tfbotSpawnRecoverGraceUntil = now + 2.5
-	end
 	state.path.lastRepath = state.path.lastRepath or 0
 	state.path.lastRepathTry = state.path.lastRepathTry or 0
 	state.path.nextRepath = state.path.nextRepath or 0
