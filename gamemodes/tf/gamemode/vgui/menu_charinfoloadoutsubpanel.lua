@@ -60,6 +60,14 @@ local ActiveTauntLoadoutPanel
 local getResolvedItemImagePath
 local getDecoratedDisplayName
 
+local function getClassLoadoutSlotCount(className)
+	className = string.lower(tostring(className or ""))
+	if className == "engineer" or className == "spy" then
+		return 8
+	end
+	return LOADOUT_SLOT_COUNT
+end
+
 local function normalizeTauntLoadoutSplit(split)
 	local out = {}
 	for i = 1, TAUNT_SLOT_COUNT do
@@ -659,9 +667,10 @@ local function makeLoadoutPlaceholder(label)
 	}
 end
 
-local function normalizeLoadoutSplit(split)
+local function normalizeLoadoutSplit(split, className)
 	local out = {}
-	for i = 1, LOADOUT_SLOT_COUNT do
+	local slotCount = getClassLoadoutSlotCount(className)
+	for i = 1, slotCount do
 		out[i] = tostring(tonumber(split and split[i]) or -1)
 	end
 	return out
@@ -729,6 +738,10 @@ local function buildLoadoutItemStatsLines(className, loadoutSplit)
 		if slot == 5 then return "Cosmetic 2" end
 		if slot == 6 then return "Cosmetic 3" end
 		if slot == 7 then return "Action" end
+		if slot == 8 then
+			if className == "engineer" then return "PDA" end
+			if className == "spy" then return "Watch" end
+		end
 		return "Slot " .. tostring(slot)
 	end
 
@@ -759,7 +772,8 @@ local function buildLoadoutItemStatsLines(className, loadoutSplit)
 		{ text = "EQUIPPED ITEM STATS", col = neutralCol },
 	}
 
-	for slot = 1, LOADOUT_SLOT_COUNT do
+	local classSlotCount = getClassLoadoutSlotCount(className)
+	for slot = 1, classSlotCount do
 		local itemId = tonumber(loadoutSplit[slot])
 		if itemId and itemId > 0 then
 			local item = byId[itemId]
@@ -797,9 +811,10 @@ local function updateLoadout(type, id, update, class)
 	local convar = GetConVar("loadout_" .. class)
 	if not convar then return end
 	local slot = tonumber(type)
-	if not slot or slot < 1 or slot > LOADOUT_SLOT_COUNT then return end
+	local slotCount = getClassLoadoutSlotCount(class)
+	if not slot or slot < 1 or slot > slotCount then return end
 
-	local split = normalizeLoadoutSplit(string.Split(convar:GetString(), ","))
+	local split = normalizeLoadoutSplit(string.Split(convar:GetString(), ","), class)
 	split[slot] = tostring(tonumber(id) or -1)
 	convar:SetString(table.concat(split, ","))
 	if update then
@@ -853,7 +868,7 @@ function PANEL:PerformLayout()
 	local classPanelX = math.floor((screenW - classPanelW) * 0.5)
 	local classPanelY = math.floor(74 * layoutScale)
 	
-	local weapons = {{}, {}, {}, {}, {}}
+	local weapons = {{}, {}, {}, {}, {}, {}}
 
 	for id, item in pairs(tf_items.Items) do
 		if istable(item) and itemUsableByClass(item, oldclass) then
@@ -882,10 +897,16 @@ function PANEL:PerformLayout()
 					weapons[5][id] = item
 				end
 			end
+
+			if oldclass == "engineer" and item.item_slot == "pda" then
+				weapons[6][id] = item
+			elseif oldclass == "spy" and item.item_slot == "pda2" then
+				weapons[6][id] = item
+			end
 		end
 	end
 	
-	local loadout = normalizeLoadoutSplit(string.Split(convar:GetString(), ","))
+	local loadout = normalizeLoadoutSplit(string.Split(convar:GetString(), ","), oldclass)
 
 	-- The attribute panel, which displays the name and attributes of each item
 	if not self.AttributePanel then
@@ -907,6 +928,11 @@ function PANEL:PerformLayout()
 		makeLoadoutPlaceholder("COSMETIC"),
 		makeLoadoutPlaceholder("ACTION"),
 	}
+	if oldclass == "engineer" then
+		Items[#Items + 1] = makeLoadoutPlaceholder("PDA")
+	elseif oldclass == "spy" then
+		Items[#Items + 1] = makeLoadoutPlaceholder("WATCH")
+	end
 
 	for name, wep in pairs(tf_items.Items) do
 		if istable(wep) then	
@@ -925,6 +951,8 @@ function PANEL:PerformLayout()
 					Items[6] = makeLoadoutItemEntry(wep)
 				elseif wep.id == tonumber(loadout[7]) then
 					Items[7] = makeLoadoutItemEntry(wep)
+				elseif wep.id == tonumber(loadout[8]) then
+					Items[8] = makeLoadoutItemEntry(wep)
 				end
 			else
 				if wep.id == tonumber(loadout[1]) then
@@ -941,11 +969,31 @@ function PANEL:PerformLayout()
 					Items[6] = makeLoadoutItemEntry(wep)
 				elseif wep.id == tonumber(loadout[7]) then
 					Items[7] = makeLoadoutItemEntry(wep)
+				elseif wep.id == tonumber(loadout[8]) then
+					Items[8] = makeLoadoutItemEntry(wep)
 				end
 			end
 		end
 	end
 	local function getSlotPanelLayout(slotIndex)
+		local useEvenColumns = (oldclass == "engineer" or oldclass == "spy") and #Items >= 8
+		if useEvenColumns then
+			local leftColumnRows = {
+				[1] = 0,
+				[2] = 1,
+				[3] = 2,
+				[8] = 3,
+			}
+
+			local leftRow = leftColumnRows[slotIndex]
+			if leftRow ~= nil then
+				return leftColumnX, slotStartY + leftRow * (slotTall + slotGapY), tooltipOffsetLeft
+			end
+
+			local rightRow = math.max(0, slotIndex - 4)
+			return rightColumnX, slotStartY + rightRow * (slotTall + slotGapY), tooltipOffsetRight
+		end
+
 		if slotIndex <= 3 then
 			local row = slotIndex - 1
 			return leftColumnX, slotStartY + row * (slotTall + slotGapY), tooltipOffsetLeft
@@ -1024,6 +1072,8 @@ function PANEL:PerformLayout()
 					t.DoClick = function() hatSelector("hat",6,oldclass,weapons[4]) end
 				elseif (k == 7) then
 					t.DoClick = function() actionSelector(7, oldclass, weapons[5]) end
+				elseif (k == 8) then
+					t.DoClick = function() itemSelector(8, weapons[6], self:GetParent(), GetConVar("tf_hud_loadout_class"):GetInt(), oldclass) end
 				end
 			else
 				if (k == 2) then
@@ -1040,6 +1090,8 @@ function PANEL:PerformLayout()
 					t.DoClick = function() hatSelector("hat",6,oldclass,weapons[4]) end
 				elseif (k == 7) then
 					t.DoClick = function() actionSelector(7, oldclass, weapons[5]) end
+				elseif (k == 8) then
+					t.DoClick = function() itemSelector(8, weapons[6], self:GetParent(), GetConVar("tf_hud_loadout_class"):GetInt(), oldclass) end
 				end
 			end
 		end
@@ -1704,10 +1756,10 @@ function PANEL:Init()
 				RunConsoleCommand("loadout_pyro","-1,-1,-1,-1,-1,-1,-1")
 				RunConsoleCommand("loadout_demoman","-1,-1,-1,-1,-1,-1,-1")
 				RunConsoleCommand("loadout_heavy","-1,-1,-1,-1,-1,-1,-1")
-				RunConsoleCommand("loadout_engineer","-1,-1,-1,-1,-1,-1,-1")
+				RunConsoleCommand("loadout_engineer","-1,-1,-1,-1,-1,-1,-1,-1")
 				RunConsoleCommand("loadout_medic","-1,-1,-1,-1,-1,-1,-1")
 				RunConsoleCommand("loadout_sniper","-1,-1,-1,-1,-1,-1,-1")
-				RunConsoleCommand("loadout_spy","-1,-1,-1,-1,-1,-1,-1")
+				RunConsoleCommand("loadout_spy","-1,-1,-1,-1,-1,-1,-1,-1")
 				forceCloseLoadoutPanels()
 				timer.Simple(5, function()
 					forceCloseLoadoutPanels()
@@ -1992,6 +2044,13 @@ local function mapItemToLoadoutSlot(item, className)
 
 	if isActionSlotItem(item) then
 		return 7
+	end
+
+	if className == "engineer" and item.item_slot == "pda" then
+		return 8
+	end
+	if className == "spy" and item.item_slot == "pda2" then
+		return 8
 	end
 
 	if item.item_class == "tf_wearable_item" then
@@ -2960,7 +3019,7 @@ function TF_OpenStandaloneBackpack(initialClassName, initialClassIndex, forcedLo
 		local rawCandidates = {}
 		for _, item in ipairs(steamInstances or {}) do
 			if istable(item) then
-				if item.item_slot == "primary" or item.item_slot == "secondary" or item.item_slot == "melee" or item.item_slot == "head" or item.item_slot == "misc" or item.item_slot == "action" or item.item_slot == "taunt" or isActionSlotItem(item) or isTauntItem(item) then
+				if item.item_slot == "primary" or item.item_slot == "secondary" or item.item_slot == "melee" or item.item_slot == "pda" or item.item_slot == "pda2" or item.item_slot == "head" or item.item_slot == "misc" or item.item_slot == "action" or item.item_slot == "taunt" or isActionSlotItem(item) or isTauntItem(item) then
 					rawCandidates[#rawCandidates + 1] = item
 				end
 			end
@@ -3276,14 +3335,15 @@ function TF_OpenStandaloneBackpack(initialClassName, initialClassIndex, forcedLo
 
 			local equipped = false
 			local itemId = tonumber(item.id)
-			if itemId and #split >= 6 then
+			local classSlotCount = getClassLoadoutSlotCount(activeClass)
+			if itemId and #split >= classSlotCount then
 				local tauntSlot = forcedSlotToTauntSlot(forcedSlot)
 				if tauntSlot then
 					equipped = tonumber(tauntSplit[tauntSlot]) == itemId
 				elseif forcedSlot then
 					equipped = tonumber(split[forcedSlot]) == itemId
 				else
-					for s = 1, 6 do
+					for s = 1, classSlotCount do
 						if tonumber(split[s]) == itemId then
 							equipped = true
 							break

@@ -1124,12 +1124,12 @@ function meta:Decap()
 	self.ShouldGib = true
 	if self:IsHL2() then
 		umsg.Start("GibNPCHead")
-			umsg.Long(self:UserID())
+			umsg.Entity(self)
 			umsg.Short(self.DeathFlags)
 		umsg.End()
 	else
 		umsg.Start("GibPlayerHead")
-			umsg.Long(self:UserID())
+			umsg.Entity(self)
 			umsg.Short(self.DeathFlags)
 		umsg.End()
 	end
@@ -1137,17 +1137,30 @@ end
 
 
 function meta:SetBuilding(group, mode)
+	local buildings = self.Buildings
+	if not buildings or not buildings[group] or not buildings[group][mode] then
+		return false
+	end
+	local cost = tonumber(buildings[group][mode].cost or 0) or 0
+	if self:GetAmmoCount(TF_METAL) < cost then
+		return false
+	end
+
 	local builder = self:GetWeapon("tf_weapon_builder")
-	if self.Buildings[group] and self.Buildings[group][mode] then
-		local cost = self.Buildings[group][mode].cost
-		if self:GetAmmoCount(TF_METAL) < cost then
+	if not IsValid(builder) then
+		self:GiveItem("TF_WEAPON_BUILDER")
+		builder = self:GetWeapon("tf_weapon_builder")
+		if not IsValid(builder) then
 			return false
 		end
-		
-		builder.dt.BuildGroup = group
-		builder.dt.BuildMode = mode
-		return true
 	end
+
+	builder.dt.BuildGroup = group
+	builder.dt.BuildMode = mode
+	if builder.SetupBuilding then
+		builder:SetupBuilding(buildings[group][mode])
+	end
+	return true
 end
 
 function meta:SetBuilding2(group, mode)
@@ -1181,140 +1194,190 @@ local function CountOwnedSentries(ply)
 	return regular, disposable
 end
 
+local function IsOwnedEngineerBuilding(ent, ply)
+	if not IsValid(ent) or not IsValid(ply) then return false end
+	return ent.Player == ply or ent:GetBuilder() == ply or ent:GetOwner() == ply
+end
+
 function meta:Build(number1,number2)
-	local args
 	local group = tonumber(number1)
 	local sub = tonumber(number2)
-	
+	if not group then return false end
+	if not sub then
+		if not old_group_translate[group] then return false end
+		group, sub = unpack(old_group_translate[group])
+	end
+
 	local builder = self:GetWeapon("tf_weapon_builder")
-	
-	if builds[group] and (!GetConVar("tf_unlimited_buildings"):GetBool()) then
+	if not IsValid(builder) then
+		self:GiveItem("TF_WEAPON_BUILDER")
+		builder = self:GetWeapon("tf_weapon_builder")
+	end
+	if not IsValid(builder) then return false end
+
+	if builds[group] and not GetConVar("tf_unlimited_buildings"):GetBool() then
 		local tab = ents.FindByClass(builds[group])
-		local disposableLimit = 0
-		if builds[group] == "obj_sentrygun" and self.TF_MVM_Dynamic then
-			disposableLimit = math.max(0, math.floor(tonumber(self.TF_MVM_Dynamic.DisposableSentryCount) or 0))
-		end
-		for k, v in pairs(tab) do
-			if builds[group] == "obj_sentrygun" then
-				local regularCount, disposableCount = CountOwnedSentries(self)
-				local allowDisposable = disposableLimit > 0 and regularCount >= 1 and disposableCount < disposableLimit
-				if regularCount >= 1 and not allowDisposable then
-					return
+		if builds[group] == "obj_sentrygun" then
+			local disposableLimit = 0
+			if self.TF_MVM_Dynamic then
+				disposableLimit = math.max(0, math.floor(tonumber(self.TF_MVM_Dynamic.DisposableSentryCount) or 0))
+			end
+			local regularCount, disposableCount = CountOwnedSentries(self)
+			local allowDisposable = disposableLimit > 0 and regularCount >= 1 and disposableCount < disposableLimit
+			if regularCount >= 1 and not allowDisposable then
+				self:EmitSound("Player.DenyWeaponSelection")
+				return false
+			end
+		elseif builds[group] ~= "obj_teleporter" then
+			for _, v in pairs(tab) do
+				if IsOwnedEngineerBuilding(v, self) then
+					self:EmitSound("Player.DenyWeaponSelection")
+					return false
 				end
-				break
-			elseif v.Player == self and builds[group] ~= "obj_teleporter" then
-				return
-			elseif v.Player == self and builds[group] == "obj_teleporter" then
-				for i, o in pairs(tab) do
-					if (sub == 0 and v:IsEntrance() and o:IsEntrance()) or (sub == 1 and v:IsExit() and o:IsExit()) then
-						return
+			end
+		else
+			for _, v in pairs(tab) do
+				if IsOwnedEngineerBuilding(v, self) then
+					if (sub == 0 and v:IsEntrance()) or (sub == 1 and v:IsExit()) then
+						self:EmitSound("Player.DenyWeaponSelection")
+						return false
 					end
 				end
 			end
 		end
 	end
+
 	builder:SetHoldType("BUILDING")
-	
+	builder.HoldType = "BUILDING"
 	builder.Moving = false
-	
-	timer.Simple(25, function()
-		if ( builder:IsValid() and builder.Moving != false and self:KeyPressed( IN_FORWARD ) ) then 
-			--self:EmitSound("vo/engineer_sentrymoving0"..math.random(1,2)..".wav", 80, 100)
-		else
-			return
-		end
-	end)	
-	
-	if not IsValid(builder) then return end
-	if not group then return end
-	
-	if not sub then
-		if not old_group_translate[group] then return end
-		
-		group, sub = unpack(old_group_translate[group])
-	end
-	local Buildings = {}
-	local Buildings2 = {}
-	local Buildings3 = {}
-	local Buildings4 = {}
-	table.remove(Buildings, 1) 
-	table.remove(Buildings2, 1) 
+
 	local current = self:GetActiveWeapon()
-	for k,v in ipairs(ents.FindByClass("obj_sentrygun")) do
-		if IsValid(v) and v:GetOwner() == self then
-			table.insert(Buildings, v:EntIndex()) 
-			PrintTable(Buildings)
-		elseif !IsValid(v) then
-			table.remove(Buildings, 1) 
-		end
+	if not self:SetBuilding(group, sub) then
+		self:EmitSound("Player.DenyWeaponSelection")
+		return false
 	end
-	for k,v in ipairs(ents.FindByClass("obj_dispenser")) do
-		if IsValid(v) and v:GetOwner() == self then
-			table.insert(Buildings2, v:EntIndex())
-		elseif !IsValid(v) then
-			table.remove(Buildings2, 1) 
-		end
-	end
-	for k,v in ipairs(ents.FindByClass("obj_teleporter")) do 
-		if IsValid(v) and v:GetOwner() == self then
-			table.insert(Buildings3, v:EntIndex())
-		elseif !IsValid(v) then
-			table.remove(Buildings3, 1) 
-			table.remove(Buildings3, 2)
-		end
-	end
-	if self:SetBuilding(group, sub) and current ~= builder then
-		if current.IsPDA then
-			local last = self:GetWeapon(self.LastWeapon)
-			if not IsValid(last) or last.IsPDA then
+
+	if IsValid(current) and current.IsPDA then
+		local last = self:GetWeapon(self.LastWeapon)
+		if not IsValid(last) or last.IsPDA then
 			last = self:GetWeapons()[1]
 		end
-		builder.LastWeapon = last:GetClass()
-		self:SelectWeapon(last:GetClass())
-	else
+		if IsValid(last) then
+			builder.LastWeapon = last:GetClass()
+			self:SelectWeapon(last:GetClass())
+		end
+	elseif IsValid(current) then
 		builder.LastWeapon = current:GetClass()
 	end
+
 	self:SelectWeapon("tf_weapon_builder")
+	return true
 end
  
 end
 function meta:Move(number1,number2)
 	local group = tonumber(number1)
 	local sub = tonumber(number2) 
-	if self:GetInfoNum("tf_robot", 0) == 1 then
-		--self:EmitSound("vo/mvm/norm/engineer_mvm_sentrypacking0"..math.random(1,3)..".wav", 80, 100)
-	else
-		--self:EmitSound("vo/engineer_sentrypacking0"..math.random(1,3)..".wav", 80, 100)		
+	if not group then return false end
+	if not sub then
+		if not old_group_translate[group] then return false end
+		group, sub = unpack(old_group_translate[group])
 	end
+
 	local builder = self:GetWeapon("tf_weapon_builder")
+	if not IsValid(builder) then
+		self:GiveItem("TF_WEAPON_BUILDER")
+		builder = self:GetWeapon("tf_weapon_builder")
+	end
 	
-	if not IsValid(builder) then return end
-	if not group then return end
+	if not IsValid(builder) then return false end
 	
 	builder:SetHoldType("BUILDING_DEPLOYED")
 	builder.HoldType = "BUILDING_DEPLOYED"
 	
-	if not sub then
-		if not old_group_translate[group] then return end
-		
-		group, sub = unpack(old_group_translate[group])
-	end
-	
 	local current = self:GetActiveWeapon()
-	if builder:SetBuilding2(group, sub) and current ~= builder then
-		if current.IsPDA then
+	if builder:SetBuilding2(group, sub) and (not IsValid(current) or current ~= builder) then
+		if IsValid(current) and current.IsPDA then
 			local last = self:GetWeapon(self.LastWeapon)
 			if not IsValid(last) or last.IsPDA then
 				last = self:GetWeapons()[1]
 			end
 			builder.LastWeapon = last:GetClass()
 			self:SelectWeapon(last:GetClass())
-		else
+		elseif IsValid(current) then
 			builder.LastWeapon = current:GetClass()
 		end
 		self:SelectWeapon("tf_weapon_builder")
 		builder.Moving = true
+		return true
 	end
+	self:EmitSound("Player.DenyWeaponSelection")
+	return false
+end
+
+function meta:DestroyBuilding(number1, number2)
+	local group = tonumber(number1)
+	local sub = tonumber(number2)
+	if group == nil then return false end
+	if sub == nil then
+		local mapped = old_group_translate[group]
+		if not mapped then
+			return false
+		end
+		group, sub = mapped[1], mapped[2]
+	end
+	local destroyed = false
+
+	if group == 2 and sub == 0 then
+		for _, v in pairs(ents.FindByClass("obj_sentrygun")) do
+			if IsOwnedEngineerBuilding(v, self) then
+				v:Explode()
+				destroyed = true
+			end
+		end
+	end
+	if group == 0 and sub == 0 then
+		for _, v in pairs(ents.FindByClass("obj_dispenser")) do
+			if IsOwnedEngineerBuilding(v, self) then
+				v:Explode()
+				destroyed = true
+			end
+		end
+	end
+	if group == 1 and sub == 0 then
+		for _, v in pairs(ents.FindByClass("obj_teleporter")) do
+			if IsOwnedEngineerBuilding(v, self) and v:IsExit() ~= true then
+				v:Explode()
+				destroyed = true
+			end
+		end
+	end
+	if group == 1 and sub == 1 then
+		for _, v in pairs(ents.FindByClass("obj_teleporter")) do
+			if IsOwnedEngineerBuilding(v, self) and v:IsExit() ~= false then
+				v:Explode()
+				destroyed = true
+			end
+		end
+	end
+
+	-- Valve flow parity: return to build context after a successful destroy.
+	if destroyed and self:GetPlayerClass() == "engineer" then
+		timer.Simple(0, function()
+			if not IsValid(self) then return end
+			local buildPDA = self:GetWeapon("tf_weapon_pda_engineer_build")
+			if IsValid(buildPDA) then
+				self:SelectWeapon("tf_weapon_pda_engineer_build")
+				return
+			end
+			local builder = self:GetWeapon("tf_weapon_builder")
+			if IsValid(builder) then
+				self:SelectWeapon("tf_weapon_builder")
+			end
+		end)
+	end
+
+	return destroyed
 end
 
 function meta:RandomSentence(group)

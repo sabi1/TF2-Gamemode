@@ -7,11 +7,34 @@ local load_time = SysTime()
 local blacklist = {["Frying Pan"] = true, ["Golden Frying Pan"] = true, ["The PASSTIME Jack"] = true, ["TTG Max Pistol"] = true, ["Sexo de Pene Gay"] = true, ["Team Spirit"] = true,} -- Items that should NEVER show, must be their item.name if a hat/weapon!
 local name_blacklist = {["The AK47"] = true,} -- Weapons that have names of other weapons must have their item.name put in here
 
+do
+	local meta = FindMetaTable("Player")
+	if meta then
+		-- Ensure core player extension methods exist before HUD/VGUI files run.
+		if meta.IsHL2 == nil then
+			function meta:IsHL2()
+				return self:GetNWBool("IsHL2", false)
+			end
+		end
+
+		if meta.GetTFItems == nil then
+			function meta:GetTFItems()
+				local t = self:GetWeapons()
+				if self.PlayerItemList then
+					table.Add(t, self.PlayerItemList)
+				end
+				return t
+			end
+		end
+	end
+end
+
 include("cl_scheme.lua")
 include("cl_payload.lua")
 include("cl_tf2_res.lua")
 include("cl_hud.lua")
 include("tf_lang_module.lua")
+include("particle_manifest.lua")
 include("shd_items.lua")
 tf_lang.Load("tf_english.txt")
 
@@ -644,7 +667,7 @@ end)
 
 
 usermessage.Hook("GibPlayerHead", function(um)
-	local pl = GetPlayerByUserID(um:ReadLong())
+	local pl = um:ReadEntity()
 	if not IsValid(pl) then return end
 	
 	pl.DeathFlags = um:ReadShort()
@@ -4362,10 +4385,10 @@ local function MergeSteamInventory(ply)
 					pyro = {208, 12, 192, -1, -1, -1, -1},
 					demoman = {206, 207, 191, -1, -1, -1, -1},
 					heavy = {202, 11, 195, -1, -1, -1, -1},
-					engineer = {9, 209, 197, -1, -1, -1, -1},
+					engineer = {9, 209, 197, -1, -1, -1, -1, 25},
 					medic = {204, 211, 198, -1, -1, -1, -1},
 					sniper = {201, 203, 193, -1, -1, -1, -1},
-					spy = {210, 736, 194, -1, -1, -1, -1},
+					spy = {210, 736, 194, -1, -1, -1, -1, 30},
 				}
 				local tauntLoadouts = {
 					scout = {-1, -1, -1, -1, -1, -1, -1, -1},
@@ -4398,8 +4421,8 @@ local function MergeSteamInventory(ply)
 					[5] = {name = "medic", slots = {[0] = 1, [1] = 2, [2] = 3, [7] = 4, [8] = 5, [9] = 7, [10] = 6}},
 					[6] = {name = "heavy", slots = {[0] = 1, [1] = 2, [2] = 3, [7] = 4, [8] = 5, [9] = 7, [10] = 6}, swapPrimary = true},
 					[7] = {name = "pyro", slots = {[0] = 1, [1] = 2, [2] = 3, [7] = 4, [8] = 5, [9] = 7, [10] = 6}, swapPrimary = true},
-					[8] = {name = "spy", slots = {[1] = 1, [4] = 2, [2] = 3, [7] = 4, [8] = 5, [9] = 7, [10] = 6}},
-					[9] = {name = "engineer", slots = {[0] = 1, [1] = 2, [2] = 3, [7] = 4, [8] = 5, [9] = 7, [10] = 6}},
+					[8] = {name = "spy", slots = {[1] = 1, [4] = 2, [2] = 3, [6] = 8, [7] = 4, [8] = 5, [9] = 7, [10] = 6}},
+					[9] = {name = "engineer", slots = {[0] = 1, [1] = 2, [2] = 3, [5] = 8, [7] = 4, [8] = 5, [9] = 7, [10] = 6}},
 				}
 
 				local slotZeroSecondaryDefs = {
@@ -4486,10 +4509,10 @@ local function MergeSteamInventory(ply)
 							pyro = {1, 2, 3, 4, 5, 6, 7},
 							demoman = {2, 1, 3, 4, 5, 6, 7},
 							heavy = {1, 2, 3, 4, 5, 6, 7},
-							engineer = {1, 2, 3, 4, 5, 6, 7},
+							engineer = {1, 2, 3, 4, 5, 6, 7, 8},
 							medic = {1, 2, 3, 4, 5, 6, 7},
 							sniper = {1, 2, 3, 4, 5, 6, 7},
-							spy = {2, 1, 3, 4, 5, 6, 7},
+							spy = {2, 1, 3, 4, 5, 6, 7, 8},
 						}
 
 						for _, className in ipairs(outputOrder) do
@@ -4500,7 +4523,8 @@ local function MergeSteamInventory(ply)
 								local source = loadouts[className]
 								local propSource = loadoutProperties[className] or {}
 								local mapping = outputSlotMap[className]
-								for i = 1, 7 do
+								local slotCount = #mapping
+								for i = 1, slotCount do
 									local sourceIndex = mapping[i]
 									split[i] = source[sourceIndex] or -1
 									propSplit[i] = propSource[sourceIndex]

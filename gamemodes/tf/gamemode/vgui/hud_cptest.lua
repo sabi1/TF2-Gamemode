@@ -607,12 +607,7 @@ function PANEL:Paint()
 		end
 	end
 
-	local startY
-	if mode == "koth" then
-		startY = CPRes.kothStripTop * scale
-	else
-		startY = screenH - totalHeight - CPRes.stripBottomOffset * scale
-	end
+	local startY = screenH - totalHeight - CPRes.stripBottomOffset * scale
 
 	local activeX, activeY, activeIndex
 	for rowIndex, row in ipairs(rows) do

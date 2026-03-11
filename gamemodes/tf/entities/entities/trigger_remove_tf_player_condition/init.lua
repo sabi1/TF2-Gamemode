@@ -44,11 +44,24 @@ function ENT:KeyValue(key, value)
 end
 
 function ENT:GetConditionId()
-	return resolve_cond(self.Properties.condition or self.Properties.cond or self.Properties.playercondition or self.Properties.removecondition)
+	return resolve_cond(
+		self.Properties.condition
+		or self.Properties.cond
+		or self.Properties.playercondition
+		or self.Properties.removecondition
+		or self.Properties.conditionvalue
+		or self.Properties.m_ncondition
+	)
 end
 
 function ENT:GetAddBackDuration()
-	local d = tonumber(self.Properties.duration or self.Properties.condduration or self.Properties.addduration)
+	local d = tonumber(
+		self.Properties.duration
+		or self.Properties.condduration
+		or self.Properties.addduration
+		or self.Properties.conditionduration
+		or self.Properties.m_fduration
+	)
 	if d == nil then
 		return PERMANENT_CONDITION or -1
 	end

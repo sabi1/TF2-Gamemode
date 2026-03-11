@@ -1,6 +1,14 @@
 
+local function TFIsHL2Player(pl)
+	if not IsValid(pl) then return false end
+	if pl.IsHL2 then
+		return pl:IsHL2()
+	end
+	return pl:GetNWBool("IsHL2", false)
+end
+
 function GM:HandlePlayerJumping(pl)
-	if pl:IsHL2() then
+	if TFIsHL2Player(pl) then
 		return self.BaseClass:HandlePlayerJumping(pl)
 	end
 	pl:SetPlaybackRate( 1 )
@@ -129,7 +137,7 @@ function GM:HandlePlayerJumping(pl)
 end
 
 function GM:HandlePlayerDucking(pl, vel)
-	if pl:IsHL2() then
+	if TFIsHL2Player(pl) then
 		return self.BaseClass:HandlePlayerDucking(pl, vel)
 	end
 	
@@ -154,7 +162,7 @@ function GM:HandlePlayerDucking(pl, vel)
 end
 
 function GM:HandlePlayerSwimming(pl)
-	if pl:IsHL2() then
+	if TFIsHL2Player(pl) then
 		return self.BaseClass:HandlePlayerSwimming(pl)
 	end
 	
@@ -179,7 +187,7 @@ function GM:HandlePlayerSwimming(pl)
 end
 
 function GM:HandlePlayerDriving(pl)
-	if pl:IsHL2() then
+	if TFIsHL2Player(pl) then
 		return self.BaseClass:HandlePlayerDriving(pl)
 	end
 
@@ -187,7 +195,7 @@ function GM:HandlePlayerDriving(pl)
 end
 
 function GM:MouthMoveAnimation( ply )
-	if (ply:IsHL2()) then
+	if TFIsHL2Player(ply) then
 
 		local flexes = {
 			ply:GetFlexIDByName( "jaw_drop" ),
@@ -229,7 +237,7 @@ function GM:UpdateAnimation(pl, velocity, maxseqgroundspeed)
 		end
 	end
 	GAMEMODE:MouthMoveAnimation( pl )
-	if pl:IsHL2() then
+	if TFIsHL2Player(pl) then
 		
 		local vel = 1 * velocity
 		vel:Rotate(Angle(0,-pl:EyeAngles().y,0))
@@ -405,7 +413,7 @@ end
 
 function GM:GrabEarAnimation( ply )
 
-	if ply:IsHL2() then
+	if TFIsHL2Player(ply) then
 		return self.BaseClass:GrabEarAnimation(ply)
 	end
 	ply.ChatGestureWeight = ply.ChatGestureWeight || 0
@@ -428,7 +436,7 @@ end
 
 function GM:CalcMainActivity(pl, vel)
 	self:HandlePlayerLanding(pl, vel, pl:IsOnGround())
-	if pl:IsHL2() then
+	if TFIsHL2Player(pl) then
 		return self.BaseClass:CalcMainActivity(pl, vel)
 	end
 	
@@ -544,7 +552,7 @@ local TauntGestures = {
 }
 
 function GM:TranslateActivity(pl, act)
-	if pl:IsHL2() then
+	if TFIsHL2Player(pl) then
 		return self.BaseClass:TranslateActivity(pl, act)
 	end
 	
@@ -565,7 +573,7 @@ function GM:TranslateActivity(pl, act)
 		return LoserStateActivityTranslate[act] or act
 	end
 	
-	if pl:InVehicle() then
+	if pl:InVehicle() or (pl.InCond and pl:InCond(TF_COND_HALLOWEEN_KART)) then
 		return pl:GetSequenceActivity(pl:LookupSequence("kart_idle")) or pl:TranslateWeaponActivity(act)
 	end
 	
@@ -574,7 +582,7 @@ end
 
 function GM:DoAnimationEvent(pl, event, data, taunt)
 	
-	if pl:IsHL2() then
+	if TFIsHL2Player(pl) then
 		return self.BaseClass:DoAnimationEvent(pl, event, data)
 	end
 	

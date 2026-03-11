@@ -28,6 +28,155 @@ local DEFAULT_CONFIG = {
 
 local BASE_GAME_PATH = "gamemodes/tf/gamemode/halloween/headless_hatman/"
 local BASE_DATA_PATH = "tf2gm/halloween/headless_hatman/"
+local TF_STUN_LOSER_STATE_FALLBACK = bit.lshift(1, 6) -- 64 in TF2.
+local TF_STUN_BY_TRIGGER_FALLBACK = bit.lshift(1, 7) -- 128 in TF2.
+local HHH_SCARE_PARTICLE = "yikes_fx"
+local HHH_PARTICLE_DEBUG_CVAR = "tf_halloween_hhh_particle_debug"
+
+local PARTICLE_SYSTEMS_TO_PRECACHE = {
+    "halloween_boss_summon",
+    "halloween_boss_axe_hit_world",
+    "halloween_boss_injured",
+    "halloween_boss_death",
+    "halloween_boss_foot_impact",
+    "halloween_boss_eye_glow",
+    "ghost_pumpkin",
+    "bonk_text",
+    "yikes_fx",
+}
+
+local PARTICLE_FILES_TO_LOAD = {
+    "particles/halloween.pcf",
+    "particles/eyeboss.pcf",
+    "particles/impact_fx.pcf",
+    "particles/speechbubbles.pcf",
+}
+
+if SERVER and not ConVarExists(HHH_PARTICLE_DEBUG_CVAR) then
+    CreateConVar(HHH_PARTICLE_DEBUG_CVAR, "0", FCVAR_ARCHIVE, "Enable HHH particle debug logging.")
+end
+
+local function hhh_particle_debug_enabled()
+    local cv = GetConVar(HHH_PARTICLE_DEBUG_CVAR)
+    return cv and cv:GetBool() or false
+end
+
+local function hhh_particle_debug(fmt, ...)
+    if not hhh_particle_debug_enabled() then return end
+    MsgN(string.format("[HHH Particle Debug] " .. tostring(fmt), ...))
+end
+
+local function add_particle_file_safe(path)
+    if not game or not game.AddParticles then return false end
+    if not isstring(path) or path == "" then return false end
+
+    if file.Exists(path, "GAME") then
+        local ok, err = pcall(game.AddParticles, path)
+        if not ok then
+            hhh_particle_debug("game.AddParticles failed for '%s': %s", path, tostring(err))
+            return false
+        end
+        hhh_particle_debug("Loaded particle file '%s'", path)
+        return true
+    end
+
+    local fallback = "gamemodes/tf/content/" .. path
+    if file.Exists(fallback, "GAME") then
+        local ok, err = pcall(game.AddParticles, fallback)
+        if not ok then
+            hhh_particle_debug("game.AddParticles failed for fallback '%s': %s", fallback, tostring(err))
+            return false
+        end
+        hhh_particle_debug("Loaded particle file '%s' (fallback)", fallback)
+        return true
+    end
+
+    hhh_particle_debug("Missing particle file '%s' (and fallback)", path)
+    return false
+end
+
+local particleFilesLoaded = false
+local function EnsureHHHParticleFilesLoaded()
+    if particleFilesLoaded then return end
+    particleFilesLoaded = true
+    for _, pcf in ipairs(PARTICLE_FILES_TO_LOAD) do
+        add_particle_file_safe(pcf)
+    end
+end
+
+local particlesPrecached = false
+local function EnsureHHHParticlesPrecached()
+    if particlesPrecached then return end
+    particlesPrecached = true
+    EnsureHHHParticleFilesLoaded()
+    if not PrecacheParticleSystem then return end
+    for _, system in ipairs(PARTICLE_SYSTEMS_TO_PRECACHE) do
+        local ok, err = pcall(PrecacheParticleSystem, system)
+        if not ok then
+            hhh_particle_debug("PrecacheParticleSystem failed for '%s': %s", system, tostring(err))
+        else
+            hhh_particle_debug("Precached particle system '%s'", system)
+        end
+    end
+end
+
+local function DispatchHHHParticle(name, pos, ang, parent)
+    if not isstring(name) or name == "" then return false end
+    local p = isvector(pos) and pos or vector_origin
+    local a = isangle(ang) and ang or angle_zero
+
+    local ok, err
+    if DispatchParticleEffect then
+        if IsValid(parent) then
+            ok, err = pcall(DispatchParticleEffect, name, p, a, parent)
+        else
+            ok, err = pcall(DispatchParticleEffect, name, p, a)
+        end
+    elseif ParticleEffect then
+        if IsValid(parent) then
+            ok, err = pcall(ParticleEffect, name, p, a, parent)
+        else
+            ok, err = pcall(ParticleEffect, name, p, a)
+        end
+    else
+        hhh_particle_debug("No particle dispatch function available for '%s'", name)
+        return false
+    end
+
+    if not ok then
+        hhh_particle_debug("Particle dispatch failed for '%s': %s", name, tostring(err))
+        return false
+    end
+
+    if not DispatchParticleEffect then
+        hhh_particle_debug("Dispatched particle '%s' via ParticleEffect fallback at %s", name, tostring(p))
+    else
+        hhh_particle_debug("Dispatched particle '%s' at %s", name, tostring(p))
+    end
+
+    return true
+end
+
+local function get_nextbot_speed_2d(ent)
+    if not IsValid(ent) then return 0 end
+
+    local speed = 0
+    if ent.GetVelocity then
+        local vel = ent:GetVelocity()
+        if isvector(vel) then
+            speed = vel:Length2D()
+        end
+    end
+
+    if ent.loco and ent.loco.GetVelocity then
+        local lvel = ent.loco:GetVelocity()
+        if isvector(lvel) then
+            speed = math.max(speed, lvel:Length2D())
+        end
+    end
+
+    return speed
+end
 
 local function deep_copy(tbl)
     local out = {}
@@ -157,6 +306,20 @@ local function try_emit_sound(ent, candidates, level, pitch)
     return false
 end
 
+local function resolve_lang_token(token)
+    if not isstring(token) or token == "" then return "" end
+    if tf_lang and tf_lang.GetRaw then
+        local text = tf_lang.GetRaw(token, true)
+        if isstring(text) and text ~= "" then
+            return text
+        end
+    end
+    if string.StartWith(token, "#") then
+        return string.sub(token, 2)
+    end
+    return token
+end
+
 local function play_sequence_safe(ent, names)
     if not IsValid(ent) or not ent.LookupSequence or not ent.SetSequence then return false end
     if not istable(names) then return false end
@@ -183,6 +346,65 @@ local function resolve_pos(other)
         return other:GetPos()
     end
     return nil
+end
+
+local function IsWearingPumpkinHeadOrSaxtonMask(ply)
+    if not IsValid(ply) or not ply.GetTFItems then return false end
+
+    for _, item in ipairs(ply:GetTFItems()) do
+        if IsValid(item) and item.IsTFItem then
+            local itemID = nil
+            if item.ItemIndex then
+                itemID = tonumber(item:ItemIndex())
+            elseif item.GetItemData then
+                local data = item:GetItemData() or {}
+                itemID = tonumber(data.item_index or data.id)
+            end
+
+            if itemID == 277 or itemID == 278 then
+                return true
+            end
+        end
+    end
+
+    return false
+end
+
+local function PlayScarePresentation(victim, duration)
+    if not IsValid(victim) then return end
+    local entId = victim:EntIndex()
+    local loserTimer = "TF2HHHScareLoser_" .. entId
+    timer.Remove(loserTimer)
+
+    local wasLoser = victim.GetNWBool and victim:GetNWBool("Loser", false) or false
+    if victim.SetNWBool and not wasLoser then
+        victim:SetNWBool("Loser", true)
+        timer.Create(loserTimer, duration, 1, function()
+            if not IsValid(victim) then return end
+            if victim.SetNWBool then
+                victim:SetNWBool("Loser", false)
+            end
+        end)
+    end
+
+    -- TF2 scare presentation: scream + yikes at head.
+    if victim.EmitSound then
+        victim:EmitSound("Halloween.PlayerScream", 95, 100)
+        victim:EmitSound("player/pl_impact_stun.wav", 90, 100)
+    end
+
+    local pos = victim:WorldSpaceCenter()
+    local att = victim.LookupAttachment and victim:LookupAttachment("head") or 0
+    if att and att > 0 and victim.GetAttachment then
+        local data = victim:GetAttachment(att)
+        if data and data.Pos then
+            pos = data.Pos
+        end
+    end
+    -- TF2 boo scare presentation uses yikes-style feedback; fall back to bonk if unavailable.
+    if not DispatchHHHParticle(HHH_SCARE_PARTICLE, pos, angle_zero, victim) then
+        DispatchHHHParticle("bonk_text", pos, angle_zero, victim)
+    end
 end
 
 function ENT:LoadDynamicConfig()
@@ -253,14 +475,21 @@ function ENT:AttachWeaponModelTF2Style()
         self.Axe:SetNotSolid(true)
     end
 
-    -- Hard attach to weapon_bone so the model does not appear detached while animating.
-    self.Axe:SetParent(self)
-    if self.Axe.Fire then
-        self.Axe:Fire("SetParentAttachment", "weapon_bone", 0)
+    -- Valve style: prop_dynamic follows the boss with bonemerge.
+    if self.Axe.FollowEntity then
+        local ok, err = pcall(self.Axe.FollowEntity, self.Axe, self, true)
+        if not ok then
+            hhh_particle_debug("FollowEntity failed for axe: %s", tostring(err))
+            self.Axe:SetParent(self)
+        end
+    else
+        self.Axe:SetParent(self)
     end
+
     self.Axe:SetLocalPos(vector_origin)
     self.Axe:SetLocalAngles(angle_zero)
 
+    -- Fallback for models that do not resolve well with bonemerge alone.
     local weaponBone = self:LookupBone("weapon_bone")
     if self.Axe.FollowBone and weaponBone and weaponBone >= 0 then
         pcall(self.Axe.FollowBone, self.Axe, self, weaponBone)
@@ -303,8 +532,9 @@ function ENT:SetCurrentIT(victim)
         local newIT = IsValid(victim) and victim or nil
         if IsValid(newIT) and oldIT ~= newIT then
             if newIT.PrintMessage then
-                newIT:PrintMessage(HUD_PRINTTALK, "#TF_HALLOWEEN_BOSS_WARN_VICTIM")
-                newIT:PrintMessage(HUD_PRINTCENTER, "#TF_HALLOWEEN_BOSS_WARN_VICTIM")
+                local msg = resolve_lang_token("#TF_HALLOWEEN_BOSS_WARN_VICTIM")
+                newIT:PrintMessage(HUD_PRINTTALK, msg)
+                newIT:PrintMessage(HUD_PRINTCENTER, msg)
             end
             try_emit_sound(newIT, { "Player.YouAreIT", "Player.YouAreIt" }, 100, 100)
             try_emit_sound(newIT, "Halloween.PlayerScream", 100, 100)
@@ -312,8 +542,9 @@ function ENT:SetCurrentIT(victim)
         if IsValid(oldIT) and oldIT ~= newIT and oldIT:Alive() then
             try_emit_sound(oldIT, { "Player.TaggedOtherIT", "Player.TaggedOtherIt" }, 100, 100)
             if oldIT.PrintMessage then
-                oldIT:PrintMessage(HUD_PRINTTALK, "#TF_HALLOWEEN_BOSS_LOST_AGGRO")
-                oldIT:PrintMessage(HUD_PRINTCENTER, "#TF_HALLOWEEN_BOSS_LOST_AGGRO")
+                local msg = resolve_lang_token("#TF_HALLOWEEN_BOSS_LOST_AGGRO")
+                oldIT:PrintMessage(HUD_PRINTTALK, msg)
+                oldIT:PrintMessage(HUD_PRINTCENTER, msg)
             end
         end
         self.ITVictim = newIT
@@ -323,10 +554,12 @@ end
 
 function ENT:ApplySpookStun(victim, duration)
     if not IsValid(victim) then return end
-    local stunBase = _G.TF_STUN_GHOSTSCARE or _G.TF_STUN_LOSER_STATE or 0
-    local stunFlags = bit.bor(stunBase, _G.TF_STUN_BY_TRIGGER or 0)
-    local ghostCond = _G.TF_COND_HALLOWEEN_GHOST_MODE
+    local stunBase = tonumber(_G.TF_STUN_LOSER_STATE) or TF_STUN_LOSER_STATE_FALLBACK
+    local stunByTrigger = tonumber(_G.TF_STUN_BY_TRIGGER) or TF_STUN_BY_TRIGGER_FALLBACK
+    local stunFlags = bit.bor(stunBase, stunByTrigger)
     local stunnedCond = _G.TF_COND_STUNNED
+    local loserCond = _G.TF_COND_COMPETITIVE_LOSER
+    local freezeInputCond = _G.TF_COND_FREEZE_INPUT
     duration = math.max(0.1, tonumber(duration) or 2)
     local stunnedByEngine = false
 
@@ -335,49 +568,49 @@ function ENT:ApplySpookStun(victim, duration)
         stunnedByEngine = ok and true or false
     end
 
-    -- Force the Halloween ghost scare presentation even if StunPlayer degrades to regular slow.
-    if ghostCond and victim.AddCond then
-        pcall(victim.AddCond, victim, ghostCond, duration, self)
+    PlayScarePresentation(victim, duration)
+
+    -- Force loser/scared visuals for boo (match-lost style).
+    if victim.AddCond and loserCond then
+        pcall(victim.AddCond, victim, loserCond, duration, self)
+    end
+
+    -- TF2 loser-state stun effectively locks player controls during the scare.
+    if victim.AddCond and freezeInputCond then
+        pcall(victim.AddCond, victim, freezeInputCond, duration, self)
+    end
+
+    -- Engine stun can force ACT_MP_STUN_*; clear that condition so boo uses
+    -- loser/scared animation instead of generic stun animation.
+    if stunnedByEngine and stunnedCond and victim.RemoveCond then
+        timer.Simple(0, function()
+            if not IsValid(victim) then return end
+            victim:RemoveCond(stunnedCond, true)
+            if victim.RemovePlayerState then
+                victim:RemovePlayerState(PLAYERSTATE_STUNNED, true)
+            end
+        end)
     end
 
     -- Only apply manual stun fallback if StunPlayer could not be used.
     if not stunnedByEngine then
-        if victim.AddCond and stunnedCond then
-            pcall(victim.AddCond, victim, stunnedCond, duration, self)
-        end
-
-        if victim.AddPlayerState then
-            victim:AddPlayerState(PLAYERSTATE_STUNNED, true)
-        end
-
         timer.Create("TF2HHHSpookFallback" .. victim:EntIndex(), duration, 1, function()
             if not IsValid(victim) then return end
             if victim.RemovePlayerState then
                 victim:RemovePlayerState(PLAYERSTATE_STUNNED, true)
             end
+            if victim.RemoveCond and loserCond then
+                victim:RemoveCond(loserCond, true)
+            end
             if victim.RemoveCond and stunnedCond then
                 victim:RemoveCond(stunnedCond, true)
             end
-            if victim.RemoveCond and ghostCond then
-                victim:RemoveCond(ghostCond, true)
-            end
-        end)
-    else
-        timer.Create("TF2HHHSpookGhostMode" .. victim:EntIndex(), duration, 1, function()
-            if not IsValid(victim) then return end
-            if victim.RemoveCond and ghostCond then
-                victim:RemoveCond(ghostCond, true)
+            if victim.RemoveCond and freezeInputCond then
+                victim:RemoveCond(freezeInputCond, true)
             end
         end)
     end
 
-    if victim.EmitSound then
-        victim:EmitSound("player/pl_impact_stun.wav", 90, 100)
-    end
-
-    if DispatchParticleEffect then
-        DispatchParticleEffect("yikes_fx", victim:WorldSpaceCenter(), angle_zero, victim)
-    end
 end
 
 function ENT:SetBossState(name, duration)
@@ -389,6 +622,19 @@ function ENT:SetBossState(name, duration)
         self.AttackTarget = nil
     end
     self:UpdateAnimationState()
+    if name == "emerge" then
+        self.EmergeAnimStartedAt = CurTime()
+        self.EmergeAnimFinishAt = nil
+        if self.SetCycle then
+            self:SetCycle(0)
+        end
+        if self.SequenceDuration then
+            local seqDur = tonumber(self:SequenceDuration()) or 0
+            if seqDur > 0 then
+                self.EmergeAnimFinishAt = self.EmergeAnimStartedAt + seqDur
+            end
+        end
+    end
     if name == "terrify" and previous ~= "terrify" then
         local now = CurTime()
         self.BooAt = self.BooAt or (now + 0.25)
@@ -428,6 +674,7 @@ function ENT:UpdateAnimationState()
 end
 
 function ENT:Initialize()
+    EnsureHHHParticlesPrecached()
     self:LoadDynamicConfig()
     local cfg = self.DynamicConfig or DEFAULT_CONFIG
 
@@ -468,10 +715,9 @@ function ENT:Initialize()
 
     self:EmitSound("Halloween.HeadlessBossSpawnRumble", 100, 100)
     self:EmitSound("Halloween.HeadlessBossSpawn", 100, 100)
-    if DispatchParticleEffect then
-        DispatchParticleEffect("halloween_boss_summon", self.HomePos, self:GetAngles())
-        ParticleEffectAttach("halloween_boss_eye_glow", PATTACH_ABSORIGIN_FOLLOW, self, 0)
-    end
+    DispatchHHHParticle("halloween_boss_summon", self.HomePos, self:GetAngles())
+    -- Ambient HHH effects (eye glows + ghost body aura) are managed clientside
+    -- so they persist for observers regardless of server-side particle dispatch API.
     self.NextFootstep = 0
 
     self.Axe = ents.Create("prop_dynamic")
@@ -501,9 +747,49 @@ end
 
 function ENT:OnRemove()
     self:SetCurrentIT(nil)
+    timer.Remove("TF2HHHDeath_" .. self:EntIndex())
     if IsValid(self.Axe) then
         self.Axe:Remove()
     end
+end
+
+function ENT:GetFootstepEffectPos()
+    local useLeft = self._nextFootLeft ~= true
+    self._nextFootLeft = useLeft
+
+    local attachmentNames = useLeft
+        and { "foot_L", "left_foot", "LFoot", "leftfoot", "l_foot" }
+        or { "foot_R", "right_foot", "RFoot", "rightfoot", "r_foot" }
+
+    if self.LookupAttachment and self.GetAttachment then
+        for _, name in ipairs(attachmentNames) do
+            local id = self:LookupAttachment(name)
+            if id and id > 0 then
+                local data = self:GetAttachment(id)
+                if data and data.Pos then
+                    return data.Pos, data.Ang or self:GetAngles()
+                end
+            end
+        end
+    end
+
+    local boneNames = useLeft
+        and { "bip_foot_L", "ValveBiped.Bip01_L_Foot" }
+        or { "bip_foot_R", "ValveBiped.Bip01_R_Foot" }
+
+    if self.LookupBone and self.GetBonePosition then
+        for _, name in ipairs(boneNames) do
+            local id = self:LookupBone(name)
+            if id and id >= 0 then
+                local pos, ang = self:GetBonePosition(id)
+                if isvector(pos) then
+                    return pos, ang or self:GetAngles()
+                end
+            end
+        end
+    end
+
+    return self:GetPos(), self:GetAngles()
 end
 
 function ENT:IsPotentiallyChaseable(ply)
@@ -579,7 +865,7 @@ function ENT:PickTarget()
         if CurTime() >= (self.NextITWarn or 0) then
             self.NextITWarn = CurTime() + (tonumber(cfg.it_warn_interval) or DEFAULT_CONFIG.it_warn_interval)
             if target.PrintMessage then
-                target:PrintMessage(HUD_PRINTCENTER, "#TF_HALLOWEEN_BOSS_WARN_VICTIM")
+                target:PrintMessage(HUD_PRINTCENTER, resolve_lang_token("#TF_HALLOWEEN_BOSS_WARN_VICTIM"))
             end
         end
     end
@@ -614,7 +900,11 @@ function ENT:ApplyTerrify()
     local duration = tonumber(cfg.terrify_duration) or DEFAULT_CONFIG.terrify_duration
 
     for _, ply in ipairs(player.GetAll()) do
-        if is_valid_target(ply) and self:IsRangeLessThan(ply, radius) and self:IsLineOfSightClear(ply) then
+        if is_valid_target(ply)
+            and not IsWearingPumpkinHeadOrSaxtonMask(ply)
+            and self:IsRangeLessThan(ply, radius)
+            and self:IsLineOfSightClear(ply)
+        then
             self:ApplySpookStun(ply, duration)
         end
     end
@@ -634,6 +924,12 @@ function ENT:DoMeleeAttack(target)
     local fracDamage = tonumber(cfg.attack_damage_health_fraction) or DEFAULT_CONFIG.attack_damage_health_fraction
     local targetMax = isfunction(target.GetMaxHealth) and target:GetMaxHealth() or target:Health()
     local damage = math.max(baseDamage, math.floor(targetMax * fracDamage))
+    local healthBeforeHit = isfunction(target.Health) and target:Health() or 0
+    local markForDecap = healthBeforeHit > 0 and damage >= healthBeforeHit and isfunction(target.AddDeathFlag)
+
+    if markForDecap then
+        target:AddDeathFlag(DF_DECAP)
+    end
 
     local info = DamageInfo()
     info:SetAttacker(self)
@@ -643,6 +939,16 @@ function ENT:DoMeleeAttack(target)
     info:SetDamageForce(toVictim * 12000 + Vector(0, 0, 8000))
     target:TakeDamageInfo(info)
     target:SetVelocity(toVictim * 300 + Vector(0, 0, 250))
+
+    -- Keep decap only if this strike actually killed the target.
+    if markForDecap and isfunction(target.RemoveDeathFlag) then
+        timer.Simple(0, function()
+            if not IsValid(target) then return end
+            if target:Health() > 0 then
+                target:RemoveDeathFlag(DF_DECAP)
+            end
+        end)
+    end
 
     self:EmitSound("Halloween.HeadlessBossAxeHitFlesh", 95, 100)
     return true
@@ -673,59 +979,158 @@ function ENT:UpdateMeleeSwing(now)
     end
 
     self:EmitSound("Halloween.HeadlessBossAxeHitWorld", 95, 100)
-    if DispatchParticleEffect then
-        local effectPos = self:GetPos()
-        local effectAng = self:GetAngles()
-        if IsValid(self.Axe) and self.Axe.GetAttachment then
-            local attachment = self.Axe:LookupAttachment("axe_blade")
-            if attachment and attachment > 0 then
-                local data = self.Axe:GetAttachment(attachment)
-                if data and data.Pos then
-                    effectPos = data.Pos
-                    effectAng = data.Ang or effectAng
-                end
+    local effectPos = self:GetPos()
+    local effectAng = self:GetAngles()
+    if IsValid(self.Axe) and self.Axe.GetAttachment then
+        local attachment = self.Axe:LookupAttachment("axe_blade")
+        if attachment and attachment > 0 then
+            local data = self.Axe:GetAttachment(attachment)
+            if data and data.Pos then
+                effectPos = data.Pos
+                effectAng = data.Ang or effectAng
             end
         end
-        DispatchParticleEffect("halloween_boss_axe_hit_world", effectPos, effectAng)
     end
+    DispatchHHHParticle("halloween_boss_axe_hit_world", effectPos, effectAng)
     util.ScreenShake(self:GetPos(), 15, 5, 1, 1000)
 end
 
 function ENT:OnInjured(dmginfo)
     self:EmitSound("Halloween.HeadlessBossPain", 95, 100)
-    if DispatchParticleEffect then
-        DispatchParticleEffect("halloween_boss_injured", dmginfo:GetDamagePosition(), self:GetAngles())
+    DispatchHHHParticle("halloween_boss_injured", dmginfo:GetDamagePosition(), self:GetAngles())
+end
+
+function ENT:FinalizeDeath(gibForce)
+    if not IsValid(self) then return end
+    if self.DeathFinalized then return end
+    self.DeathFinalized = true
+
+    if IsValid(self.Axe) then
+        self.Axe:Remove()
+    end
+
+    DispatchHHHParticle("halloween_boss_death", self:GetPos(), self:GetAngles())
+    self:EmitSound("Halloween.HeadlessBossDeath", 100, 100)
+
+    if self.PrecacheGibs then
+        pcall(self.PrecacheGibs, self)
+    end
+    if self.GibBreakServer then
+        pcall(self.GibBreakServer, self, gibForce or vector_origin)
+    end
+
+    self:Remove()
+end
+
+function ENT:StartDeathSequence(dmginfo)
+    if self.IsDying then return end
+    self.IsDying = true
+    self.DeathFinalized = false
+    self:SetCurrentIT(nil)
+    self.AttackSwinging = false
+    self.AttackTarget = nil
+    self.StateName = "death"
+    self.StateUntil = math.huge
+    self:NextThink(CurTime())
+
+    local attacker = IsValid(dmginfo) and dmginfo:GetAttacker() or NULL
+    local inflictor = IsValid(dmginfo) and dmginfo:GetInflictor() or NULL
+    hook.Call("OnNPCKilled", GAMEMODE, self, attacker, inflictor)
+
+    self:EmitSound("Halloween.HeadlessBossDying", 100, 100)
+    if self.loco then
+        self.loco:SetDesiredSpeed(0)
+    end
+    if self.SetCollisionGroup then
+        self:SetCollisionGroup(COLLISION_GROUP_DEBRIS_TRIGGER)
+    end
+
+    -- Match TF2: use ACT_DIESIMPLE and gib when the death activity is finished.
+    local played = start_activity_safe(self, ACT_DIESIMPLE)
+    if not played then
+        played = play_sequence_safe(self, {
+            "shake",
+            "taunt_burstchester_death",
+            "knight_death",
+            "death",
+            "die",
+        })
+    end
+    if self.SetCycle then
+        self:SetCycle(0)
+    end
+
+    local gibForce = vector_origin
+    if IsValid(dmginfo) and dmginfo.GetDamageForce then
+        local force = dmginfo:GetDamageForce()
+        if isvector(force) then
+            gibForce = force * 2
+        end
+    end
+
+    self.DeathGibForce = gibForce
+    self.DeathAnimStartedAt = CurTime()
+    self.DeathAnimFinishAt = nil
+    if played and self.SequenceDuration then
+        local seqDur = tonumber(self:SequenceDuration()) or 0
+        if seqDur > 0 then
+            self.DeathAnimFinishAt = self.DeathAnimStartedAt + seqDur
+        end
     end
 end
 
 function ENT:OnKilled(dmginfo)
-    self:SetCurrentIT(nil)
-    hook.Call("OnNPCKilled", GAMEMODE, self, IsValid(dmginfo) and dmginfo:GetAttacker() or NULL, IsValid(dmginfo) and dmginfo:GetInflictor() or NULL)
-    self:EmitSound("Halloween.HeadlessBossDying", 100, 100)
-    self:EmitSound("Halloween.HeadlessBossDeath", 100, 100)
-    if DispatchParticleEffect then
-        DispatchParticleEffect("halloween_boss_death", self:GetPos(), self:GetAngles())
-    end
-    self:Remove()
+    self:StartDeathSequence(dmginfo)
 end
 
 function ENT:Think()
     local cfg = self.DynamicConfig or DEFAULT_CONFIG
     local now = CurTime()
+    if self.IsDying then
+        local finished = false
+        if self.IsActivityFinished then
+            local ok, out = pcall(self.IsActivityFinished, self)
+            finished = ok and out == true
+        end
+        if not finished and self.GetCycle and self:GetCycle() >= 0.995 then
+            finished = true
+        end
+        if not finished and self.DeathAnimFinishAt and now >= (self.DeathAnimFinishAt + 0.05) then
+            finished = true
+        end
+        if finished then
+            self:FinalizeDeath(self.DeathGibForce)
+        end
+        self:NextThink(CurTime())
+        return true
+    end
     if self:Health() <= 0 then
-        self:Remove()
-        return
+        self:StartDeathSequence()
+        self:NextThink(CurTime())
+        return true
     end
 
     if self.StateName == "emerge" then
         local total = math.max(0.01, tonumber(cfg.emerge_time) or DEFAULT_CONFIG.emerge_time)
         local frac = math.Clamp(1 - ((self.StateUntil - now) / total), 0, 1)
         self:SetPos(self.HomePos - Vector(0, 0, self.EmergeHeight * (1 - frac)))
+        if self.loco then
+            self.loco:SetDesiredSpeed(0)
+        end
         if now >= self.NextRumble then
             self.NextRumble = now + 0.25
             util.ScreenShake(self.HomePos, 15, 5, 1, 1000)
         end
-        if now >= self.StateUntil then
+        local riseDone = now >= self.StateUntil
+        local animDone = false
+        if self.IsActivityFinished then
+            local ok, out = pcall(self.IsActivityFinished, self)
+            animDone = ok and out == true
+        end
+        if not animDone and self.EmergeAnimFinishAt and now >= (self.EmergeAnimFinishAt + 0.05) then
+            animDone = true
+        end
+        if riseDone and animDone then
             self:SetPos(self.HomePos)
             self:SetBossState("attack", 0)
         end
@@ -744,25 +1149,28 @@ function ENT:Think()
     else
         local target = self:PickTarget()
         self:UpdateAnimationState()
-        if now >= self.NextScare then
-            self.NextScare = now + (tonumber(cfg.terrify_interval) or DEFAULT_CONFIG.terrify_interval)
-            self.BooAt = now + 0.25
-            self.ScareAt = now + 0.75
-            self.BooPlayed = false
-            self.ScareApplied = false
-            self:SetBossState("terrify", 1.25)
-        elseif IsValid(target) then
+        if IsValid(target) then
             self.loco:SetDesiredSpeed(tonumber(cfg.speed) or DEFAULT_CONFIG.speed)
             self.loco:FaceTowards(target:GetPos())
-            if now >= self.NextFootstep and self:GetVelocity():Length2D() > 20 then
+            if now >= self.NextFootstep and get_nextbot_speed_2d(self) > 20 then
                 self.NextFootstep = now + 0.4
                 self:EmitSound("Halloween.HeadlessBossFootfalls", 90, 100)
-                if DispatchParticleEffect then
-                    DispatchParticleEffect("halloween_boss_foot_impact", self:GetPos(), self:GetAngles())
-                end
+                local footPos, footAng = self:GetFootstepEffectPos()
+                util.ScreenShake(footPos, 12, 4, 0.35, 700)
+                DispatchHHHParticle("halloween_boss_foot_impact", footPos, footAng)
             end
             local standRange = tonumber(cfg.stand_and_swing_range) or DEFAULT_CONFIG.stand_and_swing_range
             if self:IsRangeLessThan(target, standRange) and self:IsLineOfSightClear(target) then
+                if target:IsPlayer() and now >= self.NextScare then
+                    self.NextScare = now + (tonumber(cfg.terrify_interval) or DEFAULT_CONFIG.terrify_interval)
+                    self.BooAt = now + 0.25
+                    self.ScareAt = now + 0.75
+                    self.BooPlayed = false
+                    self.ScareApplied = false
+                    self:SetBossState("terrify", 1.25)
+                    self:NextThink(CurTime())
+                    return true
+                end
                 if now >= self.NextAttack and not self.AttackSwinging then
                     self:BeginMeleeSwing(target)
                 end
@@ -783,4 +1191,21 @@ function ENT:Think()
 
     self:NextThink(CurTime())
     return true
+end
+
+if SERVER then
+    concommand.Add("tf_halloween_hhh_particle_test", function(ply)
+        if IsValid(ply) and ply:IsPlayer() and not ply:IsAdmin() and not ply:IsSuperAdmin() then return end
+
+        EnsureHHHParticlesPrecached()
+        local basePos = IsValid(ply) and ply:GetPos() or vector_origin
+        local ang = IsValid(ply) and ply:EyeAngles() or angle_zero
+
+        DispatchHHHParticle("halloween_boss_summon", basePos + Vector(0, 0, 8), ang)
+        DispatchHHHParticle("halloween_boss_injured", basePos + Vector(24, 0, 8), ang)
+        DispatchHHHParticle("halloween_boss_foot_impact", basePos + Vector(-24, 0, 0), ang)
+        DispatchHHHParticle("halloween_boss_death", basePos + Vector(0, 24, 8), ang)
+
+        hhh_particle_debug("Ran tf_halloween_hhh_particle_test at %s", tostring(basePos))
+    end)
 end

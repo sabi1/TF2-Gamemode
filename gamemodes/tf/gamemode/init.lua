@@ -13,8 +13,113 @@ include("shd_gravitygun.lua")
 include("sv_chat.lua")  
 include("sv_loadout.lua")   
 include("sv_mvm.lua")   
+include("sv_vsh.lua")
 include("shd_taunts.lua") 
 include("sv_debug_bridge.lua")
+AddCSLuaFile("cl_vsh_hud.lua")
+
+local function TF_RegisterSWEPFromShared(className)
+	if not isstring(className) or className == "" then return false end
+	if weapons.GetStored(className) then return true end
+
+	local function registerSWEPData(swepData)
+		if not istable(swepData) or next(swepData) == nil then return false end
+		swepData.ClassName = swepData.ClassName or className
+		local regOk, regErr = pcall(weapons.Register, swepData, className)
+		if not regOk then
+			print(string.format("[TF2-Gamemode] weapons.Register failed for '%s': %s", tostring(className), tostring(regErr)))
+			return false
+		end
+		if weapons.GetStored(className) then
+			return true
+		end
+		print(string.format("[TF2-Gamemode] weapons.Register returned but class '%s' is still missing", tostring(className)))
+		return false
+	end
+
+	local candidates = {}
+	local seen = {}
+	local function addCandidate(path)
+		path = string.Replace(tostring(path or ""), "\\", "/")
+		if path == "" or seen[path] then return end
+		seen[path] = true
+		candidates[#candidates + 1] = path
+	end
+
+	local gmFolder = string.Replace(tostring((GM and GM.Folder) or ""), "\\", "/")
+	if gmFolder ~= "" then
+		addCandidate(gmFolder .. "/entities/weapons/" .. className .. "/shared.lua")
+		if not string.StartWith(gmFolder, "gamemodes/") then
+			addCandidate("gamemodes/" .. gmFolder .. "/entities/weapons/" .. className .. "/shared.lua")
+		end
+	end
+
+	addCandidate("gamemodes/tf/entities/weapons/" .. className .. "/shared.lua")
+	addCandidate("entities/weapons/" .. className .. "/shared.lua")
+	addCandidate("../entities/weapons/" .. className .. "/shared.lua")
+	addCandidate("addons/tf2-gamemode/gamemodes/tf/entities/weapons/" .. className .. "/shared.lua")
+	addCandidate("addons/TF2-Gamemode/gamemodes/tf/entities/weapons/" .. className .. "/shared.lua")
+
+	local addonDirs = select(2, file.Find("addons/*", "GAME")) or {}
+	for _, addonDir in ipairs(addonDirs) do
+		addCandidate("addons/" .. addonDir .. "/gamemodes/tf/entities/weapons/" .. className .. "/shared.lua")
+		addCandidate("addons/" .. addonDir .. "/gamemodes/TF/entities/weapons/" .. className .. "/shared.lua")
+	end
+
+	for _, path in ipairs(candidates) do
+		if file.Exists(path, "LUA") then
+			if className == "tf_weapon_builder" then
+				print(string.format("[TF2-Gamemode] Trying builder SWEP path: %s", tostring(path)))
+			end
+			AddCSLuaFile(path)
+			local prevSWEP = _G.SWEP
+			_G.SWEP = {}
+			local ok, err = pcall(include, path)
+			local swepData = _G.SWEP
+			_G.SWEP = prevSWEP
+			if ok and registerSWEPData(swepData) then
+				return true
+			elseif not ok then
+				print(string.format("[TF2-Gamemode] Failed loading SWEP '%s' from '%s': %s", tostring(className), tostring(path), tostring(err)))
+			end
+		end
+	end
+
+	-- Hard fallback: compile/register directly from source if include path resolution fails.
+	for _, path in ipairs(candidates) do
+		local src = file.Read(path, "LUA") or file.Read(path, "GAME")
+		if isstring(src) and src ~= "" then
+			local fn = CompileString(src, path, false)
+			if isfunction(fn) then
+				local prevSWEP = _G.SWEP
+				_G.SWEP = {}
+				local ok, err = pcall(fn)
+				local swepData = _G.SWEP
+				_G.SWEP = prevSWEP
+				if ok and registerSWEPData(swepData) then
+					return true
+				else
+					print(string.format("[TF2-Gamemode] Compile fallback failed for '%s' from '%s': %s", tostring(className), tostring(path), tostring(err)))
+				end
+			elseif isstring(fn) then
+				print(string.format("[TF2-Gamemode] CompileString error for '%s' from '%s': %s", tostring(className), tostring(path), tostring(fn)))
+			end
+		end
+	end
+
+	return false
+end
+
+local function TF_RegisterCoreEngineerSWEPs()
+	-- Order matters: base first, then derived classes.
+	TF_RegisterSWEPFromShared("tf_weapon_base")
+	TF_RegisterSWEPFromShared("tf_weapon_builder")
+	TF_RegisterSWEPFromShared("tf_weapon_pda_engineer_build")
+	TF_RegisterSWEPFromShared("tf_weapon_pda_engineer_destroy")
+	TF_RegisterSWEPFromShared("tf_weapon_sapper")
+end
+TF_RegisterCoreEngineerSWEPs()
+
 resource.AddWorkshop( "1932936017" )
 resource.AddWorkshop( "3323795558" )
 local LOGFILE = "tf/log_server.txt" 
@@ -2451,6 +2556,7 @@ function GM:PlayerSpawn(ply)
 	end
 
 	timer.Simple(0.0, function() -- god i'm such a timer whore
+		if not IsValid(ply) or not ply.SetPlayerClass then return end
 		-- are you sure about that
 		ply:SetPlayerClass(ply:GetPlayerClass())
 		
@@ -2533,10 +2639,9 @@ function GM:PlayerSpawn(ply)
 	end
 	
 	if !ply:IsHL2() then
-		timer.Simple(0.01, function()
-			
+		timer.Simple(0.05, function()
+			if not IsValid(ply) or not ply.GiveLoadout then return end
 			ply:GiveLoadout()
-		
 		end)
 	end
 
@@ -2776,6 +2881,201 @@ hook.Add( "PlayerGiveSWEP", "BlockPlayerSWEPs", function( ply, class, swep )
 		return false
 	end
 end )   
+
+local function EnsureEngineerCommandBindings()
+	local old_group_translate = {
+		[0] = {0,0},
+		[1] = {1,0},
+		[2] = {1,1},
+		[3] = {2,0},
+		[4] = {3,0},
+	}
+	local class_by_group = {
+		[0] = "obj_dispenser",
+		[1] = "obj_teleporter",
+		[2] = "obj_sentrygun",
+	}
+
+	local function normalizeGroupSub(args)
+		local group = tonumber(args and args[1])
+		local sub = tonumber(args and args[2])
+		if not group then return nil, nil end
+		if sub == nil then
+			local mapped = old_group_translate[group]
+			if not mapped then return nil, nil end
+			group, sub = mapped[1], mapped[2]
+		end
+		return group, sub
+	end
+
+	local function isOwnedBuilding(ent, pl)
+		return IsValid(ent) and IsValid(pl) and (ent.Player == pl or ent:GetBuilder() == pl or ent:GetOwner() == pl)
+	end
+
+	local function countOwnedSentries(pl)
+		local regular = 0
+		local disposable = 0
+		for _, ent in ipairs(ents.FindByClass("obj_sentrygun")) do
+			if not isOwnedBuilding(ent, pl) then continue end
+			if ent.TF_MVM_DisposableSentry then
+				disposable = disposable + 1
+			else
+				regular = regular + 1
+			end
+		end
+		return regular, disposable
+	end
+
+	local function canBuildByLimit(pl, group, sub)
+		local cv = GetConVar("tf_unlimited_buildings")
+		if cv and cv:GetBool() then return true end
+
+		local className = class_by_group[group]
+		if not className then return true end
+
+		if className == "obj_sentrygun" then
+			local disposableLimit = 0
+			if pl.TF_MVM_Dynamic then
+				disposableLimit = math.max(0, math.floor(tonumber(pl.TF_MVM_Dynamic.DisposableSentryCount) or 0))
+			end
+			local regular, disposable = countOwnedSentries(pl)
+			local allowDisposable = disposableLimit > 0 and regular >= 1 and disposable < disposableLimit
+			return regular < 1 or allowDisposable
+		end
+
+		if className == "obj_teleporter" then
+			for _, ent in ipairs(ents.FindByClass(className)) do
+				if not isOwnedBuilding(ent, pl) then continue end
+				if (sub == 0 and ent.IsEntrance and ent:IsEntrance()) or (sub == 1 and ent.IsExit and ent:IsExit()) then
+					return false
+				end
+			end
+			return true
+		end
+
+		for _, ent in ipairs(ents.FindByClass(className)) do
+			if isOwnedBuilding(ent, pl) then
+				return false
+			end
+		end
+		return true
+	end
+
+	local function fallbackSelectBuilder(pl, args, useDeployedMode)
+		if not IsValid(pl) or not pl:IsPlayer() then return false end
+		local group, sub = normalizeGroupSub(args)
+		if group == nil then return false end
+
+		local builder = pl:GetWeapon("tf_weapon_builder")
+		if not IsValid(builder) and isfunction(pl.GiveItem) then
+			pl:GiveItem("TF_WEAPON_BUILDER")
+			builder = pl:GetWeapon("tf_weapon_builder")
+		end
+		if not IsValid(builder) then return false end
+
+		if useDeployedMode then
+			builder:SetHoldType("BUILDING_DEPLOYED")
+		else
+			builder:SetHoldType("BUILDING")
+		end
+
+		local setOk = false
+		if isfunction(builder.SetBuilding2) then
+			setOk = builder:SetBuilding2(group, sub) and true or false
+		elseif isfunction(builder.SetBuilding) then
+			setOk = builder:SetBuilding(group, sub) and true or false
+		end
+		if not setOk then return false end
+
+		pl:SelectWeapon("tf_weapon_builder")
+		builder.Moving = useDeployedMode and true or false
+		return true
+	end
+
+	concommand.Add("build", function(pl, _, args)
+		if not IsValid(pl) or not pl:IsPlayer() then return end
+
+		local group, sub = normalizeGroupSub(args)
+		if group == nil then return end
+
+		if isfunction(pl.Build) then
+			pl:Build(group, sub)
+			return
+		end
+
+		if not canBuildByLimit(pl, group, sub) then
+			pl:EmitSound("Player.DenyWeaponSelection")
+			return
+		end
+		if not fallbackSelectBuilder(pl, {group, sub}, false) then
+			pl:EmitSound("Player.DenyWeaponSelection")
+		end
+	end)
+
+	concommand.Add("move", function(pl, _, args)
+		if not IsValid(pl) or not pl:IsPlayer() then return end
+
+		local group, sub = normalizeGroupSub(args)
+		if group == nil then return end
+
+		if isfunction(pl.Move) then
+			pl:Move(group, sub)
+			return
+		end
+		if not fallbackSelectBuilder(pl, {group, sub}, true) then
+			pl:EmitSound("Player.DenyWeaponSelection")
+		end
+	end)
+
+	concommand.Add("destroy", function(pl, _, args)
+		if not IsValid(pl) or not pl:IsPlayer() then return end
+
+		local group, sub = normalizeGroupSub(args)
+		if group == nil then return end
+
+		if isfunction(pl.DestroyBuilding) then
+			pl:DestroyBuilding(group, sub)
+			return
+		end
+
+		local destroyed = false
+		if group == 2 and sub == 0 then
+			for _, ent in ipairs(ents.FindByClass("obj_sentrygun")) do
+				if isOwnedBuilding(ent, pl) and isfunction(ent.Explode) then
+					ent:Explode()
+					destroyed = true
+				end
+			end
+		elseif group == 0 and sub == 0 then
+			for _, ent in ipairs(ents.FindByClass("obj_dispenser")) do
+				if isOwnedBuilding(ent, pl) and isfunction(ent.Explode) then
+					ent:Explode()
+					destroyed = true
+				end
+			end
+		elseif group == 1 and sub == 0 then
+			for _, ent in ipairs(ents.FindByClass("obj_teleporter")) do
+				if isOwnedBuilding(ent, pl) and ent.IsEntrance and ent:IsEntrance() and isfunction(ent.Explode) then
+					ent:Explode()
+					destroyed = true
+				end
+			end
+		elseif group == 1 and sub == 1 then
+			for _, ent in ipairs(ents.FindByClass("obj_teleporter")) do
+				if isOwnedBuilding(ent, pl) and ent.IsExit and ent:IsExit() and isfunction(ent.Explode) then
+					ent:Explode()
+					destroyed = true
+				end
+			end
+		end
+
+		if not destroyed then
+			pl:EmitSound("Player.DenyWeaponSelection")
+		end
+	end)
+end
+EnsureEngineerCommandBindings()
+
 local PlayerGiveAmmoTypes = {TF_PRIMARY, TF_SECONDARY, TF_METAL}
 function GM:GiveAmmoPercent(pl, pc, nometal)
 	--Msg("Giving "..pc.."% ammo to "..pl:GetName().." : ")
@@ -2783,8 +3083,20 @@ function GM:GiveAmmoPercent(pl, pc, nometal)
 	
 	for _,v in ipairs(PlayerGiveAmmoTypes) do 
 		if not nometal or v ~= TF_METAL then
-			if pl:GiveTFAmmo(pc * 0.01, v, true) then
-				ammo_given = true
+			if isfunction(pl.GiveTFAmmo) then
+				if pl:GiveTFAmmo(pc * 0.01, v, true) then
+					ammo_given = true
+				end
+			else
+				local maxAmmo = pl.AmmoMax and pl.AmmoMax[v] or nil
+				if isnumber(maxAmmo) and maxAmmo > 0 and not pl:IsHL2() then
+					local target = math.min(maxAmmo, math.ceil(maxAmmo * (pc * 0.01)))
+					local current = tonumber(pl:GetAmmoCount(v) or 0) or 0
+					if target > current then
+						pl:GiveAmmo(target - current, v)
+						ammo_given = true
+					end
+				end
 			end
 		end
 	end

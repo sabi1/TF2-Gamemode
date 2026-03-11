@@ -25,13 +25,20 @@ function PANEL:PaintActive()
 	surface.DrawRect(72*Scale, 6*Scale, 38*Scale, 8*Scale)
 	surface.DrawRect(72*Scale, 17*Scale, 38*Scale, 8*Scale)
 	
-	progress = self.TargetEntity:GetAmmoPercentage()
+	progress = math.Clamp(tonumber(self.TargetEntity:GetAmmoPercentage() or 0) or 0, 0, 1)
 	if progress > 0 then
 		surface.SetDrawColor(Colors.Yellow)
 		surface.DrawRect(72*Scale, 6*Scale, 38*Scale*progress, 8*Scale)
 	end
 	
-	progress = self.TargetEntity:GetMetal() / 200
+	local maxMetal = tonumber(self.TargetEntity.MaxMetal) or 400
+	local metal = 0
+	if self.TargetEntity.GetMetalAmount then
+		metal = tonumber(self.TargetEntity:GetMetalAmount() or 0) or 0
+	else
+		metal = tonumber(self.TargetEntity:GetMetal() or 0) or 0
+	end
+	progress = math.Clamp(metal / maxMetal, 0, 1)
 	if progress > 0 then
 		surface.SetDrawColor(Colors.Yellow)
 		surface.DrawRect(72*Scale, 17*Scale, 38*Scale*progress, 8*Scale)

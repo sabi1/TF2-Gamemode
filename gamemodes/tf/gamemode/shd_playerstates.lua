@@ -1206,10 +1206,62 @@ function meta:ConditionGameRulesThink()
 	end
 end
 
+local function can_run_dispenser_disguise(owner)
+	if not IsValid(owner) or not owner:Alive() then return false end
+	if not owner.InCond or not owner:InCond(TF_COND_DISGUISED_AS_DISPENSER) then return false end
+	if owner:InCond(TF_COND_STEALTHED) or owner:InCond(TF_COND_STEALTHED_USER_BUFF) or owner:InCond(TF_COND_STEALTHED_USER_BUFF_FADING) then
+		return false
+	end
+	if not owner.Crouching or not owner:Crouching() then return false end
+	local ground = owner.GetGroundEntity and owner:GetGroundEntity() or NULL
+	if ground == nil or ground == NULL then return false end
+	return true
+end
+
+local function each_dispenser_disguise_target(owner, fn)
+	for _, target in ipairs(ents.FindInSphere(owner:GetPos(), 100)) do
+		if not IsValid(target) or not target:IsPlayer() or not target:Alive() then continue end
+		if target.IsBuilding and target:IsBuilding() then continue end
+		if owner.IsFriendly and not owner:IsFriendly(target) then continue end
+		fn(target)
+	end
+end
+
 function meta:ConditionThink()
 	ensure_condition_core(self)
 	if CLIENT then
 		sync_cond_bits_from_network(self)
+	end
+	if SERVER and self:IsPlayer() and self.InCond then
+		if can_run_dispenser_disguise(self) then
+			local now = CurTime()
+			if (self._tfDispenserDisguiseNextHeal or 0) <= now then
+				each_dispenser_disguise_target(self, function(target)
+					local maxHp = tonumber(target:GetMaxHealth() or 0) or 0
+					if maxHp > 0 then
+						target:SetHealth(math.Clamp(target:Health() + 1, 0, maxHp))
+					end
+				end)
+				self._tfDispenserDisguiseNextHeal = now + 0.1
+			end
+
+			if (self._tfDispenserDisguiseNextAmmo or 0) <= now then
+				each_dispenser_disguise_target(self, function(target)
+					if GAMEMODE and GAMEMODE.GiveAmmoPercentNoMetal then
+						GAMEMODE:GiveAmmoPercentNoMetal(target, 20)
+					end
+					if isfunction(target.GiveTFAmmo) then
+						target:GiveTFAmmo(40, TF_METAL)
+					else
+						target:GiveAmmo(40, TF_METAL, false)
+					end
+				end)
+				self._tfDispenserDisguiseNextAmmo = now + 1
+			end
+		else
+			self._tfDispenserDisguiseNextHeal = nil
+			self._tfDispenserDisguiseNextAmmo = nil
+		end
 	end
 end
 
@@ -1309,12 +1361,77 @@ function meta:OnRemoveMarkedForDeathSilent()
 	self:RemovePlayerState(PLAYERSTATE_MARKED, true)
 end
 
+if CLIENT then
+	function meta:_TFSetForcedStunThirdperson(enable)
+		if self ~= LocalPlayer() then return end
+
+		local count = self._tfForcedStunThirdpersonCount or 0
+		if enable then
+			count = count + 1
+			self._tfForcedStunThirdpersonCount = count
+
+			if count == 1 then
+				self._tfForcedStunThirdpersonWasEnabled = self.IsThirdperson and true or false
+				if not self._tfForcedStunThirdpersonWasEnabled then
+					if StartThirdperson then
+						StartThirdperson()
+					else
+						self.IsThirdperson = true
+					end
+				end
+			end
+			return
+		end
+
+		if count <= 0 then return end
+		count = count - 1
+		self._tfForcedStunThirdpersonCount = count
+
+		if count == 0 then
+			if not self._tfForcedStunThirdpersonWasEnabled then
+				if EndThirdperson then
+					EndThirdperson(true)
+				else
+					self.IsThirdperson = false
+				end
+			end
+			self._tfForcedStunThirdpersonWasEnabled = nil
+		end
+	end
+end
+
 function meta:OnAddStunned()
 	self:AddPlayerState(PLAYERSTATE_STUNNED, true)
+	if CLIENT then
+		local suppressUntil = tonumber(self._tfNoForcedStunThirdpersonUntil) or 0
+		if self.GetNWFloat then
+			suppressUntil = math.max(suppressUntil, tonumber(self:GetNWFloat("TFNoForcedStunThirdpersonUntil", 0)) or 0)
+		end
+		local suppressForcedTP = suppressUntil > CurTime()
+		if not suppressForcedTP then
+			self:_TFSetForcedStunThirdperson(true)
+			self._tfForcedStunThirdpersonFromStunned = (self._tfForcedStunThirdpersonFromStunned or 0) + 1
+		else
+			self._tfSuppressedStunThirdpersonFromStunned = (self._tfSuppressedStunThirdpersonFromStunned or 0) + 1
+		end
+	end
 end
 
 function meta:OnRemoveStunned()
 	self:RemovePlayerState(PLAYERSTATE_STUNNED, true)
+	if CLIENT then
+		local forcedCount = self._tfForcedStunThirdpersonFromStunned or 0
+		if forcedCount > 0 then
+			self._tfForcedStunThirdpersonFromStunned = forcedCount - 1
+			self:_TFSetForcedStunThirdperson(false)
+			return
+		end
+
+		local suppressedCount = self._tfSuppressedStunThirdpersonFromStunned or 0
+		if suppressedCount > 0 then
+			self._tfSuppressedStunThirdpersonFromStunned = suppressedCount - 1
+		end
+	end
 end
 
 function meta:OnAddOverhealed()
@@ -1463,6 +1580,7 @@ end
 function meta:OnAddStealthed()
 	if self.SetNWBool then
 		self:SetNWBool("Stealthed", true)
+		self:SetNWBool("Cloaked", true)
 	end
 	if SERVER and self.SetNoTarget then
 		self:SetNoTarget(true)
@@ -1484,6 +1602,7 @@ function meta:OnRemoveStealthed()
 
 	if self.SetNWBool then
 		self:SetNWBool("Stealthed", false)
+		self:SetNWBool("Cloaked", false)
 	end
 	if SERVER and self.SetNoTarget then
 		self:SetNoTarget(false)
@@ -1882,14 +2001,76 @@ function meta:OnRemoveCondParachute()
 end
 
 function meta:OnAddHalloweenKart()
-	cond_stack_add(self, "freeze_input")
 	cond_stack_add(self, "no_weapon")
+	if self.SetNWBool then
+		self:SetNWBool("HalloweenKart", true)
+	end
+	if CLIENT then
+		self:_TFSetForcedStunThirdperson(true)
+	end
+	if SERVER and self:IsPlayer() then
+		local entId = self:EntIndex()
+		self.__TFKartTurnInput = 0
+		self.__TFKartDriveInput = 0
+		self.__TFKartHornWasDown = false
+		self.__TFKartBoostWasDown = false
+		self:SetNWFloat("TFKartBoostEndTime", 0)
+		self:SetNWFloat("TFKartBoostCooldownEndTime", 0)
+
+		local kartModelName = "TFCondKartModel" .. entId
+		for _, ent in ipairs(ents.FindByName(kartModelName)) do
+			ent:Remove()
+		end
+
+		local kart = ents.Create("base_gmodentity")
+		if IsValid(kart) then
+			kart:SetModel("models/player/items/taunts/bumpercar/parts/bumpercar.mdl")
+			kart:SetAngles(self:GetAngles())
+			kart:SetPos(self:GetPos())
+			kart:Spawn()
+			kart:Activate()
+			kart:SetParent(self)
+			kart:AddEffects(EF_BONEMERGE)
+			kart:SetName(kartModelName)
+		end
+
+		self:EmitSound("BumperCar.Spawn")
+		timer.Create("TFKartLoopStart_" .. entId, 0.35, 1, function()
+			if not IsValid(self) or not self:InCond(TF_COND_HALLOWEEN_KART) then return end
+			self:EmitSound("BumperCar.GoLoop")
+		end)
+	end
 	update_no_weapon(self)
 end
 
 function meta:OnRemoveHalloweenKart()
-	cond_stack_remove(self, "freeze_input")
 	cond_stack_remove(self, "no_weapon")
+	if self.SetNWBool then
+		self:SetNWBool("HalloweenKart", false)
+	end
+	if CLIENT then
+		self:_TFSetForcedStunThirdperson(false)
+	end
+	if SERVER and self:IsPlayer() then
+		local entId = self:EntIndex()
+		self.__TFKartTurnInput = 0
+		self.__TFKartDriveInput = 0
+		self.__TFKartHornWasDown = false
+		self.__TFKartBoostWasDown = false
+		self:SetNWFloat("TFKartBoostEndTime", 0)
+		self:SetNWFloat("TFKartBoostCooldownEndTime", 0)
+		self:RemoveCond(TF_COND_HALLOWEEN_KART_DASH, true)
+
+		timer.Remove("TFKartLoopStart_" .. entId)
+		local kartModelName = "TFCondKartModel" .. entId
+		for _, ent in ipairs(ents.FindByName(kartModelName)) do
+			ent:Remove()
+		end
+
+		self:StopSound("BumperCar.GoLoop")
+		self:StopSound("Taunt.BumperCarGoLoop")
+		self:EmitSound("Taunt.BumperCarQuit")
+	end
 	update_no_weapon(self)
 end
 
@@ -2067,10 +2248,16 @@ end
 
 function meta:OnAddCompetitiveLoser()
 	self:OnAddMarkedForDeathSilent()
+	if CLIENT then
+		self:_TFSetForcedStunThirdperson(true)
+	end
 end
 
 function meta:OnRemoveCompetitiveLoser()
 	self:OnRemoveMarkedForDeathSilent()
+	if CLIENT then
+		self:_TFSetForcedStunThirdperson(false)
+	end
 end
 
 function meta:OnAddBurningPyro()
@@ -2134,12 +2321,25 @@ function meta:OnAddDisguisedAsDispenser()
 	if self.SetNWBool then
 		self:SetNWBool("DisguisedAsDispenser", true)
 	end
+	if SERVER and self.SetNWInt then
+		local myTeam = self:Team()
+		local disguiseTeam = TEAM_BLU
+		if myTeam == TEAM_BLU or myTeam == TF_TEAM_PVE_INVADERS then
+			disguiseTeam = TEAM_RED
+		elseif myTeam == TEAM_RED then
+			disguiseTeam = TEAM_BLU
+		end
+		self:SetNWInt("TFDispenserDisguiseTeam", disguiseTeam)
+	end
 end
 
 function meta:OnRemoveDisguisedAsDispenser()
 	refresh_speed_from_conditions(self)
 	if self.SetNWBool then
 		self:SetNWBool("DisguisedAsDispenser", false)
+	end
+	if SERVER and self.SetNWInt then
+		self:SetNWInt("TFDispenserDisguiseTeam", -1)
 	end
 end
 
@@ -2612,10 +2812,7 @@ hook.Add("Move", "TFCondMoveAdjust", function(pl, move)
 	local allowTauntMotion = pl:GetNWBool("TauntingMoped", false) or pl:GetNWBool("TauntingSchemaMove", false)
 
 	-- TF2 speed logic: dispenser disguise locks movement unless cloaked.
-	if pl:InCond(TF_COND_DISGUISED_AS_DISPENSER)
-		and not pl:InCond(TF_COND_STEALTHED)
-		and not pl:InCond(TF_COND_STEALTHED_USER_BUFF)
-		and not pl:InCond(TF_COND_STEALTHED_USER_BUFF_FADING) then
+	if can_run_dispenser_disguise(pl) then
 		move:SetForwardSpeed(0)
 		move:SetSideSpeed(0)
 		move:SetUpSpeed(0)
@@ -2677,6 +2874,60 @@ if SERVER then
 			pl.__MopedJumpWasDown = false
 			pl.__MopedAttackWasDown = false
 			pl.__MopedTurnInput = 0
+		end
+
+		if pl:InCond(TF_COND_HALLOWEEN_KART) then
+			local steer = 0
+			if cmd:KeyDown(IN_MOVERIGHT) then
+				steer = 1
+			elseif cmd:KeyDown(IN_MOVELEFT) then
+				steer = -1
+			end
+			pl.__TFKartTurnInput = steer
+
+			local drive = 0
+			if cmd:KeyDown(IN_FORWARD) then
+				drive = 1
+			elseif cmd:KeyDown(IN_BACK) then
+				drive = -1
+			end
+			pl.__TFKartDriveInput = drive
+
+			local hornDown = cmd:KeyDown(IN_ATTACK)
+			local hornPressed = hornDown and not pl.__TFKartHornWasDown
+			pl.__TFKartHornWasDown = hornDown
+			if hornPressed then
+				pl:EmitSound("Taunt.BumperCarHorn")
+			end
+
+			local boostDown = cmd:KeyDown(IN_ATTACK2)
+			local boostPressed = boostDown and not pl.__TFKartBoostWasDown
+			pl.__TFKartBoostWasDown = boostDown
+			if boostPressed then
+				local now = CurTime()
+				local cooldownEnd = pl:GetNWFloat("TFKartBoostCooldownEndTime", 0)
+				if now >= cooldownEnd then
+					local boostDuration = 0.8
+					local cooldownDuration = 2.5
+					pl:SetNWFloat("TFKartBoostEndTime", now + boostDuration)
+					pl:SetNWFloat("TFKartBoostCooldownEndTime", now + cooldownDuration)
+					pl:AddCond(TF_COND_HALLOWEEN_KART_DASH, boostDuration, pl)
+					pl:EmitSound("BumperCar.SpeedBoostStart")
+					timer.Create("TFKartBoostStop_" .. pl:EntIndex(), boostDuration, 1, function()
+						if not IsValid(pl) then return end
+						pl:EmitSound("BumperCar.SpeedBoostStop")
+					end)
+				end
+			end
+
+			cmd:RemoveKey(IN_JUMP)
+			cmd:RemoveKey(IN_ATTACK)
+			cmd:RemoveKey(IN_RELOAD)
+		else
+			pl.__TFKartTurnInput = 0
+			pl.__TFKartDriveInput = 0
+			pl.__TFKartHornWasDown = false
+			pl.__TFKartBoostWasDown = false
 		end
 
 		local schemaState = pl.__SchemaTauntState
@@ -2742,7 +2993,10 @@ if SERVER then
 			cmd:RemoveKey(IN_RELOAD)
 		elseif pl:GetNWBool("NoWeapon", false) and not allowTauntMotion then
 			cmd:RemoveKey(IN_ATTACK)
-			cmd:RemoveKey(IN_ATTACK2)
+			-- TF2 kart: no weapon use, but keep +attack2 available for kart boost input.
+			if not pl:InCond(TF_COND_HALLOWEEN_KART) then
+				cmd:RemoveKey(IN_ATTACK2)
+			end
 			cmd:RemoveKey(IN_RELOAD)
 		end
 	end)
@@ -2784,9 +3038,19 @@ if SERVER then
 	hook.Add("PlayerDeath", "TFCondCleanup", function(pl)
 		if not IsValid(pl) then return end
 		timer.Remove("TFCondRegen_" .. pl:EntIndex())
+		timer.Remove("TFKartLoopStart_" .. pl:EntIndex())
+		timer.Remove("TFKartBoostStop_" .. pl:EntIndex())
+		for _, ent in ipairs(ents.FindByName("TFCondKartModel" .. pl:EntIndex())) do
+			ent:Remove()
+		end
+		pl:StopSound("BumperCar.GoLoop")
+		pl:StopSound("Taunt.BumperCarGoLoop")
 		pl._tf_cond_stacks = nil
 		pl._tf_cond_speed = nil
 		pl:SetNWFloat("TFCondSpeedMult", 1)
+		pl:SetNWFloat("TFKartBoostEndTime", 0)
+		pl:SetNWFloat("TFKartBoostCooldownEndTime", 0)
+		pl:SetNWBool("HalloweenKart", false)
 	end)
 end
 
@@ -2794,9 +3058,19 @@ if CLIENT then
 	CreateClientConVar("tf_debug_spy_disguise_local", "0", true, false, "Force local client to render Spy disguise enemy-view model for debugging.")
 
 	local dispenserModelByEnt = {}
+	local dispenserDialStateByEnt = {}
 	local spyDisguiseModelByEnt = {}
 	local spyDisguiseWeaponModelByEnt = {}
 	local spyDisguiseCosmeticModelsByEnt = {}
+	local DispenserScreenTexture = {
+		[0] = surface.GetTextureID("vgui/dispenser_meter_bg_red"),
+		[1] = surface.GetTextureID("vgui/dispenser_meter_bg_blue"),
+	}
+	local DispenserArrowTexture = surface.GetTextureID("vgui/dispenser_meter_arrow")
+	local DispenserPanelOffset = Vector(-1.1, -11, -0.6)
+	local DispenserPanelScale = 0.0465
+	local DispenserAngleStart = 85
+	local DispenserAngleEnd = -85
 	local DISGUISE_MODEL_BY_CLASS = {
 		scout = "models/player/scout.mdl",
 		soldier = "models/player/soldier.mdl",
@@ -2809,6 +3083,130 @@ if CLIENT then
 		sniper = "models/player/sniper.mdl",
 		spy = "models/player/spy.mdl",
 	}
+	local DISGUISE_PRIMARY_WEAPON_BY_CLASS = {
+		scout = "models/weapons/c_models/c_scattergun.mdl",
+		soldier = "models/weapons/w_models/w_rocketlauncher.mdl",
+		pyro = "models/weapons/c_models/c_flamethrower/c_flamethrower.mdl",
+		demo = "models/weapons/w_models/w_stickybomb_launcher.mdl",
+		demoman = "models/weapons/w_models/w_stickybomb_launcher.mdl",
+		heavy = "models/weapons/c_models/c_minigun/c_minigun.mdl",
+		engineer = "models/weapons/c_models/c_shotgun/c_shotgun.mdl",
+		medic = "models/weapons/c_models/c_syringegun/c_syringegun.mdl",
+		sniper = "models/weapons/c_models/c_sniperrifle/c_sniperrifle.mdl",
+		spy = "models/weapons/c_models/c_revolver/c_revolver.mdl",
+	}
+	local DISGUISE_MELEE_WEAPON_BY_CLASS = {
+		scout = "models/weapons/c_models/c_bat.mdl",
+		soldier = "models/weapons/c_models/c_shovel/c_shovel.mdl",
+		pyro = "models/weapons/w_models/w_fireaxe.mdl",
+		demo = "models/weapons/w_models/w_bottle.mdl",
+		demoman = "models/weapons/w_models/w_bottle.mdl",
+		heavy = "models/weapons/c_models/c_fists/c_fists.mdl",
+		engineer = "models/weapons/c_models/c_wrench/c_wrench.mdl",
+		medic = "models/weapons/c_models/c_bonesaw/c_bonesaw.mdl",
+		sniper = "models/weapons/c_models/c_machete/c_machete.mdl",
+		spy = "models/weapons/c_models/c_knife/c_knife.mdl",
+	}
+
+	local function get_disguise_weapon_model_from_weapon(wep)
+		if not IsValid(wep) then return "" end
+		if wep.IsTFWeapon and wep.GetItemData then
+			local item = wep:GetItemData()
+			if istable(item) then
+				local mdl = item.model_world or item.model_player
+				if isstring(mdl) and mdl ~= "" and util.IsValidModel(mdl) then
+					return mdl
+				end
+			end
+		end
+		if wep.GetWeaponWorldModel then
+			local mdl = wep:GetWeaponWorldModel()
+			if isstring(mdl) and mdl ~= "" and util.IsValidModel(mdl) then
+				return mdl
+			end
+		end
+		local mdl = wep:GetModel()
+		if isstring(mdl) and mdl ~= "" and util.IsValidModel(mdl) then
+			return mdl
+		end
+		return ""
+	end
+
+	local function is_melee_weapon(wep)
+		if not IsValid(wep) then return false end
+		if wep.IsMeleeWeapon == true then return true end
+		local slot = tonumber(wep.Slot or (wep.GetSlot and wep:GetSlot()) or -1)
+		if slot == 2 then return true end
+		if wep.GetItemData then
+			local item = wep:GetItemData()
+			if istable(item) and item.item_slot == "melee" then
+				return true
+			end
+		end
+		return false
+	end
+
+	local function find_model_for_slot(ply, desiredSlotNum, desiredItemSlotName)
+		if not IsValid(ply) or not ply.GetWeapons then return "" end
+		for _, wep in ipairs(ply:GetWeapons()) do
+			if not IsValid(wep) then continue end
+			local ok = false
+			local slot = tonumber(wep.Slot or (wep.GetSlot and wep:GetSlot()) or -1)
+			if desiredSlotNum ~= nil and slot == desiredSlotNum then
+				ok = true
+			end
+			if not ok and desiredItemSlotName and wep.GetItemData then
+				local item = wep:GetItemData()
+				ok = istable(item) and item.item_slot == desiredItemSlotName
+			end
+			if ok then
+				local mdl = get_disguise_weapon_model_from_weapon(wep)
+				if mdl ~= "" then
+					return mdl
+				end
+			end
+		end
+		return ""
+	end
+
+	local function get_disguise_slot_kind(ply)
+		local wep = IsValid(ply) and ply:GetActiveWeapon() or nil
+		if not IsValid(wep) then return "primary" end
+		if wep:GetClass() == "tf_weapon_builder" then return "sapper" end
+		if is_melee_weapon(wep) then return "melee" end
+		return "primary"
+	end
+
+	local function resolve_disguise_weapon_model(ply, className)
+		local slotKind = get_disguise_slot_kind(ply)
+		if slotKind == "sapper" then
+			local sapperWep = IsValid(ply) and ply:GetActiveWeapon() or nil
+			local sapperModel = get_disguise_weapon_model_from_weapon(sapperWep)
+			if sapperModel == "" and IsValid(ply) and ply.GetWeapon then
+				sapperModel = get_disguise_weapon_model_from_weapon(ply:GetWeapon("tf_weapon_builder"))
+			end
+			return sapperModel, slotKind
+		end
+
+		local target = IsValid(ply) and ply:GetNWEntity("TFSpyDisguiseTarget") or nil
+		if IsValid(target) and target:IsPlayer() then
+			if slotKind == "melee" then
+				local mdl = find_model_for_slot(target, 2, "melee")
+				if mdl ~= "" then return mdl, slotKind end
+			else
+				local mdl = find_model_for_slot(target, 0, "primary")
+				if mdl ~= "" then return mdl, slotKind end
+			end
+		end
+
+		local fallback = slotKind == "melee"
+			and DISGUISE_MELEE_WEAPON_BY_CLASS[className]
+			or DISGUISE_PRIMARY_WEAPON_BY_CLASS[className]
+		if isstring(fallback) and fallback ~= "" and util.IsValidModel(fallback) then
+			return fallback, slotKind
+		end
+		return "", slotKind
+	end
 
 	local function split_disguise_model_list(raw)
 		local out = {}
@@ -2830,6 +3228,7 @@ if CLIENT then
 			mdl:Remove()
 		end
 		dispenserModelByEnt[idx] = nil
+		dispenserDialStateByEnt[idx] = nil
 	end
 
 	local function cleanup_spy_disguise_models(ply)
@@ -2866,6 +3265,124 @@ if CLIENT then
 		return true
 	end
 
+	local function get_dispenser_disguise_team(ply)
+		if not IsValid(ply) then return TEAM_RED end
+		local t = tonumber(ply:GetNWInt("TFDispenserDisguiseTeam", -1)) or -1
+		if t ~= -1 then return t end
+
+		-- Fallback for any path that sets cond 49 without running add-handler state.
+		local myTeam = ply:Team()
+		if myTeam == TEAM_BLU or myTeam == TF_TEAM_PVE_INVADERS then
+			return TEAM_RED
+		end
+		return TEAM_BLU
+	end
+
+	local function calc_dispenser_dial_angle(frac)
+		return Lerp(math.Clamp(tonumber(frac) or 0, 0, 1), DispenserAngleStart, DispenserAngleEnd)
+	end
+
+	local function resolve_attach(ent, name)
+		if not IsValid(ent) then return nil end
+		local id = ent:LookupAttachment(name)
+		if not isnumber(id) or id <= 0 then return nil end
+		return ent:GetAttachment(id)
+	end
+
+	local function resolve_attach_with_fallback(ent, names, fallbackPos, fallbackAng)
+		if not IsValid(ent) then return nil end
+		for _, name in ipairs(names) do
+			local att = resolve_attach(ent, name)
+			if att then return att end
+		end
+		return {
+			Pos = ent:LocalToWorld(fallbackPos),
+			Ang = ent:LocalToWorldAngles(fallbackAng),
+		}
+	end
+
+	local function draw_dispenser_panel_screen(team, angle)
+		local teamTex = (team == TEAM_BLU or team == TF_TEAM_PVE_INVADERS) and DispenserScreenTexture[1] or DispenserScreenTexture[0]
+		if isnumber(teamTex) and teamTex > 0 then
+			surface.SetDrawColor(255, 255, 255, 255)
+			surface.SetTexture(teamTex)
+			surface.DrawTexturedRect(0, 0, 480, 240)
+		else
+			surface.SetDrawColor(30, 40, 50, 235)
+			surface.DrawRect(0, 0, 480, 240)
+			surface.SetDrawColor(140, 180, 220, 255)
+			surface.DrawOutlinedRect(0, 0, 480, 240)
+		end
+
+		local a = tonumber(angle) or calc_dispenser_dial_angle(0)
+		local r = math.rad(a)
+		local s, c = math.sin(r), math.cos(r)
+		if isnumber(DispenserArrowTexture) and DispenserArrowTexture > 0 then
+			surface.SetTexture(DispenserArrowTexture)
+			surface.SetDrawColor(255, 255, 255, 255)
+			surface.DrawTexturedRectRotated(480 * 0.5 - math.floor(81 * s), 240 * 0.90625 - math.floor(81 * c), 50, 200, a)
+		end
+	end
+
+	local function draw_dispenser_disguise_screen_for_model(mdl, team, frac, idx)
+		if not IsValid(mdl) then return end
+		local state = dispenserDialStateByEnt[idx] or {}
+		local target = calc_dispenser_dial_angle(frac)
+		local current = state.angle
+		if current == nil then
+			current = target
+		else
+			current = current + math.Clamp(target - current, -4, 4)
+		end
+		state.angle = current
+		dispenserDialStateByEnt[idx] = state
+
+		local cp0 = resolve_attach_with_fallback(
+			mdl,
+			{"controlpanel0_ll", "control_panel0_ll", "controlpanel0_l", "controlpanel0"},
+			Vector(-10.5, -8.5, 49),
+			Angle(0, 90, 90)
+		)
+		local cp1 = resolve_attach_with_fallback(
+			mdl,
+			{"controlpanel1_ll", "control_panel1_ll", "controlpanel1_l", "controlpanel1"},
+			Vector(-10.5, 8.5, 49),
+			Angle(0, 90, 90)
+		)
+		if not cp0 or not cp1 then return end
+
+		cam.Start3D2D(
+			cp0.Pos + DispenserPanelOffset.x * cp0.Ang:Forward() + DispenserPanelOffset.y * cp0.Ang:Right() + DispenserPanelOffset.z * cp0.Ang:Up(),
+			cp0.Ang,
+			DispenserPanelScale
+		)
+			draw_dispenser_panel_screen(team, current)
+		cam.End3D2D()
+
+		cam.Start3D2D(
+			cp1.Pos + DispenserPanelOffset.x * cp1.Ang:Forward() + DispenserPanelOffset.y * cp1.Ang:Right() + DispenserPanelOffset.z * cp1.Ang:Up(),
+			cp1.Ang,
+			DispenserPanelScale
+		)
+			draw_dispenser_panel_screen(team, current)
+		cam.End3D2D()
+	end
+
+	local function get_disguised_dispenser_metal_frac(idx)
+		local state = dispenserDialStateByEnt[idx] or {}
+		local now = CurTime()
+		if state.fake_metal == nil then
+			state.fake_metal = 25
+			state.fake_next_regen = now + 6
+		end
+		if now >= (state.fake_next_regen or 0) then
+			state.fake_metal = math.min(400, (state.fake_metal or 0) + 40)
+			state.fake_next_regen = now + 6
+		end
+		dispenserDialStateByEnt[idx] = state
+		return math.Clamp((state.fake_metal or 0) / 400, 0, 1)
+	end
+
 	local function get_spy_disguise_draw_info(ply)
 		if not IsValid(ply) or not ply:IsPlayer() or not ply:Alive() then return nil end
 		if not ply.InCond or not ply:InCond(TF_COND_DISGUISED) then return nil end
@@ -2885,10 +3402,14 @@ if CLIENT then
 		if lp == ply and not lp:ShouldDrawLocalPlayer() and not forceLocal then return nil end
 		if lp:Team() ~= disguiseTeam then return nil end
 
+		local weaponModel, slotKind = resolve_disguise_weapon_model(ply, className)
+		local sapperAttackUntil = tonumber(ply:GetNWFloat("TFSpyDisguiseSapperAttackUntil", 0)) or 0
 		return {
 			model = model,
 			skin = (disguiseTeam == TEAM_BLU or disguiseTeam == TF_TEAM_PVE_INVADERS) and 1 or 0,
-			weaponModel = ply:GetNWString("TFSpyDisguiseFallbackWeaponModel", ""),
+			weaponModel = weaponModel,
+			slotKind = slotKind,
+			sapperAttackUntil = sapperAttackUntil,
 			cosmeticModels = split_disguise_model_list(ply:GetNWString("TFSpyDisguiseFallbackCosmeticModels", "")),
 		}
 	end
@@ -2917,15 +3438,19 @@ if CLIENT then
 		if not IsValid(mdl) then
 			mdl = ClientsideModel("models/buildables/dispenser_light.mdl", RENDERGROUP_OPAQUE)
 			if not IsValid(mdl) then return end
+			mdl:SetNoDraw(true)
 			dispenserModelByEnt[idx] = mdl
 		end
 
 		mdl:SetPos(ply:GetPos())
-		mdl:SetAngles(Angle(0, 0, 0))
-		local skin = ((ply:Team() == TEAM_RED) and 1) or ((ply:Team() == TEAM_BLU) and 0) or 0
+		mdl:SetAngles(Angle(0, ply:EyeAngles().y, 0))
+		local disguiseTeam = get_dispenser_disguise_team(ply)
+		local skin = ((disguiseTeam == TEAM_BLU or disguiseTeam == TF_TEAM_PVE_INVADERS) and 1) or 0
 		mdl:SetSkin(skin)
 		mdl:SetupBones()
 		mdl:DrawModel()
+		local metalFrac = get_disguised_dispenser_metal_frac(idx)
+		draw_dispenser_disguise_screen_for_model(mdl, disguiseTeam, metalFrac, idx)
 
 		return true
 	end)
@@ -2951,9 +3476,25 @@ if CLIENT then
 		mdl:SetPos(ply:GetPos())
 		mdl:SetAngles(ply:GetAngles())
 		mdl:SetSkin(info.skin)
-		mdl:SetSequence(ply:GetSequence())
-		mdl:SetCycle(ply:GetCycle())
-		mdl:SetPlaybackRate(ply:GetPlaybackRate())
+		local forceSapperPose = info.slotKind == "sapper"
+		if forceSapperPose then
+			local attack = CurTime() < (info.sapperAttackUntil or 0)
+			local act = attack and ACT_MP_ATTACK_STAND_ITEM2 or ACT_MP_STAND_ITEM2
+			local seq = mdl:SelectWeightedSequence(act)
+			if seq and seq >= 0 then
+				mdl:SetSequence(seq)
+				mdl:SetPlaybackRate(1)
+				mdl:SetCycle(attack and ply:GetCycle() or 0)
+			else
+				mdl:SetSequence(ply:GetSequence())
+				mdl:SetCycle(ply:GetCycle())
+				mdl:SetPlaybackRate(ply:GetPlaybackRate())
+			end
+		else
+			mdl:SetSequence(ply:GetSequence())
+			mdl:SetCycle(ply:GetCycle())
+			mdl:SetPlaybackRate(ply:GetPlaybackRate())
+		end
 		mdl:SetupBones()
 		mdl:DrawModel()
 

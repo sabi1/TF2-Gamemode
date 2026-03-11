@@ -224,6 +224,50 @@ local CriterionCompatAliases = {
 	WeaponIsShivMelee = "WeaponIsShiv",
 }
 
+local VoiceClassDisplayByName = {
+	scout = "Scout",
+	soldier = "Soldier",
+	pyro = "Pyro",
+	demo = "Demoman",
+	demoman = "Demoman",
+	heavy = "Heavy",
+	heavyweapons = "Heavy",
+	engineer = "Engineer",
+	medic = "Medic",
+	sniper = "Sniper",
+	spy = "Spy",
+}
+
+local function GetDisguiseVoiceClass(ply)
+	if not IsValid(ply) or not ply:IsPlayer() then return nil end
+	if not ply.GetPlayerClass or ply:GetPlayerClass() ~= "spy" then return nil end
+	if not ply.GetNWBool or not ply:GetNWBool("Disguised", false) then return nil end
+
+	local disguiseClass = string.lower(string.Trim(tostring(ply:GetNWString("TFSpyDisguiseClass", ""))))
+	if disguiseClass == "" then
+		disguiseClass = string.lower(string.Trim(tostring(ply:GetNWString("TFSpyDisguiseClassDisplay", ""))))
+	end
+	if disguiseClass == "" then return nil end
+
+	return VoiceClassDisplayByName[disguiseClass]
+end
+
+local function SelectResponseWithVoiceClass(ent, concept, dbg)
+	local originalClass = ent.playerclass
+	local disguiseVoiceClass = GetDisguiseVoiceClass(ent)
+	if disguiseVoiceClass then
+		ent.playerclass = disguiseVoiceClass
+	end
+
+	local response = SelectResponse(ent, dbg)
+
+	if disguiseVoiceClass then
+		ent.playerclass = originalClass
+	end
+
+	return response
+end
+
 function SelectResponse(ent, dbg)
 	for k,v in pairs(ent.TemporaryContexts or {}) do
 		if CurTime()>v then
@@ -827,7 +871,7 @@ function META:Speak(concept, nospeech, dbg)
 	end
 	---------------------------------------------------------------- 
 	
-	local response = SelectResponse(self, false)
+	local response = SelectResponseWithVoiceClass(self, concept, false)
 	
 	if response then
 		return PlayResponse(self, response, nospeech, concept)
@@ -1027,7 +1071,7 @@ function META:PainSound(concept, nospeech, dbg, attacker)
 	end
 	----------------------------------------------------------------
 	
-	local response = SelectResponse(self, dbg)
+	local response = SelectResponseWithVoiceClass(self, concept, dbg)
 	
 	if response then
 		return PainfulResponse(self, response, nospeech, dbg, attacker)
@@ -1226,7 +1270,7 @@ function META:FireSound(concept, nospeech, dbg)
 	end
 	----------------------------------------------------------------
 	
-	local response = SelectResponse(self, dbg)
+	local response = SelectResponseWithVoiceClass(self, concept, dbg)
 	
 	if response then
 		return FlamingResponse(self, response, nospeech, dbg)
@@ -1406,7 +1450,7 @@ function META:SpeakWithEnemyCrosshair(concept, nospeech, dbg)
 	end
 	----------------------------------------------------------------
 	
-	local response = SelectResponse(self, dbg)
+	local response = SelectResponseWithVoiceClass(self, concept, dbg)
 	
 	if response then
 		return PlayResponse(self, response, nospeech, dbg)
@@ -1584,7 +1628,7 @@ function META:Taunt(concept, nospeech, dbg)
 	end
 	----------------------------------------------------------------
 	
-	local response = SelectResponse(self, dbg) 
+	local response = SelectResponseWithVoiceClass(self, concept, dbg) 
 	
 	if response then
 		if (concept == "TLK_FIREWEAPON" or concept == "TLK_FIREMINIGUN" or concept == "TLK_PLAYER_TAUNT") then

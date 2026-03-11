@@ -24,6 +24,14 @@ local function TFLocalPlayerHasPyrovision()
 	return lp and TF2_IsPyrovisionEnabled(lp) or false
 end
 
+local function TFIsHL2Player(pl)
+	if not IsValid(pl) then return false end
+	if pl.IsHL2 then
+		return pl:IsHL2()
+	end
+	return pl:GetNWBool("IsHL2", false)
+end
+
 function ENT:GetHatData()
 	return PlayerHats[self:GetNWString("HatName")]
 end
@@ -299,7 +307,7 @@ end
 
 hook.Add( "PlayerSwitchWeapon", "SetTF2Hands", function( ply, oldWeapon, newWeapon )
 	if SERVER then
-		if (!ply:IsHL2() and !ply:IsL4D()) then
+		if (!TFIsHL2Player(ply) and !ply:IsL4D()) then
 			timer.Simple(0.1, function()
 			
 				GAMEMODE:PlayerSetHandsModel( ply, ply:GetHands() )
@@ -1015,7 +1023,7 @@ hook.Add("EntityEmitSound", "MouthFix", function(snd)
 			return true
 		end
 	end
-	if (snd.Entity:IsPlayer() and !snd.Entity:IsHL2()) then
+	if (snd.Entity:IsPlayer() and !TFIsHL2Player(snd.Entity)) then
 		if CLIENT then
 			if !IsValid(snd.Entity) then return end
 			local pl = snd.Entity
@@ -1031,7 +1039,7 @@ hook.Add("EntityEmitSound", "MouthFix", function(snd)
 			end
 
 		end	
-	elseif (snd.Entity:IsPlayer() and snd.Entity:IsHL2()) then
+	elseif (snd.Entity:IsPlayer() and TFIsHL2Player(snd.Entity)) then
 		if CLIENT and !snd.Entity:IsBot() then
 			if !IsValid(snd.Entity) then return end
 			local isLocalPlayer = IsTFLocalPlayer(snd.Entity)
@@ -3010,7 +3018,7 @@ hook.Add("EntityEmitSound", "MVMVoices", function(snd)
 				end
 			end
 			return true
-		elseif IsValid(snd.Entity) and snd.Entity:GetModel() and snd.Entity:IsPlayer() and snd.Entity.IsHL2 and snd.Entity:IsHL2() and (string.find(snd.SoundName, "fallpain") or string.find(snd.SoundName, "damage")) then
+		elseif IsValid(snd.Entity) and snd.Entity:GetModel() and snd.Entity:IsPlayer() and TFIsHL2Player(snd.Entity) and (string.find(snd.SoundName, "fallpain") or string.find(snd.SoundName, "damage")) then
 			snd.SoundName = string.Replace(snd.SoundName, snd.SoundName, "player/pl_fallpain"..table.Random({1,3})..".wav")
 			return true
 		elseif IsValid(snd.Entity) and snd.Entity:GetModel() and snd.Entity:IsPlayer() and (snd.Entity:GetPlayerClass() == "hl1scientist" || snd.Entity:GetPlayerClass() == "hl1barney") and (string.find(snd.SoundName, "fallpain") or string.find(snd.SoundName, "damage")) then
@@ -3201,7 +3209,7 @@ hook.Add("EntityEmitSound", "MVMVoices", function(snd)
 			end
 			
 			return true
-		elseif IsValid(snd.Entity) and snd.Entity:GetModel() and snd.Entity:IsHL2() and snd.Entity:LookupBone("ValveBiped_Bip01.Head1") and string.find(snd.SoundName, "step") then
+		elseif IsValid(snd.Entity) and snd.Entity:GetModel() and TFIsHL2Player(snd.Entity) and snd.Entity:LookupBone("ValveBiped_Bip01.Head1") and string.find(snd.SoundName, "step") then
 			snd.Channel = CHAN_BODY
 			local speed = snd.Entity:GetVelocity():Length()
 			local groundspeed = snd.Entity:GetVelocity():Length2DSqr()
@@ -3237,7 +3245,7 @@ hook.Add("EntityEmitSound", "MVMVoices", function(snd)
 								v:EmitSound("Halloween.PlayerScream")
 								v:SendLua("surface.PlaySound(\"misc/halloween/hwn_bomb_flash.wav\")")
 								local attach = v:LookupAttachment("head") or 1
-								ParticleEffectAttach("yikes_fx", PATTACH_POINT_FOLLOW, v, attach)
+								ParticleEffectAttach("bonk_text", PATTACH_POINT_FOLLOW, v, attach)
 								timer.Simple(5,function()
 									v:StopParticles()
 									local health = v:Health()
@@ -3264,7 +3272,7 @@ hook.Add("EntityEmitSound", "MVMVoices", function(snd)
 									end
 									v.ScaredOfHHH = true
 									local attach = v:LookupAttachment("head") or 1
-									ParticleEffectAttach("yikes_fx", PATTACH_POINT_FOLLOW, v, attach)
+									ParticleEffectAttach("bonk_text", PATTACH_POINT_FOLLOW, v, attach)
 									
 									timer.Simple(5,function()
 
@@ -3288,7 +3296,7 @@ hook.Add("EntityEmitSound", "MVMVoices", function(snd)
 									end
 									v.ScaredOfHHH = true
 									local attach = v:LookupAttachment("head") or 1
-									ParticleEffectAttach("yikes_fx", PATTACH_POINT_FOLLOW, v, attach)
+									ParticleEffectAttach("bonk_text", PATTACH_POINT_FOLLOW, v, attach)
 									
 									timer.Simple(5,function()
 
@@ -3670,7 +3678,7 @@ hook.Add("EntityEmitSound", "MVMVoices", function(snd)
 			snd.SoundName = string.Replace(snd.SoundName, "heavy_laughlong03", "heavy_laughlong02")
 			snd.Pitch = 100 * 1.3
 			return true
-		elseif IsValid(snd.Entity) and snd.Entity:IsPlayer() and !snd.Entity:IsHL2() and snd.Entity:GetModel() and ((snd.Entity:GetInfoNum("tf_giant_robot",0) == 1 or (string.find(snd.Entity:GetModel(),"bot") and string.find(snd.Entity:GetModel(),"boss")))) and string.StartWith(snd.SoundName, "vo/") then
+		elseif IsValid(snd.Entity) and snd.Entity:IsPlayer() and !TFIsHL2Player(snd.Entity) and snd.Entity:GetModel() and ((snd.Entity:GetInfoNum("tf_giant_robot",0) == 1 or (string.find(snd.Entity:GetModel(),"bot") and string.find(snd.Entity:GetModel(),"boss")))) and string.StartWith(snd.SoundName, "vo/") then
 			if (snd.Entity:GetInfoNum("tf_special_dsp_type",-1) > 0) then
 				snd.DSP = snd.Entity:GetInfoNum("tf_special_dsp_type",-1)
 			end
@@ -3706,13 +3714,13 @@ hook.Add("EntityEmitSound", "MVMVoices", function(snd)
 				snd.Pitch = 100 * 0.8
 			end
 			return true
-		elseif IsValid(snd.Entity) and string.StartWith(snd.SoundName, "vo/") and snd.Entity:GetModel() and snd.Entity:IsPlayer() and !snd.Entity:IsHL2() and string.StartWith(snd.Entity:GetModel(),"models/player/") and snd.Entity.playerclass != "spy"  then
+		elseif IsValid(snd.Entity) and string.StartWith(snd.SoundName, "vo/") and snd.Entity:GetModel() and snd.Entity:IsPlayer() and !TFIsHL2Player(snd.Entity) and string.StartWith(snd.Entity:GetModel(),"models/player/") and snd.Entity.playerclass != "spy"  then
 			if (snd.Entity:GetInfoNum("tf_special_dsp_type",-1) > 0) then
 				snd.DSP = snd.Entity:GetInfoNum("tf_special_dsp_type",-1);
 			end
 			local tr = snd.Entity:GetEyeTrace()
 			if (tr.Entity) then
-				if (tr.Entity:IsPlayer() and tr.Entity:IsHL2()) then
+				if (tr.Entity:IsPlayer() and TFIsHL2Player(tr.Entity)) then
 					if (string.find(snd.SoundName, "CloakedSpyIdentify")) then
 						if (snd.Entity.playerclass == "Soldier" || snd.Entity.playerclass == "Spy") then
 

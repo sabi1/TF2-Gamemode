@@ -8,10 +8,10 @@ CreateConVar("loadout_soldier", "-1,-1,-1,-1,-1,-1,-1", {FCVAR_ARCHIVE,FCVAR_USE
 CreateConVar("loadout_pyro", "-1,-1,-1,-1,-1,-1,-1", {FCVAR_ARCHIVE,FCVAR_USERINFO}, "")
 CreateConVar("loadout_demoman", "-1,-1,-1,-1,-1,-1,-1", {FCVAR_ARCHIVE,FCVAR_USERINFO}, "")
 CreateConVar("loadout_heavy", "-1,-1,-1,-1,-1,-1,-1", {FCVAR_ARCHIVE,FCVAR_USERINFO}, "")
-CreateConVar("loadout_engineer", "-1,-1,-1,-1,-1,-1,-1", {FCVAR_ARCHIVE,FCVAR_USERINFO}, "")
+CreateConVar("loadout_engineer", "-1,-1,-1,-1,-1,-1,-1,-1", {FCVAR_ARCHIVE,FCVAR_USERINFO}, "")
 CreateConVar("loadout_sniper", "-1,-1,-1,-1,-1,-1,-1", {FCVAR_ARCHIVE,FCVAR_USERINFO}, "")
 CreateConVar("loadout_medic", "-1,-1,-1,-1,-1,-1,-1", {FCVAR_ARCHIVE,FCVAR_USERINFO}, "")
-CreateConVar("loadout_spy", "-1,-1,-1,-1,-1,-1,-1", {FCVAR_ARCHIVE,FCVAR_USERINFO}, "")
+CreateConVar("loadout_spy", "-1,-1,-1,-1,-1,-1,-1,-1", {FCVAR_ARCHIVE,FCVAR_USERINFO}, "")
 
 CreateConVar("loadout_taunts_scout", "-1,-1,-1,-1,-1,-1,-1,-1", {FCVAR_ARCHIVE,FCVAR_USERINFO}, "")
 CreateConVar("loadout_taunts_soldier", "-1,-1,-1,-1,-1,-1,-1,-1", {FCVAR_ARCHIVE,FCVAR_USERINFO}, "")
@@ -25,6 +25,14 @@ CreateConVar("loadout_taunts_spy", "-1,-1,-1,-1,-1,-1,-1,-1", {FCVAR_ARCHIVE,FCV
 
 local nextLoadoutUpdate = 0
 local LOADOUT_SLOT_COUNT = 7
+
+local function getClassLoadoutSlotCount(className)
+    className = string.lower(tostring(className or ""))
+    if className == "engineer" or className == "spy" then
+        return 8
+    end
+    return LOADOUT_SLOT_COUNT
+end
 
 local function resolveLoadoutItemImagePath(item, properties)
     if not istable(item) then return nil end
@@ -80,9 +88,10 @@ local function applyDecoratedLegacyPanelVisual(panel, item, properties)
     panel.itemImage = surface.GetTextureID("backpack/weapons/c_models/c_bat")
 end
 
-local function normalizeLoadout(split)
+local function normalizeLoadout(split, className)
     local out = {}
-    for i = 1, LOADOUT_SLOT_COUNT do
+    local slotCount = getClassLoadoutSlotCount(className)
+    for i = 1, slotCount do
         out[i] = tostring(tonumber(split and split[i]) or -1)
     end
     return out
@@ -91,8 +100,10 @@ end
 local function updateLoadout(type, id, update)
     local convar = GetConVar("loadout_" .. LocalPlayer():GetPlayerClass())
     type = tonumber(type)
-    if not type or type < 1 or type > LOADOUT_SLOT_COUNT then return end
-    local split = normalizeLoadout(string.Split(convar:GetString(), ","))
+    local className = LocalPlayer():GetPlayerClass()
+    local slotCount = getClassLoadoutSlotCount(className)
+    if not type or type < 1 or type > slotCount then return end
+    local split = normalizeLoadout(string.Split(convar:GetString(), ","), className)
     split[type] = tostring(tonumber(id) or -1)
 
     convar:SetString(table.concat(split, ","))
@@ -108,8 +119,10 @@ local function select(self, i, val, update)
     local id = self:GetOptionData(i)
     local convar = GetConVar("loadout_" .. LocalPlayer():GetPlayerClass())
     type = tonumber(type)
-    if not type or type < 1 or type > LOADOUT_SLOT_COUNT then return end
-    local split = normalizeLoadout(string.Split(convar:GetString(), ","))
+    local className = LocalPlayer():GetPlayerClass()
+    local slotCount = getClassLoadoutSlotCount(className)
+    if not type or type < 1 or type > slotCount then return end
+    local split = normalizeLoadout(string.Split(convar:GetString(), ","), className)
     split[type] = tostring(tonumber(id) or -1)
 
     convar:SetString(table.concat(split, ","))

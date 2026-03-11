@@ -1,6 +1,21 @@
 AddCSLuaFile()
 
-game.AddParticles("particles/particles_vsh.pcf")
+local function should_load_vsh_particles()
+	local cv = GetConVar("tf_particles_vsh_enable")
+	local mode = cv and math.floor(cv:GetFloat()) or -1
+	if mode == 0 then return false end
+	if mode == 1 then return true end
+
+	local mapName = string.lower(game.GetMap() or "")
+	return string.StartWith(mapName, "vsh_")
+		or string.StartWith(mapName, "arena_vsh_")
+		or string.find(mapName, "_vsh_", 1, true) ~= nil
+		or string.find(mapName, "saxton", 1, true) ~= nil
+end
+
+if should_load_vsh_particles() then
+	game.AddParticles("particles/particles_vsh.pcf")
+end
 ENT.Base 			= "base_nextbot"
 ENT.Spawnable		= false
 ENT.Model = "models/player/saxton_hale.mdl"

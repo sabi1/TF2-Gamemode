@@ -1011,11 +1011,17 @@ local function WeaponIsMedigunForSelection(wep)
 	if not IsValid(wep) then return false end
 	local class = wep:GetClass()
 	if not isstring(class) then return false end
-	return class == "tf_weapon_ampgun" or string.find(class, "tf_weapon_medigun", 1, true) == 1
+	return class == "tf_weapon_ampgun"
+		or class == "tf_weapon_builder"
+		or string.find(class, "tf_weapon_medigun", 1, true) == 1
 end
 
 local function WeaponHasUsableAmmoForSelection(wep)
 	if not IsValid(wep) then return false end
+	local class = wep:GetClass()
+	if string.find(class, "tf_weapon_pda_engineer", 1, true) == 1 then
+		return true
+	end
 	if wep.Hidden or wep.IsPDA then
 		return true
 	end
@@ -1864,6 +1870,12 @@ function SWEP:OnRemove()
 end
 
 function SWEP:CanPrimaryAttack() 
+	if IsValid(self.Owner) and self.Owner.InCond and self.Owner:InCond(TF_COND_STEALTHED) then
+		if self:GetClass() ~= "tf_weapon_invis" and self:GetClass() ~= "tf_weapon_invis_dringer" then
+			return false
+		end
+	end
+
 	if (self.Owner:GetNWBool("Bonked")) then return false end
 	if (((self.Primary.ClipSize == -1 and self:Ammo1() > 0) or self:Clip1() > 0) and self.Owner:GetNWBool("Bonked",false) == false) then
 		return true

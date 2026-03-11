@@ -410,7 +410,18 @@ function meta:SetPlayerClass(class)
 	
 	if c.Buildings then
 		self.Buildings = tf_objects.GetBuildables(c.Buildings)
-		self:GiveItem("TF_WEAPON_BUILDER") 
+		if not IsValid(self:GetWeapon("tf_weapon_builder")) then
+			self:GiveItem("TF_WEAPON_BUILDER")
+		end
+		if not IsValid(self:GetWeapon("tf_weapon_builder")) and weapons.GetStored("tf_weapon_builder") then
+			self:Give("tf_weapon_builder")
+		end
+		if not IsValid(self:GetWeapon("tf_weapon_pda_engineer_build")) and weapons.GetStored("tf_weapon_pda_engineer_build") then
+			self:Give("tf_weapon_pda_engineer_build")
+		end
+		if not IsValid(self:GetWeapon("tf_weapon_pda_engineer_destroy")) and weapons.GetStored("tf_weapon_pda_engineer_destroy") then
+			self:Give("tf_weapon_pda_engineer_destroy")
+		end
 	end
 	 
 	for k,v in pairs(self.AmmoMax or {}) do

@@ -53,6 +53,13 @@ local function tf_spy_current_disguise_class(owner)
 	return className
 end
 
+local function tf_spy_mark_sapper_attack(owner, duration)
+	if not SERVER then return end
+	if not IsValid(owner) or owner:GetPlayerClass() ~= "spy" then return end
+	if not owner.InCond or not owner:InCond(TF_COND_DISGUISED) then return end
+	owner:SetNWFloat("TFSpyDisguiseSapperAttackUntil", CurTime() + math.max(tonumber(duration) or 0.35, 0.1))
+end
+
 function SWEP:SetupDataTables()
 	self:CallBaseFunction("SetupDataTables")
 	self:DTVar("Int", 1, "BuildGroup")
@@ -78,6 +85,24 @@ function SWEP:GetBuilding()
 			end
 		end
 	end
+end
+
+function SWEP:HasUsableAmmoForSelection()
+	local owner = self.Owner or self:GetOwner()
+	if not IsValid(owner) then
+		return false
+	end
+	if owner.GetPlayerClass and owner:GetPlayerClass() == "spy" then
+		return true
+	end
+
+	local building = self:GetBuilding()
+	if not building then
+		return true
+	end
+
+	local cost = tonumber(building.cost or 0) or 0
+	return owner:GetAmmoCount(TF_METAL) >= cost
 end
 
 
@@ -127,6 +152,10 @@ function SWEP:Equip()
 				end
 			end
 		end
+		local obj = self:GetBuilding()
+		if obj then
+			self:SetupBuilding(obj)
+		end
 		
 			end
 		----print("group",self.dt.BuildGroup,"mode",self.dt.BuildMode)
@@ -151,6 +180,7 @@ end
 function SWEP:PrimaryAttack()
 	
 	if self.Owner:GetPlayerClass() == "spy" then
+		tf_spy_mark_sapper_attack(self.Owner, 0.45)
 		for k,v in pairs(ents.FindInSphere(self.Owner:GetPos(), 120)) do
 			if v:IsPlayer() and v:GetInfoNum("tf_robot", 0) == 1 and not v:IsFriendly(self.Owner) and v:GetInfoNum("tf_giant_robot",0) != 1 then
 				self:SetNextPrimaryFire(CurTime() + 10)
@@ -158,7 +188,7 @@ function SWEP:PrimaryAttack()
 				if v:GetNWBool("Taunting") == true then return end
 				if not v:IsOnGround() then return end
 				if v:WaterLevel() ~= 0 then return end
-				self.Owner:DoAnimationEvent(ACT_MP_ATTACK_STAND_GRENADE)
+				self.Owner:DoAnimationEvent(ACT_MP_ATTACK_STAND_ITEM2)
 				v:EmitSound("Weapon_Sapper.Plant") 
 				local seq = v:SelectWeightedSequence( ACT_DOD_SECONDARYATTACK_BOLT )
 				local len = v:SequenceDuration( seq )
@@ -240,7 +270,7 @@ function SWEP:PrimaryAttack()
 				if v:GetNWBool("Taunting") == true then return end
 				if not v:IsOnGround() then return end
 				if v:WaterLevel() ~= 0 then return end
-				self.Owner:DoAnimationEvent(ACT_MP_ATTACK_STAND_GRENADE)
+				self.Owner:DoAnimationEvent(ACT_MP_ATTACK_STAND_ITEM2)
 				v:EmitSound("Weapon_Sapper.Plant")
 				local seq = v:SelectWeightedSequence( ACT_DOD_SECONDARYATTACK_BOLT )
 				local len = v:SequenceDuration( seq )
@@ -317,7 +347,7 @@ function SWEP:PrimaryAttack()
 				if v:GetNWBool("Taunting") == true then return end
 				if not v:IsOnGround() then return end
 				if v:WaterLevel() ~= 0 then return end
-				self.Owner:DoAnimationEvent(ACT_MP_ATTACK_STAND_GRENADE)
+				self.Owner:DoAnimationEvent(ACT_MP_ATTACK_STAND_ITEM2)
 				v:EmitSound("Weapon_Sapper.Plant")
 				
 				local seq = v:SelectWeightedSequence( ACT_MP_STUN_BEGIN )
@@ -561,7 +591,7 @@ function SWEP:PrimaryAttack()
 						return
 					end 
 				self:SetNextPrimaryFire(CurTime() + 2)
-				self.Owner:DoAnimationEvent(ACT_MP_ATTACK_STAND_GRENADE_PRIMARY)
+				self.Owner:DoAnimationEvent(ACT_MP_ATTACK_STAND_ITEM2)
 				v:EmitSound("weapons/sapper_plant.wav") 
 
 				
@@ -1043,12 +1073,36 @@ function SWEP:PrimaryAttack()
 			end
 		end
 	end
-	if SERVER then
-		if IsValid(self.Blueprint) and self.Moving != true then
-			local ammo = self.Owner:GetAmmoCount(TF_METAL)
-			if self:GetBuilding().cost > ammo then
-				return
+		if SERVER then
+			local function SelectOwnerMelee(owner)
+				if not IsValid(owner) then return end
+				local melee = owner:GetWeapon("tf_weapon_wrench")
+				if not IsValid(melee) then
+					for _, wep in ipairs(owner:GetWeapons()) do
+						if not IsValid(wep) then continue end
+						if wep.IsPDA then continue end
+						local isMelee = (wep.IsMeleeWeapon == true) or (tonumber(wep.Slot or (wep.GetSlot and wep:GetSlot()) or -1) == 2)
+						if not isMelee and wep.GetItemData then
+							local item = wep:GetItemData()
+							isMelee = istable(item) and item.item_slot == "melee"
+						end
+						if isMelee then
+							melee = wep
+							break
+						end
+					end
+				end
+				if IsValid(melee) then
+					owner.ForgetLastWeapon = true
+					owner:SelectWeapon(melee:GetClass())
+				end
 			end
+
+			if IsValid(self.Blueprint) and self.Moving != true then
+				local ammo = self.Owner:GetAmmoCount(TF_METAL)
+				if self:GetBuilding().cost > ammo then
+					return
+				end
 			
 			if self.Blueprint:Build() then
 				self.Owner.objtype = self:GetBuilding().objtype
@@ -1059,21 +1113,17 @@ function SWEP:PrimaryAttack()
 						umsg.Short(-self:GetBuilding().cost)
 					umsg.End() 
 				end
-				-- temp
-				self.Owner.ForgetLastWeapon = true
-				self.Owner:SelectWeapon(self.LastWeapon)
+					SelectOwnerMelee(self.Owner)
+				end
 			end
-		end
-		if IsValid(self.Blueprint) and self.Moving != false then
-			
-			if self.Blueprint:Build() then
-				self.Owner.objtype = self:GetBuilding().objtype
+			if IsValid(self.Blueprint) and self.Moving != false then
 				
-				-- temp
-				self.Owner.ForgetLastWeapon = true
-				self.Owner:SelectWeapon(self.LastWeapon)
-				self.Moving = false
-			end
+				if self.Blueprint:Build() then
+					self.Owner.objtype = self:GetBuilding().objtype
+					
+					SelectOwnerMelee(self.Owner)
+					self.Moving = false
+				end
 			if SERVER then	
 				if self.Owner:GetInfoNum("tf_robot", 0) == 1 then
 					--self.Owner:EmitSoundEx("vo/mvm/norm/engineer_mvm_sentryplanting0"..math.random(1,3)..".wav", 80, 100)
@@ -1129,50 +1179,14 @@ function SWEP:Deploy()
 		end
 		local disguiseClass = tf_spy_current_disguise_class(self.Owner)
 		if disguiseClass then
-			animent2 = ents.Create( 'base_gmodentity' ) -- The entity used for the death animation	
-			if disguiseClass == "engineer" or disguiseClass == "scout" then
-				animent2:SetModel("models/weapons/c_models/c_pistol/c_pistol.mdl")
-			elseif disguiseClass == "soldier" or disguiseClass == "pyro" or disguiseClass == "heavy" then
-				animent2:SetModel("models/weapons/c_models/c_shotgun/c_shotgun.mdl")
-			elseif disguiseClass == "spy" then
-				animent2:SetModel("models/weapons/w_models/w_revolver.mdl")
-			elseif disguiseClass == "sniper" then
-				animent2:SetModel("models/weapons/c_models/c_smg/c_smg.mdl")
-			elseif disguiseClass == "medic" then
-				animent2:SetModel("models/weapons/c_models/c_medigun/c_medigun.mdl")
-			elseif disguiseClass == "demo" then
-				animent2:SetModel("models/weapons/w_models/w_grenadelauncher.mdl")
-			end
-			animent2:SetAngles(self.Owner:GetAngles())
-			animent2:SetPos(self.Owner:GetPos())
-			animent2:Spawn()
-			animent2:Activate()
-			animent2:SetParent(self.Owner)
-			animent2:AddEffects(EF_BONEMERGE)
-			animent2:SetName("SpyWeaponModel"..self.Owner:EntIndex())
-			self:SetHoldType("SECONDARY")
-			
-			if SERVER then
-				timer.Create("SpyCloakDetector"..self.Owner:EntIndex(), 0.01, 0, function()
-					if self.Owner:GetPlayerClass() == "spy" then
-						if self.Owner:GetNoDraw() == true then
-							if IsValid(animent2) then
-								animent2:SetNoDraw(true)
-							end
-						else
-							if IsValid(animent2) then
-								animent2:SetNoDraw(false)
-							end
-						end
-					else
-						timer.Stop("SpyCloakDetector"..self.Owner:EntIndex())
-						return
-					end
-				end)
+			self:SetHoldType("ITEM2")
+			if self.SetWeaponHoldType then
+				self:SetWeaponHoldType("ITEM2")
 			end
 		else
-			if IsValid(animent2) then
-				animent2:Remove()
+			self:SetHoldType("BUILDING")
+			if self.SetWeaponHoldType then
+				self:SetWeaponHoldType("BUILDING")
 			end
 		end
 		if self:GetItemData().model_player == "models/weapons/c_models/c_breadmonster_sapper/c_breadmonster_sapper.mdl" then
@@ -1343,13 +1357,9 @@ if SERVER then
 
 function SWEP:SetBuilding(group, mode)
 	if self.Owner.Buildings[group] and self.Owner.Buildings[group][mode] then
-		local cost = self.Owner.Buildings[group][mode].cost
-		if self.Owner:GetAmmoCount(TF_METAL) < cost then
-			return false
-		end
-		
 		self.dt.BuildGroup = group
 		self.dt.BuildMode = mode
+		self:SetupBuilding(self.Owner.Buildings[group][mode])
 		return true
 	end
 end
@@ -1358,6 +1368,7 @@ function SWEP:SetBuilding2(group, mode)
 	if self.Owner.Buildings[group] and self.Owner.Buildings[group][mode] then
 		self.dt.BuildGroup = group
 		self.dt.BuildMode = mode
+		self:SetupBuilding(self.Owner.Buildings[group][mode])
 		return true
 	end
 end
@@ -1369,80 +1380,83 @@ local old_group_translate = {
 	[3] = {2,0},
 	[4] = {3,0},
 }
-concommand.Add("build", function(pl, cmd, args)
-	pl:Build(args[1], args[2])
-end)
 
-concommand.Add("move", function(pl, cmd, args)
-	local group = tonumber(args[1])
-	local sub = tonumber(args[2]) 
-	if pl:GetInfoNum("tf_robot", 0) == 1 then
-		--pl:EmitSound("vo/mvm/norm/engineer_mvm_sentrypacking0"..math.random(1,3)..".wav", 80, 100)
-	else
-		--pl:EmitSound("vo/engineer_sentrypacking0"..math.random(1,3)..".wav", 80, 100)		
-	end
-	local builder = pl:GetWeapon("tf_weapon_builder")
-	
-	if not IsValid(builder) then return end
-	if not group then return end
-	
-	builder:SetHoldType("BUILDING_DEPLOYED") 
-	
+local function TF_FallbackSelectBuilder(pl, args, useDeployedMode)
+	if not IsValid(pl) or not pl:IsPlayer() then return false end
+
+	local group = tonumber(args and args[1])
+	local sub = tonumber(args and args[2])
+	if not group then return false end
 	if not sub then
-		if not old_group_translate[group] then return end
-		
-		group, sub = unpack(old_group_translate[group])
+		local mapped = old_group_translate[group]
+		if not mapped then return false end
+		group, sub = mapped[1], mapped[2]
 	end
-	
+
+	local builder = pl:GetWeapon("tf_weapon_builder")
+	if not IsValid(builder) and isfunction(pl.GiveItem) then
+		pl:GiveItem("TF_WEAPON_BUILDER")
+		builder = pl:GetWeapon("tf_weapon_builder")
+	end
+	if not IsValid(builder) then return false end
+
+	if useDeployedMode then
+		builder:SetHoldType("BUILDING_DEPLOYED")
+	else
+		builder:SetHoldType("BUILDING")
+	end
+
+	local setOk = false
+	if isfunction(builder.SetBuilding2) then
+		setOk = builder:SetBuilding2(group, sub) and true or false
+	elseif isfunction(builder.SetBuilding) then
+		setOk = builder:SetBuilding(group, sub) and true or false
+	end
+	if not setOk then return false end
+
 	local current = pl:GetActiveWeapon()
-	if builder:SetBuilding2(group, sub) and current ~= builder then
+	if IsValid(current) and current ~= builder then
 		if current.IsPDA then
 			local last = pl:GetWeapon(pl.LastWeapon)
 			if not IsValid(last) or last.IsPDA then
 				last = pl:GetWeapons()[1]
 			end
-			builder.LastWeapon = last:GetClass()
-			pl:SelectWeapon(last:GetClass())
+			if IsValid(last) then
+				builder.LastWeapon = last:GetClass()
+				pl:SelectWeapon(last:GetClass())
+			end
 		else
 			builder.LastWeapon = current:GetClass()
 		end
-		pl:SelectWeapon("tf_weapon_builder")
-		builder.Moving = true
 	end
+
+	pl:SelectWeapon("tf_weapon_builder")
+	builder.Moving = useDeployedMode and true or false
+	return true
+end
+
+concommand.Add("build", function(pl, cmd, args)
+	if not IsValid(pl) or not pl:IsPlayer() then return end
+	if isfunction(pl.Build) then
+		pl:Build(args[1], args[2])
+		return
+	end
+	TF_FallbackSelectBuilder(pl, args, false)
+end)
+
+concommand.Add("move", function(pl, cmd, args)
+	if not IsValid(pl) or not pl:IsPlayer() then return end
+	if isfunction(pl.Move) then
+		pl:Move(args[1], args[2])
+		return
+	end
+	TF_FallbackSelectBuilder(pl, args, true)
 end)
 
 concommand.Add("destroy", function(pl, cmd, args)
-	local group = tonumber(args[1])
-	local sub = tonumber(args[2])
-	
-	if group == 2 and sub == 0 then	
-		for k, v in pairs(ents.FindByClass("obj_sentrygun")) do
-			if v:GetBuilder() == pl then
-				v:Explode()
-			end
-		end
-	end
-	if group == 0 and sub == 0 then	
-		for k, v in pairs(ents.FindByClass("obj_dispenser")) do
-			if v:GetBuilder() == pl then
-				v:Explode()
-			end
-		end
-	end
-	if group == 1 and sub == 0 then	
-		for k, v in pairs(ents.FindByClass("obj_teleporter")) do
-			if v:GetBuilder() == pl and v:IsExit() != true then
-				v:Explode()
-			end
-		end
-	end
-	if group == 1 and sub == 1 then	
-		for k, v in pairs(ents.FindByClass("obj_teleporter")) do
-			if v:GetBuilder() == pl and v:IsExit() != false then
-				v:Explode()
-			end
-		end
-	end
+	if not IsValid(pl) or not pl:IsPlayer() then return end
+	if not isfunction(pl.DestroyBuilding) then return end
+	pl:DestroyBuilding(args[1], args[2])
 end)
 
 function SWEP:Holster()

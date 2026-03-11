@@ -299,8 +299,36 @@ hook.Add("CreateClientsideRagdoll", "TF_Decapitate", function(ent, rag)
 	end
 end)
 
+local DECAP_HEAD_BONES = {
+	"ValveBiped.Bip01_Head1",
+	"ValveBiped.Bip01_Neck1",
+	"ValveBiped.Bip01_Spine4",
+	"bip_head",
+	"bip_neck",
+	"prp_helmet",
+	"jaw_bone",
+}
+
+local function HideDecapitatedHeadBones(rag)
+	if not IsValid(rag) then return end
+	for _, boneName in ipairs(DECAP_HEAD_BONES) do
+		local bone = rag:LookupBone(boneName)
+		if bone and bone >= 0 then
+			rag:ManipulateBoneScale(bone, Vector(0, 0, 0))
+		end
+	end
+end
+
 function GM:DecapitateRagdoll(rag, owner, deathpose)
 	local b
+	local function AttachDecapBloodFX(target, attachment)
+		if not IsValid(target) then return end
+		attachment = attachment or 0
+		ParticleEffectAttach("blood_decap", PATTACH_ABSORIGIN_FOLLOW, target, attachment)
+		ParticleEffectAttach("blood_decap_arterial_spray", PATTACH_ABSORIGIN_FOLLOW, target, attachment)
+		ParticleEffectAttach("blood_decap_fountain", PATTACH_ABSORIGIN_FOLLOW, target, attachment)
+		ParticleEffectAttach("blood_decap_streaks", PATTACH_ABSORIGIN_FOLLOW, target, attachment)
+	end
 	----print("decap1")
 	b = rag:LookupBone("ValveBiped.Bip01_Head1")
 	if b and b>0 then
@@ -310,12 +338,12 @@ function GM:DecapitateRagdoll(rag, owner, deathpose)
 		rag.DecapLocator:SetNoDraw(true)
 		rag.DecapLocator:SetParent(rag)
 		----print("decap2")
-		ParticleEffectAttach("blood_decap", PATTACH_ABSORIGIN_FOLLOW, rag.DecapLocator, 0)
+		AttachDecapBloodFX(rag.DecapLocator, 0)
 		rag.Owner = owner
 		--rag.BuildBonePositions = Decap_HL2
 		--rag:AddBuildBoneHook("RagdollDecap", Decap_HL2)
 		rag:EmitSound("player/flow.wav")
-		rag:ManipulateBoneScale(b, Vector(0, 0, 0))
+		HideDecapitatedHeadBones(rag)
 		
 		if deathpose  then
 			PlayDeathPose(rag, DecapDeathPose)
@@ -328,15 +356,25 @@ function GM:DecapitateRagdoll(rag, owner, deathpose)
 	if b and b>0 then
 		rag.NextDecapEnd = CurTime() + 5
 		rag.DecapLocator = ClientsideModel("models/props_junk/watermelon01.mdl")
+		local pos, ang = rag:GetBonePosition(b)
+		if pos then
+			rag.DecapLocator:SetPos(pos)
+		end
+		if ang then
+			rag.DecapLocator:SetAngles(ang)
+		end
 		rag.DecapLocator:SetNoDraw(true)
 		rag.DecapLocator:SetParent(rag)
 		
-		ParticleEffectAttach("blood_decap", PATTACH_ABSORIGIN_FOLLOW, rag.DecapLocator, 0)
+		AttachDecapBloodFX(rag.DecapLocator, 0)
 		rag.Owner = owner
 		--rag.BuildBonePositions = Decap_TF2
 		--rag:AddBuildBoneHook("RagdollDecap", Decap_TF2)
 		rag:EmitSound("player/flow.wav")
-		rag:ManipulateBoneScale(b, Vector(0, 0, 0))
+		HideDecapitatedHeadBones(rag)
+		if deathpose then
+			PlayDeathPose(rag, DecapDeathPose)
+		end
 		return 0
 	end
 end
@@ -399,6 +437,15 @@ function GM:CheckAllNPCRagdolls()
 end
 
 function GM:SetupPlayerGib(pl, gib, gibtype)
+	if not IsValid(pl) or not IsValid(gib) then return end
+
+	-- TF2 decap kills spawn extra arterial blood from the detached head gib.
+	if gibtype == GIB_HEAD and pl:HasDeathFlag(DF_DECAP) then
+		gib:EmitSound("TFPlayer.Decapitated")
+		ParticleEffectAttach("blood_decap_streaks", PATTACH_ABSORIGIN_FOLLOW, gib, 0)
+		ParticleEffectAttach("blood_decap_arterial_spray", PATTACH_ABSORIGIN_FOLLOW, gib, 0)
+		ParticleEffectAttach("blood_decap_fountain", PATTACH_ABSORIGIN_FOLLOW, gib, 0)
+	end
 end
 
 function GM:SetupPlayerRagdoll(pl, rag)
@@ -419,7 +466,7 @@ function GM:SetupPlayerRagdoll(pl, rag)
 	
 	if pl:HasDeathFlag(DF_DECAP) then
 		local dp
-		if pl:IsHL2() and pl:IsOnGround() then
+		if pl:IsOnGround() then
 			dp = true
 		end
 		

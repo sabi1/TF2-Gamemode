@@ -1,12 +1,20 @@
 local cv_tf_clamp_back_speed = CreateConVar("tf_clamp_back_speed", "0.9", {FCVAR_REPLICATED, FCVAR_ARCHIVE}, "TF2 backpedal speed clamp multiplier.")
 local cv_tf_clamp_back_speed_min = CreateConVar("tf_clamp_back_speed_min", "100", {FCVAR_REPLICATED, FCVAR_ARCHIVE}, "Minimum speed before TF2 backpedal clamp is enforced.")
 
+local function TFIsHL2Player(pl)
+	if not IsValid(pl) then return false end
+	if pl.IsHL2 then
+		return pl:IsHL2()
+	end
+	return pl:GetNWBool("IsHL2", false)
+end
+
 hook.Add("Move", "TFMove", function(pl, move)
 	if CLIENT and not pl.TempAttributes then
 		pl.TempAttributes = {}
 	end
 	
-	if pl:IsHL2() then return end
+	if TFIsHL2Player(pl) then return end
 
 	if pl:GetNWBool("TauntingMoped", false) then
 		local forward = pl:GetForward()
@@ -38,6 +46,53 @@ hook.Add("Move", "TFMove", function(pl, move)
 		move:SetUpSpeed(0)
 		move:SetMaxSpeed(math.max(move:GetMaxSpeed(), driveSpeed))
 		move:SetMaxClientSpeed(math.max(move:GetMaxClientSpeed(), driveSpeed))
+		return
+	end
+
+	if pl:GetNWBool("HalloweenKart", false) then
+		local moveSpeed = 200
+		local boostSpeed = 320
+		local turnSpeed = 90
+		local turnAccelTime = 0.2
+		local driveAccelTime = 0.25
+		local dt = engine.TickInterval()
+		local steerInput = math.Clamp(tonumber(pl.__TFKartTurnInput) or 0, -1, 1)
+		local driveInput = math.Clamp(tonumber(pl.__TFKartDriveInput) or 0, -1, 1)
+
+		pl.__TFKartTurnRate = pl.__TFKartTurnRate or 0
+		pl.__TFKartDriveRate = pl.__TFKartDriveRate or 0
+
+		local targetTurn = steerInput * turnSpeed
+		local turnDelta = (turnSpeed / math.max(turnAccelTime, 0.01)) * dt
+		pl.__TFKartTurnRate = math.Approach(pl.__TFKartTurnRate, targetTurn, turnDelta)
+
+		local ea = pl:EyeAngles()
+		ea.y = math.NormalizeAngle(ea.y + pl.__TFKartTurnRate * dt)
+		pl:SetEyeAngles(ea)
+
+		local speedTarget = moveSpeed
+		if CurTime() < pl:GetNWFloat("TFKartBoostEndTime", 0) then
+			speedTarget = boostSpeed
+		end
+
+		local targetDrive = driveInput * speedTarget
+		local driveDelta = (speedTarget / math.max(driveAccelTime, 0.01)) * dt
+		pl.__TFKartDriveRate = math.Approach(pl.__TFKartDriveRate, targetDrive, driveDelta)
+
+		local forward = pl:GetForward()
+		forward.z = 0
+		forward:Normalize()
+
+		local vel = move:GetVelocity()
+		local planar = forward * pl.__TFKartDriveRate
+		vel.x = planar.x
+		vel.y = planar.y
+		move:SetVelocity(vel)
+		move:SetForwardSpeed(pl.__TFKartDriveRate)
+		move:SetSideSpeed(0)
+		move:SetUpSpeed(0)
+		move:SetMaxSpeed(math.max(move:GetMaxSpeed(), math.abs(pl.__TFKartDriveRate)))
+		move:SetMaxClientSpeed(math.max(move:GetMaxClientSpeed(), math.abs(pl.__TFKartDriveRate)))
 		return
 	end
 
@@ -98,10 +153,12 @@ hook.Add("Move", "TFMove", function(pl, move)
 
 	pl.__SchemaTauntTurnRate = 0
 	pl.__SchemaTauntDriveRate = 0
+	pl.__TFKartTurnRate = 0
+	pl.__TFKartDriveRate = 0
 	
 	-- Mirror TF2 tf_clamp_back_speed / tf_clamp_back_speed_min behavior.
 	local fwd = move:GetForwardSpeed()
-	if fwd < 0 and not pl:IsHL2() then
+	if fwd < 0 and not TFIsHL2Player(pl) then
 		local clampScale = cv_tf_clamp_back_speed:GetFloat()
 		local clampMin = cv_tf_clamp_back_speed_min:GetFloat()
 		if clampScale < 1 and move:GetVelocity():Length() > clampMin then
@@ -169,7 +226,7 @@ hook.Add("Move", "TFMove", function(pl, move)
 end)
 
 hook.Add("SetupMove", "TFSetupMove", function(pl, move)
-	if pl:IsHL2() then return end
+	if TFIsHL2Player(pl) then return end
 
 	-- Can't move when crouched in the loser state
 	if pl:Crouching() then

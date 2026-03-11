@@ -37,6 +37,9 @@ local function LocalizeBossName(scenario)
 	if scenario == "lakeside" then
 		return "MERASMUS!"
 	end
+	if scenario == "hightower" then
+		return "SKELETON KING"
+	end
 	return "Boss"
 end
 

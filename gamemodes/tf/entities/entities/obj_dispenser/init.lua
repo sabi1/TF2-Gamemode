@@ -5,6 +5,19 @@ AddCSLuaFile("cl_init.lua")
 include("shared.lua")
 
 local tf_minidispenser_allow_upgrade = CreateConVar("tf_minidispenser_allow_upgrade", "0", {FCVAR_CHEAT})
+local DISPENSER_DROP_METAL = 40
+
+local DISPENSER_HEAL_RATES = {
+	[1] = 10,
+	[2] = 15,
+	[3] = 20,
+}
+
+local DISPENSER_AMMO_RATES = {
+	[1] = 0.2,
+	[2] = 0.3,
+	[3] = 0.4,
+}
 
 ENT.NPCCallRange = 512
 ENT.NPCCallHealthFraction = 0.75
@@ -38,6 +51,31 @@ ENT.Sapped = false
 
 ENT.Range = 100
 
+local function getPlayerDispenserTeam(pl)
+	if not IsValid(pl) then return TEAM_UNASSIGNED end
+	local t = pl:Team()
+	if pl:GetNWBool("Disguised", false) then
+		local disguiseTeam = pl:GetNWInt("TFSpyDisguiseTeam", -1)
+		if disguiseTeam ~= -1 then
+			t = disguiseTeam
+		end
+	end
+	return t
+end
+
+local function hasDispenserLOS(ent, target)
+	if not IsValid(ent) or not IsValid(target) then return false end
+	local startPos = ent:WorldSpaceCenter()
+	local endPos = target:WorldSpaceCenter()
+	local tr = util.TraceLine({
+		start = startPos,
+		endpos = endPos,
+		filter = {ent, ent.Model},
+		mask = bit.bor(MASK_BLOCKLOS, CONTENTS_WINDOW),
+	})
+	return (not tr.Hit) or tr.Entity == target
+end
+
 function ENT:SpawnFunction(pl, tr)
 	if not tr.Hit then return end
 	if (!pl:IsAdmin()) then return end
@@ -58,6 +96,7 @@ function ENT:SpawnFunction(pl, tr)
 end
 
 function ENT:StartSupply(pl)
+	if self.Clients[pl] then return end
 	self.NumClients = self.NumClients + 1
 	
 	local target = ents.Create("info_dummy")
@@ -88,10 +127,9 @@ function ENT:StartSupply(pl)
 end
 
 function ENT:StopSupply(pl)
-	self.NumClients = self.NumClients - 1
-	
 	local t = self.Clients[pl]
 	if not t then return end
+	self.NumClients = math.max(self.NumClients - 1, 0)
 	
 	if IsValid(t[1]) then t[1]:Remove() end
 	if IsValid(t[2]) then t[2]:Remove() end
@@ -144,7 +182,7 @@ function ENT:OnDoneBuilding()
 	self:SetNoDraw(false)
 	
 	self:SetMetalAmount(25)
-	self.NextGenerate = CurTime() + 5
+	self.NextGenerate = CurTime() + 6
 	if self:GetBuildingType() == 1 then
 		self.NextAmmoSupply = CurTime() + 0.5
 		
@@ -175,6 +213,8 @@ function ENT:OnDoneBuilding()
 			self.Model:SetModel("models/buildables/repair_level1.mdl")
 		end)
 	end
+	self._NextDispenseTick = CurTime() + 0.1
+	self._NextAmmoSupplyTick = CurTime() + 0.5
 end
 
 function ENT:OnStartUpgrade()
@@ -216,7 +256,7 @@ function ENT:OnThinkActive()
 			self.Idle_Sound = CreateSound(self, self.Sound_Idle,rf)
 			self.Idle_Sound:Play()
 		end
-		if !self.Heal_Sound and self:GetNWInt("NumClients",0) >= 0 and self:GetState()==3 || self.Heal_Sound != nil and !self.Heal_Sound:IsPlaying() and self:GetNWInt("NumClients",0) >= 0 and self:GetState()==3 then
+		if !self.Heal_Sound and self:GetNWInt("NumClients",0) > 0 and self:GetState()==3 || self.Heal_Sound != nil and !self.Heal_Sound:IsPlaying() and self:GetNWInt("NumClients",0) > 0 and self:GetState()==3 then
 			self.Heal_Sound = CreateSound(self, self.Sound_Heal,rf)
 			self.Heal_Sound:Play()
 		end
@@ -226,30 +266,37 @@ function ENT:OnThinkActive()
 	self:SetNWInt("NumClients",self.NumClients)
 	if self.NextGenerate and CurTime()>=self.NextGenerate then
 		local color = self:GetColor()
-		if self:AddMetalAmount(self.MetalPerGeneration)>0 and color.a>0 then
+		local level = math.Clamp(tonumber(self:GetLevel() or 1) or 1, 1, 3)
+		local addMetal = 40 + ((level - 1) * 10)
+		if self:AddMetalAmount(addMetal)>0 and color.a>0 then
 			self:EmitSoundEx(self.Sound_Generate, 100, 100)
 		end
-		if self:GetBuildingType() == 1 then
-			self.NextGenerate = CurTime() + 2.5
-		else
-			self.NextGenerate = CurTime() + 5
-		end
+		self.NextGenerate = CurTime() + 6
 	end
 	
 	if not self.NextSearch or CurTime()>=self.NextSearch then
 		local removedclients = table.Copy(self.Clients)
-		for _,v in pairs(ents.FindInSphere(self:GetPos(), self.Range)) do
-			if (v:IsPlayer() or v.Base == "npc_tf2base") and not v:IsBuilding() and (self:Team()==TEAM_NEUTRAL or GAMEMODE:EntityTeam(v)==self:Team()) then
+		for _,v in pairs(ents.FindInSphere(self:WorldSpaceCenter(), self.Range)) do
+			if v:IsPlayer() and v:Alive() and not v:IsBuilding() then
+				local teamOk = (self:Team()==TEAM_NEUTRAL) or (getPlayerDispenserTeam(v) == self:Team())
+				local losOk = hasDispenserLOS(self, v)
+				if teamOk and losOk then
+					if self.Clients[v] then
+						removedclients[v] = nil
+					else
+						self:StartSupply(v)
+					end
+				end
+			end
+			if (v.Base == "npc_tf2base") and not v:IsBuilding() and (self:Team()==TEAM_NEUTRAL or GAMEMODE:EntityTeam(v)==self:Team()) then
 				if self.Clients[v] then
-					-- Don't remove that client
 					removedclients[v] = nil
 				else
 					self:StartSupply(v)
-				end 
+				end
 			end
 			if (self:GetBuildingType() == 2) and v:IsBuilding() and (self:Team()==TEAM_NEUTRAL or GAMEMODE:EntityTeam(v)==self:Team()) then
 				if self.Clients[v] then 
-					-- Don't remove that client
 					removedclients[v] = nil
 				else
 					self:StartSupply(v)
@@ -261,39 +308,70 @@ function ENT:OnThinkActive()
 			self:StopSupply(k)
 		end
 		
-		self.NextSearch = CurTime() + 0.2
+		self.NextSearch = CurTime() + 0.1
 	end
 	
-	if not self.NextAmmoSupply or CurTime()>=self.NextAmmoSupply then
+	if not self._NextAmmoSupplyTick or CurTime()>=self._NextAmmoSupplyTick then
 		local metal_before = self:GetMetalAmount()
 		local metal_after = metal_before
+		local level = math.Clamp(tonumber(self:GetLevel() or 1) or 1, 1, 3)
+		local ammoRate = DISPENSER_AMMO_RATES[level] or DISPENSER_AMMO_RATES[1]
+		local metalPerGive = DISPENSER_DROP_METAL + ((level - 1) * 10)
+		local anyAmmoGiven = false
 		
 		for k,_ in pairs(self.Clients) do
 			if k:IsPlayer() then
-				GAMEMODE:GiveAmmoPercentNoMetal(k, self.AmmoPerSupply)
-				
+				local gavePlayerAmmo = false
+				local giveTypes = {TF_PRIMARY, TF_SECONDARY}
+				for _, ammoType in ipairs(giveTypes) do
+					local maxAmmo = k.AmmoMax and tonumber(k.AmmoMax[ammoType]) or 0
+					if maxAmmo > 0 then
+						local want = math.max(1, math.floor(maxAmmo * ammoRate))
+						local before = tonumber(k:GetAmmoCount(ammoType) or 0) or 0
+						local added = k:GiveAmmo(want, ammoType, false) or 0
+						if added <= 0 then
+							local after = tonumber(k:GetAmmoCount(ammoType) or 0) or 0
+							added = math.max(0, after - before)
+						end
+						if added > 0 then
+							gavePlayerAmmo = true
+						end
+					end
+				end
+
 				if metal_after > 0 then
 					local ammo_before = k:GetAmmoCount(TF_METAL)
-					k:GiveTFAmmo(math.min(self.MetalPerGeneration, metal_after), TF_METAL)
+					if isfunction(k.GiveTFAmmo) then
+						k:GiveTFAmmo(math.min(metalPerGive, metal_after), TF_METAL)
+					else
+						k:GiveAmmo(math.min(metalPerGive, metal_after), TF_METAL, false)
+					end
 					local ammo_after = k:GetAmmoCount(TF_METAL)
-					metal_after = metal_after - (ammo_after - ammo_before)
+					local delta = math.max(0, ammo_after - ammo_before)
+					if delta > 0 then
+						gavePlayerAmmo = true
+						metal_after = metal_after - delta
+					end
+				end
+
+				if gavePlayerAmmo then
+					anyAmmoGiven = true
 				end
 			end
 		end
 		self:AddMetalAmount(metal_after - metal_before)
-		if self:GetBuildingType() == 1 then
-			self.NextAmmoSupply = CurTime() + 0.7
-		else
-			self.NextAmmoSupply = CurTime() + 1
-		end
+		self._NextAmmoSupplyTick = CurTime() + (anyAmmoGiven and 1 or 0.1)
 	end
 	
 	if not self.NextHeal or CurTime()>=self.NextHeal then
+		local level = math.Clamp(tonumber(self:GetLevel() or 1) or 1, 1, 3)
+		local healPerSecond = DISPENSER_HEAL_RATES[level] or DISPENSER_HEAL_RATES[1]
+		local tickHeal = healPerSecond * 0.1
 		for k,_ in pairs(self.Clients) do
 			if self:GetBuildingType() == 2 then
 				k:SetHealth(math.Clamp(k:Health() + 1.5, 0, k:GetMaxHealth() + 140))
 			else
-				k:SetHealth(math.Clamp(k:Health() + 1, 0, k:GetMaxHealth()))
+				k:SetHealth(math.Clamp(k:Health() + tickHeal, 0, k:GetMaxHealth()))
 			end
 			
 			if k:IsNPC() and not k:IsCurrentSchedule(SCHED_FORCED_GO_RUN) and not k.DoneWaitForHealingSchedule then
@@ -305,7 +383,7 @@ function ENT:OnThinkActive()
 				k.DoneWaitForHealingSchedule = true
 			end
 		end
-		self.NextHeal = CurTime() + self.HealRate
+		self.NextHeal = CurTime() + 0.1
 	end
 	
 	if not self.NextCallNPCs or CurTime()>=self.NextCallNPCs then
@@ -324,7 +402,7 @@ function ENT:OnThinkActive()
 end
 
 function ENT:OnRemove()
-	for _,v in pairs(self.Clients or {}) do
-		self:StopSupply()
+	for ent,_ in pairs(self.Clients or {}) do
+		self:StopSupply(ent)
 	end
 end

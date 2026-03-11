@@ -31,6 +31,72 @@ local TargetRes = {
 	dataY = 20.5,
 }
 
+local function localize_token(token, fallback)
+	local text = language.GetPhrase(token or "")
+	if not isstring(text) or text == "" or text == token then
+		return fallback or ""
+	end
+	return text
+end
+
+local function build_disguise_status_text(target, viewer, disguisedEnemy, disguisedAsEnemy)
+	local classDisplay = string.Trim(target:GetNWString("TFSpyDisguiseClassDisplay", ""))
+	if classDisplay == "" then
+		classDisplay = string.Trim(target:GetNWString("TFSpyDisguiseClass", ""))
+	end
+	if classDisplay == "" then return nil end
+
+	local alignmentToken = "TF_enemy"
+	if not disguisedEnemy then
+		alignmentToken = disguisedAsEnemy and "TF_enemy" or "TF_friendly"
+	end
+
+	local formatText = localize_token("TF_playerid_friendlyspy_disguise", "Disguised as %s1 %s2")
+	local alignmentText = localize_token(alignmentToken, alignmentToken == "TF_friendly" and "friendly" or "enemy")
+	local out = string.Replace(formatText, "%s1", alignmentText)
+	out = string.Replace(out, "%s2", classDisplay)
+	return out
+end
+
+local function get_disguise_targetid_info(target, viewer)
+	if not IsValid(target) or not target:IsPlayer() then return nil end
+	if not IsValid(viewer) or not viewer:IsPlayer() then return nil end
+	if not target:GetNWBool("Disguised", false) or target:GetNWBool("Cloaked", false) then return nil end
+
+	local disguiseTeam = tonumber(target:GetNWInt("TFSpyDisguiseTeam", -1)) or -1
+	if disguiseTeam < 0 then return nil end
+
+	local disguisedEnemy = target:Team() ~= viewer:Team()
+	if disguisedEnemy and disguiseTeam ~= viewer:Team() then
+		return nil
+	end
+
+	local disguisedAsEnemy = (disguiseTeam ~= target:Team())
+	local dataText = nil
+	if not disguisedEnemy then
+		dataText = build_disguise_status_text(target, viewer, false, disguisedAsEnemy)
+	elseif string.lower(string.Trim(target:GetNWString("TFSpyDisguiseClass", ""))) == "spy" then
+		dataText = build_disguise_status_text(target, viewer, true, true)
+	end
+
+	local health = target:Health()
+	local maxhealth = target:GetMaxHealth()
+	if disguisedEnemy then
+		local fakeHealth = tonumber(target:GetNWInt("TFSpyDisguiseHealth", 0)) or 0
+		local fakeMaxHealth = tonumber(target:GetNWInt("TFSpyDisguiseMaxHealth", 0)) or 0
+		if fakeMaxHealth > 0 then
+			health = math.max(fakeHealth, 0)
+			maxhealth = fakeMaxHealth
+		end
+	end
+
+	return {
+		health = health,
+		maxhealth = math.max(maxhealth, 1),
+		dataText = dataText,
+	}
+end
+
 do
 	local tree = TF2Res and TF2Res.Load and TF2Res.Load("resource/ui/targetid.res")
 	local bg = tree and TF2Res.FindByFieldName and TF2Res.FindByFieldName(tree, "TargetIDBG")
@@ -98,7 +164,13 @@ function PANEL:SetTargetEntity(e)
 	end
 	
 	for _,v in ipairs(HudTargetIDs) do v:InvalidateLayout() end
-	self.HealthCounter:SetTargetEntity(e)
+	local viewer = LocalPlayer()
+	local disguiseInfo = get_disguise_targetid_info(e, viewer)
+	if disguiseInfo then
+		self.HealthCounter:SetTargetEntity(e, false, disguiseInfo.health, disguiseInfo.maxhealth, e.IsTFBuilding)
+	else
+		self.HealthCounter:SetTargetEntity(e)
+	end
 end
 
 function PANEL:Paint()
@@ -107,11 +179,23 @@ function PANEL:Paint()
 	if not IsValid(self.Target) then
 		return
 	end
-	
-	local health = self.Target:GetNWFloat("Health") or self.Target:Health() or 0
-	local maxhealth = self.Target:GetNWFloat("MaxHealth") or 1
+
+	local viewer = LocalPlayer()
+	local disguiseInfo = get_disguise_targetid_info(self.Target, viewer)
+	local health = disguiseInfo and disguiseInfo.health or self.Target:Health()
+	local maxhealth = disguiseInfo and disguiseInfo.maxhealth or self.Target:GetMaxHealth()
+	local dataText = disguiseInfo and disguiseInfo.dataText or nil
+	if IsValid(self.HealthCounter) then
+		if disguiseInfo then
+			self.HealthCounter:SetTargetEntity(self.Target, false, health, maxhealth, self.Target.IsTFBuilding)
+		else
+			self.HealthCounter:SetTargetEntity(self.Target)
+		end
+	end
+
+	local panelTeam = GAMEMODE.GetEntityVisibleTeamForViewer and GAMEMODE:GetEntityVisibleTeamForViewer(self.Target, viewer) or self.Target:EntityTeam()
 	surface.SetDrawColor(255,255,255,255)
-		tf_draw.BorderPanel(color_panel[self.Target:EntityTeam()] or color_panel[0],0,0,self:GetWide(),TargetRes.bgTall*Scale,TargetRes.bgCorner,TargetRes.bgCorner,TargetRes.bgDrawCorner*Scale,TargetRes.bgDrawCorner*Scale)
+		tf_draw.BorderPanel(color_panel[panelTeam] or color_panel[0],0,0,self:GetWide(),TargetRes.bgTall*Scale,TargetRes.bgCorner,TargetRes.bgCorner,TargetRes.bgDrawCorner*Scale,TargetRes.bgDrawCorner*Scale)
 	
 	local tbl = {
 		font="HudFontMediumSmallSecondary",
@@ -139,30 +223,25 @@ function PANEL:Paint()
 		tbl.text = GAMEMODE:EntityTargetIDName(self.Target)
 		draw.Text(tbl)	
 	end
-	if hud_targetid_numerichealth:GetBool() then
-		local health
-		local maxhealth = 100
-		
-		--[[
-		if self.Target:IsPlayer() then
-			health = self.Target:Health()
-			
-			local tbl = self.Target:GetPlayerClassTable()
-		
-			if tbl and tbl.Health then
-				maxhealth = tbl.Health
-			end
-		else
-			health = self.Target:GetNWFloat("Health") or 0
-			maxhealth = self.Target:GetNWFloat("MaxHealth") or 1
-		end
-		
-		if maxhealth==0 then
-			health, maxhealth = 1,1
-		end]]
-		
-		health, maxhealth = self.Target:Health(), self.Target:GetMaxHealth()
-		
+	if self.Target.IsTFBuilding then
+		draw.Text{
+			text=tostring(self.Target:GetTargetIDSubText() or ""),
+			font="TFFontMedium",
+			pos={TargetRes.dataX*Scale, TargetRes.dataY*Scale},
+			color=Colors.TanLight,
+			x_align=TEXT_ALIGN_LEFT,
+			y_align=TEXT_ALIGN_CENTER,
+		}
+	elseif isstring(dataText) and dataText ~= "" then
+		draw.Text{
+			text=dataText,
+			font="TFFontMedium",
+			pos={TargetRes.dataX*Scale, TargetRes.dataY*Scale},
+			color=Colors.TanLight,
+			x_align=TEXT_ALIGN_LEFT,
+			y_align=TEXT_ALIGN_CENTER,
+		}
+	elseif hud_targetid_numerichealth:GetBool() then
 		draw.Text{
 			text=health.."/"..maxhealth,
 			font="TFFontMedium",
@@ -171,15 +250,6 @@ function PANEL:Paint()
 			x_align=TEXT_ALIGN_LEFT,
 			y_align=TEXT_ALIGN_CENTER,
 			
-		}
-	elseif self.Target.IsTFBuilding then
-		draw.Text{
-			text=self.Target:GetTargetIDSubText(),
-			font="TFFontMedium",
-			pos={TargetRes.dataX*Scale, TargetRes.dataY*Scale},
-			color=Colors.TanLight,
-			x_align=TEXT_ALIGN_LEFT,
-			y_align=TEXT_ALIGN_CENTER,
 		}
 	end
 end

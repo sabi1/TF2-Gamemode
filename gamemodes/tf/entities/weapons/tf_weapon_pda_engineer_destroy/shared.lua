@@ -37,7 +37,8 @@ local BuilderParams2 = {
 }
 
 hook.Add("PlayerBindPress", "TFBuildPDASlot2", function(pl, bind)
-	if IsValid(LocalPlayer():GetActiveWeapon()) and LocalPlayer():GetActiveWeapon():GetClass() == "tf_weapon_pda_engineer_destroy" then
+	local active = LocalPlayer():GetActiveWeapon()
+	if IsValid(active) and string.find(string.lower(active:GetClass() or ""), "tf_weapon_pda_engineer_destroy", 1, true) then
 		local num = tonumber(string.match(bind, "^slot(%d)") or "")
 		if num then
 			local param = BuilderParams2[num]

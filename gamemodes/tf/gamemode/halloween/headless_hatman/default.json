@@ -14,7 +14,7 @@
   "chase_duration": 30,
   "stand_and_swing_range": 100,
   "it_warn_interval": 7,
-  "terrify_radius": 1000,
+  "terrify_radius": 500,
   "terrify_interval": 20,
   "terrify_duration": 2,
   "weapon_model": "models/weapons/c_models/c_headtaker/c_headtaker.mdl",

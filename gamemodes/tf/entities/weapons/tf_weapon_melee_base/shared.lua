@@ -535,7 +535,9 @@ function SWEP:MeleeAttack(dummy)
 			maxs = maxs,
 		}
 	end
-	if SERVER and self.Owner:GetPlayerClass() == "spy" and self.Owner:InCond(TF_COND_DISGUISED) then
+	-- Only real melee attacks should break disguise.
+	-- Dummy traces (used for prediction/backstab checks) must not undisguise.
+	if SERVER and (not dummy) and self.Owner:GetPlayerClass() == "spy" and self.Owner:InCond(TF_COND_DISGUISED) then
 		TF_RemoveSpyDisguise(self.Owner)
 	end
 	

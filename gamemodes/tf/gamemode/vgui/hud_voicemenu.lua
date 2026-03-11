@@ -72,6 +72,14 @@ local FadeInTime = 0.15
 local FadeOutTime = 0.3
 local AutoCloseTime = 10
 
+local function TFIsHL2Player(pl)
+	if not IsValid(pl) then return false end
+	if pl.IsHL2 then
+		return pl:IsHL2()
+	end
+	return pl:GetNWBool("IsHL2", false)
+end
+
 function PANEL:Init()
 	self:SetPaintBackgroundEnabled(false)
 	self:ParentToHUD()
@@ -213,7 +221,7 @@ hook.Add("PlayerBindPress", "VoiceMenuSelect", function(pl, bind)
 	end
 end)
 hook.Add("PlayerButtonDown", "VoiceMenuSelect2", function( pl, key )
-	if pl:IsHL2() then
+	if TFIsHL2Player(pl) then
 		if key == KEY_1 then
 			if HudVoiceMenu.CurrentMenu then	
 				RunConsoleCommand("voicemenu", HudVoiceMenu.CurrentMenu - 1, 0)
@@ -262,4 +270,3 @@ hook.Add("PlayerButtonDown", "VoiceMenuSelect2", function( pl, key )
 		end
 	end
 end)
-

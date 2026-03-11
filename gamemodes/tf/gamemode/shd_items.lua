@@ -7,6 +7,22 @@ Qualities = {n=0}
 Particles = {n=0}
 ItemSets = {}
 
+local MissingParticleSystems = {
+	taunt_pyro_gasblast_match = true,
+	taunt_pyro_gasblast_fireblast = true,
+	taunt_gasblast_matchstrike = true,
+	taunt_yeti_fistslam = true,
+	taunt_yeti_flash = true,
+	woodSplinter_standee = true,
+	taunt_heavy_table_steam = true,
+}
+
+local function TryPrecacheParticleSystem(systemName)
+	if not isstring(systemName) or systemName == "" then return end
+	if MissingParticleSystems[systemName] then return end
+	PrecacheParticleSystem(systemName)
+end
+
 AttributesByID = {}
 ItemsByID = {}
 PrefabsByName = {}
@@ -64,6 +80,66 @@ local function ConvertStringsToNumbers(tbl)
 end
 
 local visuals_names = {"visuals", "visuals_red", "visuals_blu"}
+
+local tfWeaponClassLoadAttempted = {}
+local function EnsureWeaponClassLoaded(className)
+	if not isstring(className) or className == "" then return false end
+	if weapons.GetStored(className) then return true end
+	if scripted_ents.GetStored(className) then return true end
+	local attempts = tonumber(tfWeaponClassLoadAttempted[className] or 0) or 0
+	if attempts >= 3 then
+		return weapons.GetStored(className) ~= nil or scripted_ents.GetStored(className) ~= nil
+	end
+	tfWeaponClassLoadAttempted[className] = attempts + 1
+
+	local candidates = {}
+	local seen = {}
+	local function addCandidate(path)
+		path = string.Replace(tostring(path or ""), "\\", "/")
+		if path == "" or seen[path] then return end
+		seen[path] = true
+		candidates[#candidates + 1] = path
+	end
+
+	local gmFolder = string.Replace(tostring((GM and GM.Folder) or ""), "\\", "/")
+	if gmFolder ~= "" then
+		addCandidate(gmFolder .. "/entities/weapons/" .. className .. "/shared.lua")
+		if not string.StartWith(gmFolder, "gamemodes/") then
+			addCandidate("gamemodes/" .. gmFolder .. "/entities/weapons/" .. className .. "/shared.lua")
+		end
+	end
+
+	addCandidate("gamemodes/tf/entities/weapons/" .. className .. "/shared.lua")
+	addCandidate("entities/weapons/" .. className .. "/shared.lua")
+	addCandidate("../entities/weapons/" .. className .. "/shared.lua")
+	addCandidate("addons/tf2-gamemode/gamemodes/tf/entities/weapons/" .. className .. "/shared.lua")
+	addCandidate("addons/TF2-Gamemode/gamemodes/tf/entities/weapons/" .. className .. "/shared.lua")
+
+	local addonDirs = select(2, file.Find("addons/*", "GAME")) or {}
+	for _, addonDir in ipairs(addonDirs) do
+		addCandidate("addons/" .. addonDir .. "/gamemodes/tf/entities/weapons/" .. className .. "/shared.lua")
+		addCandidate("addons/" .. addonDir .. "/gamemodes/TF/entities/weapons/" .. className .. "/shared.lua")
+	end
+	local loaded = false
+	for _, sharedPath in ipairs(candidates) do
+		if file.Exists(sharedPath, "LUA") then
+			if SERVER then
+				AddCSLuaFile(sharedPath)
+			end
+			local ok = pcall(include, sharedPath)
+			if ok then
+				loaded = true
+				break
+			end
+		end
+	end
+
+	if not loaded then
+		return false
+	end
+
+	return weapons.GetStored(className) ~= nil or scripted_ents.GetStored(className) ~= nil
+end
 
 function ParseGameItems(data, silent)
 	local smin, smax, smax1
@@ -179,14 +255,14 @@ function ParseGameItems(data, silent)
 					if string.find(a, "sound") and type(w)=="string" then
 						util.PrecacheSound(w)
 					elseif a=="muzzle_flash" then
-						PrecacheParticleSystem(w)
+						TryPrecacheParticleSystem(w)
 					elseif a=="tracer_effect" then
-						PrecacheParticleSystem(w.."_red")
-						PrecacheParticleSystem(w.."_blue")
-						PrecacheParticleSystem(w.."_red_crit")
-						PrecacheParticleSystem(w.."_blue_crit")
+						TryPrecacheParticleSystem(w.."_red")
+						TryPrecacheParticleSystem(w.."_blue")
+						TryPrecacheParticleSystem(w.."_red_crit")
+						TryPrecacheParticleSystem(w.."_blue_crit")
 					elseif a=="custom_particlesystem" and type(w)=="table" and w.system then
-						PrecacheParticleSystem(w.system)
+						TryPrecacheParticleSystem(w.system)
 					end
 					
 					local num = string.match(a, "(%d)%-attached_model")
@@ -231,14 +307,14 @@ function ParseGameItems(data, silent)
 					if num then
 						vis[a] = nil
 						table.insert(vis.attached_particlesystems, w)
-						PrecacheParticleSystem(w.system)
+						TryPrecacheParticleSystem(w.system)
 					end
 					
 					num = string.match(a, "(%d)%-material_override")
 					if num then
 						vis[a] = nil
 						table.insert(vis.materials_overidded, w)
-						PrecacheParticleSystem(w.system)
+						TryPrecacheParticleSystem(w.system)
 					end
 				end
 				if (name == "visuals_red") then
@@ -347,7 +423,7 @@ function ParseGameItems(data, silent)
 	for k,v in pairs(util.KeyValuesToTable(data_particles)) do
 		Particles.n = Particles.n + 1
 		Particles[tonumber(k)] = v
-		PrecacheParticleSystem(v.system)
+		TryPrecacheParticleSystem(v.system)
 		numreg = numreg + 1
 	end
 	if not silent then Msg(numreg.." particles registered.\n") end
@@ -724,6 +800,10 @@ function META:GiveItem(itemname, properties)
 	if item.use_class_suffix==1 then
 		class = class.."_"..self:GetPlayerClass()
 	end
+
+	if string.StartWith(class, "tf_weapon_") then
+		EnsureWeaponClassLoaded(class)
+	end
 	
 	local reselectweapon
 	
@@ -749,6 +829,9 @@ function META:GiveItem(itemname, properties)
 	-- Initialization of the item is now done in SWEP:Deploy
 	if (self:GetPlayerClass() == "spy" && class == "tf_weapon_builder") then
 		class = "tf_weapon_sapper"
+	end
+	if string.StartWith(class, "tf_weapon_") then
+		EnsureWeaponClassLoaded(class)
 	end
 	local weapon = NULL
 	if (self:GetPlayerClass() == "scout" && class == "saxxy") then
@@ -780,6 +863,13 @@ function META:GiveItem(itemname, properties)
 		weapon:Spawn()
 	else
 		weapon = self:Give(class)
+	end
+
+	if (not IsValid(weapon)) and string.StartWith(class, "tf_weapon_") then
+		-- Retry once after an explicit script load to avoid unknown entity type races.
+		if EnsureWeaponClassLoaded(class) then
+			weapon = self:Give(class)
+		end
 	end
 	
 	local quality, level, custom_name, custom_desc

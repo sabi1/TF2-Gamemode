@@ -120,66 +120,65 @@ end
 function SWEP:SecondaryAttack()
 	self:SetNextSecondaryFire(CurTime() + 0.5)
 	local v = self.Owner:GetEyeTrace().Entity
-	
-		if v:IsBuilding() and v:GetBuilder() == self.Owner then
-			if v:GetClass() == "obj_sentrygun" then
-				if SERVER then
-					local builder = self.Owner:GetWeapon("tf_weapon_builder")
-					--print(builder.MovedBuildingLevel)
-					if v:GetLevel()==2 then
-						builder.MovedBuildingLevel = 2
-					elseif v:GetLevel()==1 then
-						builder.MovedBuildingLevel = 1
-					elseif v:GetLevel() == 3 then 
-						builder.MovedBuildingLevel = 3
-					end
-					v:Fire("Kill")
-					self.Owner:Move(2, 0)
-					builder:SetWeaponHoldType("BUILDING_DEPLOYED")
-				end
-			elseif v:GetClass() == "obj_dispenser" then
-				if SERVER then
-					local builder = self.Owner:GetWeapon("tf_weapon_builder")
-					if v:GetLevel()==2 then
-						builder.MovedBuildingLevel = 2
-					elseif v:GetLevel()==1 then
-						builder.MovedBuildingLevel = 1
-					elseif v:GetLevel() == 3 then 
-						builder.MovedBuildingLevel = 3
-					end
-					v:Fire("Kill")
-					self.Owner:Move(0, 0)
-					builder:SetWeaponHoldType("BUILDING_DEPLOYED")
-				end
-			elseif v:GetClass() == "obj_teleporter" and v:IsExit() != true then
-				if SERVER then
-					local builder = self.Owner:GetWeapon("tf_weapon_builder")
-					if v:GetLevel()==2 then
-						builder.MovedBuildingLevel = 2
-					elseif v:GetLevel()==1 then
-						builder.MovedBuildingLevel = 1
-					elseif v:GetLevel() == 3 then 
-						builder.MovedBuildingLevel = 3
-					end
-					v:Fire("Kill")
-					self.Owner:Move(1, 0)
-					builder:SetWeaponHoldType("BUILDING_DEPLOYED")
-				end
-			elseif v:GetClass() == "obj_teleporter" and v:IsExit() != false then
-				if SERVER then
-					local builder = self.Owner:GetWeapon("tf_weapon_builder")
-					if v:GetLevel()==2 then
-						builder.MovedBuildingLevel = 2
-					elseif v:GetLevel()==1 then
-						builder.MovedBuildingLevel = 1
-					elseif v:GetLevel() == 3 then 
-						builder.MovedBuildingLevel = 3
-					end
-					v:Fire("Kill")
-					self.Owner:Move(1, 1)
-					builder:SetWeaponHoldType("BUILDING_DEPLOYED")
-				end
+
+	local function RequestMoveBuild(owner, group, sub)
+		if not IsValid(owner) then return end
+		if isfunction(owner.Move) then
+			owner:Move(group, sub)
+			return
+		end
+		if concommand and concommand.Run then
+			concommand.Run(owner, "move", {tostring(group), tostring(sub)}, "move " .. tostring(group) .. " " .. tostring(sub))
+			return
+		end
+		if owner.ConCommand then
+			owner:ConCommand("move " .. tostring(group) .. " " .. tostring(sub))
+		end
+	end
+
+	local function StartHaulBuilding(group, sub)
+		if not IsValid(v) or not v:IsBuilding() then return end
+		local builder = self.Owner:GetWeapon("tf_weapon_builder")
+		if IsValid(builder) then
+			if v:GetLevel() == 2 then
+				builder.MovedBuildingLevel = 2
+			elseif v:GetLevel() == 3 then
+				builder.MovedBuildingLevel = 3
+			else
+				builder.MovedBuildingLevel = 1
 			end
 		end
+
+		v:Fire("Kill")
+		RequestMoveBuild(self.Owner, group, sub)
+
+		if IsValid(builder) then
+			if isfunction(builder.SetWeaponHoldType) then
+				builder:SetWeaponHoldType("BUILDING_DEPLOYED")
+			elseif isfunction(builder.SetHoldType) then
+				builder:SetHoldType("BUILDING_DEPLOYED")
+			end
+		end
+	end
+		
+			if v:IsBuilding() and v:GetBuilder() == self.Owner then
+				if v:GetClass() == "obj_sentrygun" then
+					if SERVER then
+						StartHaulBuilding(2, 0)
+					end
+				elseif v:GetClass() == "obj_dispenser" then
+					if SERVER then
+						StartHaulBuilding(0, 0)
+					end
+				elseif v:GetClass() == "obj_teleporter" and v:IsExit() != true then
+					if SERVER then
+						StartHaulBuilding(1, 0)
+					end
+				elseif v:GetClass() == "obj_teleporter" and v:IsExit() != false then
+					if SERVER then
+						StartHaulBuilding(1, 1)
+					end
+				end
+			end
 end 	
 

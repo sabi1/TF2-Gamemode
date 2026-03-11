@@ -31,7 +31,7 @@ function meta:IsTFPlayer()
 	if (self:GetClass() == "ctf_bot_navigator") then
 		return false
 	else
-		return self:IsPlayer() or self:IsNPC() or self:GetClass() == "reviver" or self:GetClass() == "eyeball_boss"  or self:GetClass() == "headless_hatman" or self:GetClass() == "tf_zombie" or self.Base == "npc_tf2base" or self.Base == "npc_tf2base_mvm" or self.Base == "npc_demo_red" or self.Base == "npc_demo_mvm" or self.Base == "npc_scout_mvm" or self.Base == "npc_hwg_red" or self.Base == "npc_heavy_mvm" or self.Base == "npc_heavy_mvm_shotgun" or self.Base == "npc_soldier_red" or self.Base == "npc_sniper_red" or self.Base == "npc_spy_red" or self.Base == "npc_scout_red" or self.Base == "npc_pyro_red" or self.Base == "npc_medic_red" or self.Base == "npc_engineer_red"
+		return self:IsPlayer() or self:IsNPC() or self:GetClass() == "reviver" or self:GetClass() == "eyeball_boss"  or self:GetClass() == "headless_hatman" or self:GetClass() == "skeleton_king" or self:GetClass() == "tf_zombie" or self.Base == "npc_tf2base" or self.Base == "npc_tf2base_mvm" or self.Base == "npc_demo_red" or self.Base == "npc_demo_mvm" or self.Base == "npc_scout_mvm" or self.Base == "npc_hwg_red" or self.Base == "npc_heavy_mvm" or self.Base == "npc_heavy_mvm_shotgun" or self.Base == "npc_soldier_red" or self.Base == "npc_sniper_red" or self.Base == "npc_spy_red" or self.Base == "npc_scout_red" or self.Base == "npc_pyro_red" or self.Base == "npc_medic_red" or self.Base == "npc_engineer_red"
 	end
 end
 

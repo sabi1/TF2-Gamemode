@@ -14,9 +14,9 @@ if CLIENT then
 end
 
 CLASS.Loadout = {"tf_weapon_shotgun_primary", "tf_weapon_pistol", "tf_weapon_wrench",
-	"tf_weapon_pda_engineer_build", "tf_weapon_pda_engineer_destroy"}
+	"tf_weapon_builder", "tf_weapon_pda_engineer_build", "tf_weapon_pda_engineer_destroy"}
 CLASS.DefaultLoadout = {"TF_WEAPON_SHOTGUN_PRIMARY","TF_WEAPON_PISTOL","TF_WEAPON_WRENCH",
-	"TF_WEAPON_PDA_ENGINEER_BUILD","TF_WEAPON_PDA_ENGINEER_DESTROY"}
+	"TF_WEAPON_BUILDER","TF_WEAPON_PDA_ENGINEER_BUILD","TF_WEAPON_PDA_ENGINEER_DESTROY"}
 CLASS.ModelName = "engineer"
 
 CLASS.Buildings = {"OBJ_SENTRYGUN", "OBJ_DISPENSER", "OBJ_TELEPORTER"}

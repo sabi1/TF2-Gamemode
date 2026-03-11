@@ -177,50 +177,8 @@ function SWEP:Deploy()
 	if self.Owner:GetPlayerClass() == "spy" then
 		local disguiseClass = tf_spy_current_disguise_class(self.Owner)
 		if disguiseClass then
-			if SERVER then
-				animent2 = ents.Create( 'base_gmodentity' ) -- The entity used for the death animation	
-				if disguiseClass == "engineer" then
-					animent2:SetModel("models/weapons/c_models/c_wrench/c_wrench.mdl")
-				elseif disguiseClass == "scout" then
-					animent2:SetModel("models/weapons/c_models/c_bat.mdl")
-				elseif disguiseClass == "soldier" then
-					animent2:SetModel("models/weapons/c_models/c_shovel/c_shovel.mdl")
-				elseif disguiseClass == "pyro" then
-					animent2:SetModel("models/weapons/w_models/w_fireaxe.mdl")
-				elseif disguiseClass == "spy" then
-					animent2:SetModel("models/weapons/c_models/c_knife/c_knife.mdl")
-				elseif disguiseClass == "sniper" then
-					animent2:SetModel("models/weapons/c_models/c_machete/c_machete.mdl")
-				elseif disguiseClass == "medic" then
-					animent2:SetModel("models/weapons/c_models/c_bonesaw/c_bonesaw.mdl")
-				elseif disguiseClass == "demo" then
-					animent2:SetModel("models/weapons/w_models/w_bottle.mdl")
-				end
-				animent2:SetAngles(self.Owner:GetAngles())
-				animent2:SetPos(self.Owner:GetPos())
-				animent2:Spawn() 
-				animent2:Activate()
-				animent2:SetParent(self.Owner)
-				animent2:AddEffects(EF_BONEMERGE)
-				animent2:SetName("SpyWeaponModel"..self.Owner:EntIndex())
-				animent2:SetSkin(self.Owner:GetSkin())
-				timer.Create("SpyCloakDetector"..self.Owner:EntIndex(), 0.01, 0, function()
-					if self.Owner:GetPlayerClass() == "spy" then
-						if self.Owner:GetNoDraw() == true then
-							if IsValid(animent2) then
-								animent2:SetNoDraw(true)
-							end
-						else
-							if IsValid(animent2) then
-								animent2:SetNoDraw(false)
-							end
-						end
-					else
-						timer.Stop("SpyCloakDetector"..self.Owner:EntIndex())
-						return
-					end
-				end)
-			end
+			-- Disguise weapon visuals are handled by the dedicated disguise draw path.
+			-- Do not spawn extra bonemerged weapon props here.
 		else
 			if IsValid(animent2) then
 				animent2:Remove()

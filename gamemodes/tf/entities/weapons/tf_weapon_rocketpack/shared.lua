@@ -111,8 +111,13 @@ function SWEP:PrimaryAttack()
 	self.NextIdle = CurTime() + self:SequenceDuration() - 0.2
 	self.Owner:DoAnimationEvent(ACT_DOD_PRONE_ZOOMED, true)	 
 	 
+	self.Owner._tfNoForcedStunThirdpersonUntil = CurTime() + 1.0
+	if SERVER and self.Owner.SetNWFloat then
+		self.Owner:SetNWFloat("TFNoForcedStunThirdpersonUntil", CurTime() + 1.0)
+	end
 	self.Owner:AddPlayerState(PLAYERSTATE_STUNNED)
 	timer.Simple(0.55, function()
+		if not IsValid(self) or not IsValid(self.Owner) then return end
 		self.Owner:SetLocalVelocity( self.Owner:GetAimVector() + Vector( 0, 0, 700 ) + self.Owner:GetVelocity() * 4 )
 		self:EmitSound( "Weapon_RocketPack.BoostersFire", 85 )
 		self.Owner:RemovePlayerState(PLAYERSTATE_STUNNED)
@@ -134,10 +139,15 @@ function SWEP:PrimaryAttack()
 								timer.Create("Stomp", 0.001, 30, function()
 									self.Owner:DoAnimationEvent(ACT_SIGNAL1)
 								end)
+								v._tfNoForcedStunThirdpersonUntil = CurTime() + 3.1
+								if SERVER and v.SetNWFloat then
+									v:SetNWFloat("TFNoForcedStunThirdpersonUntil", CurTime() + 3.1)
+								end
 								v:AddPlayerState(PLAYERSTATE_STUNNED)
 								timer.Simple(3, function()
-								
-								v:RemovPlayerState(PLAYERSTATE_STUNNED)
+									if IsValid(v) then
+										v:RemovePlayerState(PLAYERSTATE_STUNNED)
+									end
 								end)
 							end
 							if v:IsNPC() and not v:IsFriendly(self.Owner) then

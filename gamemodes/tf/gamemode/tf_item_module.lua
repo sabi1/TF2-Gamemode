@@ -22,6 +22,22 @@ local function AttrValueForDebug(attList, className)
 	return nil
 end
 
+local MissingParticleSystems = {
+	taunt_pyro_gasblast_match = true,
+	taunt_pyro_gasblast_fireblast = true,
+	taunt_gasblast_matchstrike = true,
+	taunt_yeti_fistslam = true,
+	taunt_yeti_flash = true,
+	woodSplinter_standee = true,
+	taunt_heavy_table_steam = true,
+}
+
+local function TryPrecacheParticleSystem(systemName)
+	if not isstring(systemName) or systemName == "" then return end
+	if MissingParticleSystems[systemName] then return end
+	PrecacheParticleSystem(systemName)
+end
+
 local ITEM = {}
 
 ITEM.IsTFItem = true
@@ -949,13 +965,13 @@ function ITEM:InitVisuals(owner, visuals)
 	for k,v in pairs(visuals) do
 		if k=="muzzle_flash" then
 			self.MuzzleEffect = v
-			PrecacheParticleSystem(v)
+			TryPrecacheParticleSystem(v)
 		elseif k=="tracer_effect" then
 			self.TracerEffect = v
-			PrecacheParticleSystem(v.."_red")
-			PrecacheParticleSystem(v.."_blue")
-			PrecacheParticleSystem(v.."_red_crit")
-			PrecacheParticleSystem(v.."_blue_crit")
+			TryPrecacheParticleSystem(v.."_red")
+			TryPrecacheParticleSystem(v.."_blue")
+			TryPrecacheParticleSystem(v.."_red_crit")
+			TryPrecacheParticleSystem(v.."_blue_crit")
 		--elseif string.find(k, "sound") then
 		--	self:ModifySound(k, v)
 		end
@@ -1236,24 +1252,97 @@ end
  
 if CLIENT then
 
+local particleDebugCvar = CreateClientConVar("tf_debug_weapon_particles", "0", true, false)
+
+local function ParticleDebugEnabled()
+	return particleDebugCvar and particleDebugCvar:GetBool()
+end
+
+local function ParticleDebugMsg(fmt, ...)
+	if not ParticleDebugEnabled() then return end
+	MsgN(string.format("[TF Particle Debug] " .. tostring(fmt), ...))
+end
+
+local function ParticleAttachTracked(item, system, attachType, ent, attachment, sourceTag)
+	local ok = pcall(ParticleEffectAttach, system, attachType, ent, attachment or 0)
+	if not item then return end
+	item._DebugActiveParticles = item._DebugActiveParticles or {}
+	table.insert(item._DebugActiveParticles, {
+		system = tostring(system or ""),
+		attachType = tonumber(attachType) or -1,
+		ent = IsValid(ent) and (ent:GetClass() .. "#" .. ent:EntIndex()) or "nil",
+		attachment = tonumber(attachment) or 0,
+		source = tostring(sourceTag or "unknown"),
+		ok = ok and 1 or 0,
+	})
+	ParticleDebugMsg("%s on %s att=%d source=%s ok=%s", tostring(system), IsValid(ent) and (ent:GetClass() .. "#" .. ent:EntIndex()) or "nil", tonumber(attachment) or 0, tostring(sourceTag or "unknown"), ok and "1" or "0")
+	return ok
+end
+
+if not _G.TF_ParticleDebugDumpCmdAdded then
+	_G.TF_ParticleDebugDumpCmdAdded = true
+	concommand.Add("tf_debug_dump_weapon_particles", function()
+		local lp = LocalPlayer()
+		if not IsValid(lp) then
+			MsgN("[TF Particle Debug] LocalPlayer invalid")
+			return
+		end
+		local wep = lp:GetActiveWeapon()
+		if not IsValid(wep) then
+			MsgN("[TF Particle Debug] No active weapon")
+			return
+		end
+		local tracked = wep._DebugActiveParticles or {}
+		MsgN(string.format("[TF Particle Debug] Active weapon %s tracked particle count: %d", tostring(wep:GetClass()), #tracked))
+		for i, v in ipairs(tracked) do
+			MsgN(string.format("[TF Particle Debug] %02d system=%s ent=%s att=%d source=%s ok=%s", i, tostring(v.system), tostring(v.ent), tonumber(v.attachment) or 0, tostring(v.source), (tonumber(v.ok) == 1) and "1" or "0"))
+		end
+	end)
+end
+
+local CRIT_WEAPON_PARTICLES = {
+	"critgun_weaponmodel_red",
+	"critgun_weaponmodel_blu",
+	"critgun_weaponmodel_red_glow",
+	"critgun_weaponmodel_blu_glow",
+	"critgun_weaponmodel_blue",
+	"critgun_weaponmodel_blue_glow",
+}
+
+local function StopCritParticles(ent)
+	if not IsValid(ent) or not ent.StopParticlesNamed then return end
+	for _, name in ipairs(CRIT_WEAPON_PARTICLES) do
+		ent:StopParticlesNamed(name)
+	end
+end
+
 function ITEM:ClearParticles()
+	self._DebugActiveParticles = {}
 	self:StopParticles()
+	StopCritParticles(self)
 	if IsValid(self.RootLocator) then self.RootLocator:StopParticles() end
+	if IsValid(self.RootLocator) then StopCritParticles(self.RootLocator) end
 	
 	if self:IsWeapon() then
 		if IsValid(self.Owner) and IsValid(self.Owner:GetViewModel()) then
 			self.Owner:GetViewModel():StopParticles()
+			StopCritParticles(self.Owner:GetViewModel())
 			if IsValid(self.Owner:GetViewModel().RootLocator) then self.Owner:GetViewModel().RootLocator:StopParticles() end
+			if IsValid(self.Owner:GetViewModel().RootLocator) then StopCritParticles(self.Owner:GetViewModel().RootLocator) end
 		end
 		
 		if IsValid(self.WModel2) then
-			--self.WModel2:StopParticles()
+			self.WModel2:StopParticles()
+			StopCritParticles(self.WModel2)
 			if IsValid(self.WModel2.RootLocator) then self.WModel2.RootLocator:StopParticles() end
+			if IsValid(self.WModel2.RootLocator) then StopCritParticles(self.WModel2.RootLocator) end
 		end
 		
 		if IsValid(self.CModel) then
 			self.CModel:StopParticles()
+			StopCritParticles(self.CModel)
 			if IsValid(self.CModel.RootLocator) then self.CModel.RootLocator:StopParticles() end
+			if IsValid(self.CModel.RootLocator) then StopCritParticles(self.CModel.RootLocator) end
 		end
 	end
 end
@@ -1268,7 +1357,7 @@ local function UpdateRootLocator(self)
 	end
 end
 
-local function ParticleEffectAttachToRoot(system, ent)
+local function ParticleEffectAttachToRoot(system, ent, item, sourceTag)
 	if not IsValid(ent.RootLocator) then
 		ent.RootLocator = ClientsideModel("models/props_junk/watermelon01.mdl")
 		ent.RootLocator:SetPos(ent:GetPos())
@@ -1279,7 +1368,7 @@ local function ParticleEffectAttachToRoot(system, ent)
 		--ent.BuildBonePositions = UpdateRootLocator
 		ent:AddBuildBoneHook("UpdateRootLocator", UpdateRootLocator)
 	end
-	ParticleEffectAttach(system, PATTACH_ABSORIGIN_FOLLOW, ent.RootLocator, 0)
+	ParticleAttachTracked(item, system, PATTACH_ABSORIGIN_FOLLOW, ent.RootLocator, 0, sourceTag or "root")
 end
 
 function ITEM:ResetParticles(state_override)
@@ -1299,6 +1388,9 @@ function ITEM:ResetParticles(state_override)
 	else
 		ent = self:GetWorldModelEntity()
 	end
+
+	local weaponCritActive = self:IsWeapon()
+		and (self.Owner:HasPlayerState(PLAYERSTATE_CRITBOOST, state_override) || self.Owner:HasPlayerState(PLAYERSTATE_MINICRIT, state_override))
 	
 	-- Attached particles
 	for _,p in ipairs(self:GetVisuals().attached_particlesystems or {}) do
@@ -1308,9 +1400,9 @@ function ITEM:ResetParticles(state_override)
 		end
 		
 		if att and att ~= 0 then
-			ParticleEffectAttach(p.system, PATTACH_POINT_FOLLOW, ent, att)
+			ParticleAttachTracked(self, p.system, PATTACH_POINT_FOLLOW, ent, att, "visual.attached")
 		else
-			ParticleEffectAttachToRoot(p.system, ent)
+			ParticleEffectAttachToRoot(p.system, ent, self, "visual.attached.root")
 		end
 	end
 	
@@ -1319,41 +1411,76 @@ function ITEM:ResetParticles(state_override)
 		--MsgFN("Attaching particle effect '%s' to %s",self.AttachedParticle.system, tostring(ent))
 		
 		local att
-		if self.AttachedParticle.attachment then
+		if self.AttachedParticle and self.AttachedParticle.attachment then
 			att = ent:LookupAttachment(self.AttachedParticle.attachment)
 		end
 		
-		if att and att ~= 0 then
-			ParticleEffectAttach(self.AttachedParticle.system, PATTACH_POINT_FOLLOW, ent, att)
-		else
+		if self.AttachedParticle and att and att ~= 0 then
+			ParticleAttachTracked(self, self.AttachedParticle.system, PATTACH_POINT_FOLLOW, ent, att, "attr.attached")
+		elseif self.AttachedParticle then
 			if self.AttachedParticle.attach_to_rootbone then
-				ParticleEffectAttachToRoot(self.AttachedParticle.system, ent)
+				ParticleEffectAttachToRoot(self.AttachedParticle.system, ent, self, "attr.attached.root")
 			else
-				ParticleEffectAttach(self.AttachedParticle.system, PATTACH_ABSORIGIN_FOLLOW, ent, 0)
+				ParticleAttachTracked(self, self.AttachedParticle.system, PATTACH_ABSORIGIN_FOLLOW, ent, 0, "attr.attached.abs")
 			end
 		end
 	end
 	
-	-- Critical boost effect
-	if self:IsWeapon() and (self.Owner:HasPlayerState(PLAYERSTATE_CRITBOOST, state_override) || self.Owner:HasPlayerState(PLAYERSTATE_MINICRIT, state_override)) then
-		local effect
-		local effect2
-		local t = self.Owner:EntityTeam()
-		
-		if t==3 then
-			effect = "critgun_weaponmodel_blu"
-		else
-			effect = "critgun_weaponmodel_red"
+	-- Valve parity: single crit effect on active weapon model only.
+	if self:IsWeapon() and IsValid(self.Owner) then
+		local owner = self.Owner
+		local shouldDisplay = weaponCritActive
+
+		-- Mirror CTFPlayerShared::UpdateCritBoostEffect active-weapon gating.
+		local active = owner.GetActiveWeapon and owner:GetActiveWeapon() or nil
+		if IsValid(active) and active ~= self then
+			shouldDisplay = false
 		end
-		
-		if t==3 then
-			effect2 = "critgun_weaponmodel_blu_glow"
-		else
-			effect2 = "critgun_weaponmodel_red_glow"
+
+		-- Approximate CanBeCritBoosted() via item attribute.
+		if shouldDisplay and self.GetAttribute then
+			local noCritBoost = self:GetAttribute("no_crit_boost")
+			if noCritBoost and tonumber(noCritBoost.value or 0) ~= 0 then
+				shouldDisplay = false
+			end
 		end
-		
-		ParticleEffectAttach(effect, PATTACH_ABSORIGIN_FOLLOW, ent, 0)
-		ParticleEffectAttach(effect2, PATTACH_ABSORIGIN_FOLLOW, ent, 0)
+
+		-- Never show while stealthed.
+		if shouldDisplay and owner.InCond then
+			if (isnumber(TF_COND_STEALTHED) and owner:InCond(TF_COND_STEALTHED))
+				or (isnumber(TF_COND_STEALTHED_BLINK) and owner:InCond(TF_COND_STEALTHED_BLINK))
+				or (isnumber(TF_COND_STEALTHED_USER_BUFF) and owner:InCond(TF_COND_STEALTHED_USER_BUFF))
+				or (isnumber(TF_COND_STEALTHED_USER_BUFF_FADING) and owner:InCond(TF_COND_STEALTHED_USER_BUFF_FADING)) then
+				shouldDisplay = false
+			end
+		end
+
+		-- Never show while disguised unless local player.
+		if shouldDisplay and owner.InCond and owner ~= LocalPlayer() and isnumber(TF_COND_DISGUISED) and owner:InCond(TF_COND_DISGUISED) then
+			shouldDisplay = false
+		end
+
+		if shouldDisplay then
+			local effectTeam = owner:EntityTeam()
+			local localPlayer = LocalPlayer()
+			local disguisedEnemy = owner ~= localPlayer
+				and owner.InCond
+				and isnumber(TF_COND_DISGUISED)
+				and owner:InCond(TF_COND_DISGUISED)
+				and IsValid(localPlayer)
+				and owner:EntityTeam() ~= localPlayer:EntityTeam()
+
+			-- TF2 parity: when an enemy spy is disguised, crit effect color follows disguise team.
+			if disguisedEnemy then
+				local disguiseTeam = tonumber(owner:GetNWInt("TFSpyDisguiseTeam", -1)) or -1
+				if disguiseTeam == TEAM_RED or disguiseTeam == TEAM_BLU then
+					effectTeam = disguiseTeam
+				end
+			end
+
+			local effectName = (effectTeam == TEAM_RED) and "critgun_weaponmodel_red" or "critgun_weaponmodel_blu"
+			ParticleAttachTracked(self, effectName, PATTACH_ABSORIGIN_FOLLOW, ent, 0, "critboost.weapon")
+		end
 	end
 end
 

@@ -22,8 +22,11 @@ function PANEL:PerformLayout()
 	self:SetSize(32*Scale,32*Scale)
 end
 
-function PANEL:SetTargetEntity(e, freeze)
+function PANEL:SetTargetEntity(e, freeze, overrideHealth, overrideMaxHealth, overrideIsBuilding)
 	self.Target = e
+	self.OverrideHealth = overrideHealth
+	self.OverrideMaxHealth = overrideMaxHealth
+	self.OverrideIsBuilding = overrideIsBuilding
 	
 	if freeze and IsValid(self.Target) then
 		local health
@@ -70,6 +73,10 @@ function PANEL:Paint()
 		health = self.FixedHealth
 		maxhealth = self.FixedMaxHealth
 		isbuilding = self.FixedTargetIsBuilding
+	elseif self.OverrideHealth ~= nil and self.OverrideMaxHealth ~= nil then
+		health = self.OverrideHealth
+		maxhealth = self.OverrideMaxHealth
+		isbuilding = self.OverrideIsBuilding
 	elseif not IsValid(self.Target) then
 		surface.SetTexture(health_dead)
 		surface.SetDrawColor(255,255,255,255)

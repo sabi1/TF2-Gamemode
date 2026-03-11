@@ -1,6 +1,10 @@
 ENT.Base = "base_brush"
 ENT.Type = "brush"
 
+local TF_REGENERATE_SOUND = "Regenerate.Touch"
+local TF_REGENERATE_NEXT_USE_TIME = 3.0
+local TF_LOCKER_CLOSE_DELAY = TF_REGENERATE_NEXT_USE_TIME - 1.0
+
 local PreserveResupplyWeapons = {
 	["tf_weapon_jar_gas"] = true,
 }
@@ -51,6 +55,7 @@ function ENT:Initialize()
 	self.Team = 0
 	self.Players = {}
 	self.Opened = false
+	self.Disabled = false
 end
 
 function ENT:KeyValue(key,value)
@@ -60,12 +65,96 @@ function ENT:KeyValue(key,value)
 		self.Team = tonumber(value)
 	elseif key=="associatedmodel" then
 		self.ResupplyLockerName = value
+	elseif key=="startdisabled" then
+		self.Disabled = tonumber(value) == 1
 	end
+end
+
+function ENT:SetDisabled(disabled)
+	self.Disabled = disabled and true or false
+end
+
+function ENT:IsDisabled()
+	return self.Disabled == true
+end
+
+function ENT:AcceptInput(name)
+	name = string.lower(tostring(name or ""))
+	if name == "enable" then
+		self:SetDisabled(false)
+		return true
+	elseif name == "disable" then
+		self:SetDisabled(true)
+		return true
+	elseif name == "toggle" then
+		self:SetDisabled(not self:IsDisabled())
+		return true
+	end
+	return false
+end
+
+function ENT:ResolveAssociatedLocker()
+	if IsValid(self.ResupplyLocker) then return self.ResupplyLocker end
+	if not self.ResupplyLockerName or self.ResupplyLockerName == "" then return nil end
+	self.ResupplyLocker = ents.FindByName(self.ResupplyLockerName)[1]
+	return self.ResupplyLocker
+end
+
+function ENT:CanRegeneratePlayer(pl)
+	if self:IsDisabled() then return false end
+	if not IsValid(pl) or not pl:IsPlayer() then return false end
+	if not pl:Alive() then return false end
+	if pl:GetNWBool("Taunting", false) then return false end
+	if pl.IsPlayingTaunt and pl:IsPlayingTaunt() then return false end
+
+	local nextRegen = pl.__TFNextRegenerateTime or 0
+	if nextRegen > CurTime() then return false end
+
+	if GAMEMODE and GAMEMODE.RoundHasWinner then
+		local winning = GAMEMODE.WinningTeam
+		if winning and pl:Team() ~= winning then
+			return false
+		end
+	elseif self.Team and self.Team ~= 0 and pl:Team() ~= self.Team then
+		return false
+	end
+
+	return true
+end
+
+function ENT:OpenLocker()
+	if self.Opened then
+		self.NextClose = CurTime() + TF_LOCKER_CLOSE_DELAY
+		return
+	end
+
+	local locker = self:ResolveAssociatedLocker()
+	if IsValid(locker) then
+		locker:Fire("SetAnimation", "open")
+	end
+
+	self.Opened = true
+	self.NextClose = CurTime() + TF_LOCKER_CLOSE_DELAY
+end
+
+function ENT:RegeneratePlayer(pl)
+	if not self:CanRegeneratePlayer(pl) then return false end
+
+	PreserveMeterAmmo(pl, function()
+		GAMEMODE:GiveHealthPercent(pl, 100)
+		GAMEMODE:GiveAmmoPercent(pl, 100)
+	end)
+
+	pl.__TFNextRegenerateTime = CurTime() + TF_REGENERATE_NEXT_USE_TIME
+	pl:EmitSound(TF_REGENERATE_SOUND, 100, 100)
+	self:OpenLocker()
+	return true
 end
 
 function ENT:StartTouch(ent)
 	if ent:IsPlayer() then
-		self.Players[ent] = -1
+		self.Players[ent] = true
+		self:RegeneratePlayer(ent)
 	end
 end
 
@@ -76,64 +165,28 @@ function ENT:EndTouch(ent)
 end
 
 function ENT:Think()
-	local resupplied
-	
-	for pl,last in pairs(self.Players) do
-		if (last==-1 or CurTime()-last>1) and IsValid(pl) and pl:IsPlayer() then
-			resupplied = true
-		end
-	end
-	
-	if resupplied and not self.Opened then
-		self:EmitSound("items/regenerate.wav", 100, 100)
-		for pl,last in pairs(self.Players) do
-			if (last==-1 or CurTime()-last>1) and IsValid(pl) and pl:IsPlayer() then
-				PreserveMeterAmmo(pl, function()
-					GAMEMODE:GiveHealthPercent(pl, 100)
-					GAMEMODE:GiveAmmoPercent(pl, 100)
-					local c = GAMEMODE.PlayerClasses[pl:GetPlayerClass()]
-					pl.ItemLoadout = table.Copy(c.DefaultLoadout)
-					pl.ItemProperties = {}
-					pl:SetPlayerClass(pl:GetPlayerClass())		
-					pl:GiveLoadout()
-				end)
-				self.Players[pl] = CurTime()
-				self.NextClose = CurTime() + 1.5
-				
-			end
-		end
-		if not self.ResupplyLocker and self.ResupplyLockerName then
-			self.ResupplyLocker = ents.FindByName(self.ResupplyLockerName)[1]
-			----print("associatedmodel : "..self.ResupplyLockerName.." : "..tostring(self.ResupplyLocker))
-		end
-		
-		if self.ResupplyLocker and self.ResupplyLocker:IsValid(self.WModel2) then
-			--self.ResupplyLocker:ResetSequence(self.ResupplyLocker:LookupSequence("open"))
-			self.ResupplyLocker:Fire("SetAnimation", "open")
-		end
-		
-		self.Opened = true
-		self.NextClose = CurTime() + 1.5
-	end
-	
-	if self.NextClose and CurTime()>=self.NextClose then
-		if self.ResupplyLocker and self.ResupplyLocker:IsValid(self.WModel2) then
-			--self.ResupplyLocker:ResetSequence(self.ResupplyLocker:LookupSequence("close"))
-			--self.NextIdle = CurTime() + self.ResupplyLocker:SequenceDuration()
-			self.ResupplyLocker:Fire("SetAnimation", "close")
-			self.NextIdle = CurTime() + 1.5
+	for pl,_ in pairs(self.Players) do
+		if not IsValid(pl) then
+			self.Players[pl] = nil
 		else
-			self.NextIdle = CurTime() + 1.5
+			self:RegeneratePlayer(pl)
 		end
+	end
+
+	if self.NextClose and CurTime()>=self.NextClose then
+		local locker = self:ResolveAssociatedLocker()
+		if IsValid(locker) then
+			locker:Fire("SetAnimation", "close")
+		end
+		self.NextIdle = CurTime() + 1.0
 		self.NextClose = nil
 	end
 	
 	if self.NextIdle and CurTime()>=self.NextIdle then
-		--[[if self.ResupplyLocker and self.ResupplyLocker:IsValid(self.WModel2) then
-			self.ResupplyLocker:ResetSequence(self.ResupplyLocker:LookupSequence("idle"))
-		end]]
-		
 		self.NextIdle = nil
 		self.Opened = false
 	end
+
+	self:NextThink(CurTime() + 0.05)
+	return true
 end

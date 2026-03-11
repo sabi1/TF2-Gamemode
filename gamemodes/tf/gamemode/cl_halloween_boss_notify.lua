@@ -21,6 +21,8 @@ local function BuildFallbackText(eventName, scenario, playerName, secondsRemaini
             return "MONOCULUS! has appeared!"
         elseif scenario == "lakeside" then
             return "MERASMUS! has appeared!"
+        elseif scenario == "hightower" then
+            return "The Skeleton King has appeared!"
         end
         return "The Horseless Headless Horsemann has appeared!"
     end
@@ -30,6 +32,8 @@ local function BuildFallbackText(eventName, scenario, playerName, secondsRemaini
             return "MONOCULUS! has been defeated!"
         elseif scenario == "lakeside" then
             return "MERASMUS! has been defeated!"
+        elseif scenario == "hightower" then
+            return "The Skeleton King has been defeated!"
         end
         return "The Horseless Headless Horsemann has been defeated!"
     end
@@ -49,6 +53,8 @@ local function BuildFallbackText(eventName, scenario, playerName, secondsRemaini
             return "MONOCULUS! has left to haunt another realm!"
         elseif scenario == "lakeside" then
             return "MERASMUS! has gone home!"
+        elseif scenario == "hightower" then
+            return "The Skeleton King has returned to the underworld!"
         end
         return "The boss has disappeared!"
     end
@@ -59,6 +65,8 @@ local function BuildFallbackText(eventName, scenario, playerName, secondsRemaini
             return "MONOCULUS! is leaving in " .. secs .. " seconds..."
         elseif scenario == "lakeside" then
             return "MERASMUS! is leaving in " .. secs .. " seconds..."
+        elseif scenario == "hightower" then
+            return "The Skeleton King leaves in " .. secs .. " seconds..."
         end
     end
 

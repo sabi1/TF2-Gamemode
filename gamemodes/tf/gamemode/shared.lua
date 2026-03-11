@@ -11,6 +11,139 @@ end
 
 --If you ask me a question about why I'm using console commands trust me, this shit is golden
  
+local function TFIsHL2Player(pl)
+	if not IsValid(pl) then return false end
+	if pl.IsHL2 then
+		return pl:IsHL2()
+	end
+	return pl:GetNWBool("IsHL2", false)
+end
+
+do
+	local meta = FindMetaTable("Player")
+	if meta then
+		-- Define core extensions early so load order cannot break hooks/timers.
+		if meta.IsHL2 == nil then
+			function meta:IsHL2()
+				return self:GetNWBool("IsHL2", false)
+			end
+		end
+
+		if meta.GetTFItems == nil then
+			function meta:GetTFItems()
+				local t = self:GetWeapons()
+				if self.PlayerItemList then
+					table.Add(t, self.PlayerItemList)
+				end
+				return t
+			end
+		end
+
+		if meta.StripTFItems == nil then
+			function meta:StripTFItems()
+				self:StripWeapons()
+				self:StripAmmo()
+				if self.PlayerItemList then
+					for _, v in ipairs(self.PlayerItemList) do
+						if IsValid(v) then
+							v:Remove()
+						end
+					end
+				end
+			end
+		end
+
+		if meta.SetAmmoCount == nil then
+			function meta:SetAmmoCount(c, am)
+				local a = self:GetAmmoCount(am)
+				if c > a then
+					self:GiveAmmo(c - a, am)
+				elseif c < a then
+					self:RemoveAmmo(a - c, am)
+				end
+			end
+		end
+
+		if meta.GiveTFAmmo == nil then
+			function meta:GiveTFAmmo(c, am, is_fraction)
+				if c == 0 then return false end
+
+				local amount = tonumber(c) or 0
+				local ammoType = am
+
+				if is_fraction then
+					local maxAmmo = self.AmmoMax and self.AmmoMax[ammoType] or nil
+					if amount ~= 0 and maxAmmo and not self:IsHL2() then
+						amount = math.ceil(amount * maxAmmo)
+					else
+						amount = 0
+					end
+				end
+
+				if amount == 0 then return false end
+
+				if not self.AmmoMax or self.AmmoMax[ammoType] == nil then
+					if amount > 0 then
+						self:GiveAmmo(amount, ammoType)
+						return true
+					end
+					self:RemoveAmmo(-amount, ammoType)
+					return false
+				end
+
+				local current = self:GetAmmoCount(ammoType)
+				if amount > 0 then
+					amount = math.min(self.AmmoMax[ammoType] - current, amount)
+					if amount > 0 then
+						self:GiveAmmo(amount, ammoType)
+						if SERVER and ammoType == TF_METAL then
+							umsg.Start("PlayerMetalBonus", self)
+								umsg.Short(amount)
+							umsg.End()
+						end
+						return true
+					end
+				else
+					self:RemoveAmmo(-amount, ammoType)
+					if SERVER and ammoType == TF_METAL then
+						umsg.Start("PlayerMetalBonus", self)
+							umsg.Short(-amount)
+						umsg.End()
+					end
+				end
+
+				return false
+			end
+		end
+
+		if meta.HasFullAmmo == nil then
+			function meta:HasFullAmmo()
+				for ammoType, maxAmount in pairs(self.AmmoMax or {}) do
+					if self:GetAmmoCount(ammoType) < maxAmount then
+						return false
+					end
+				end
+				return true
+			end
+		end
+
+		if meta.ShouldUseDefaultHull == nil then
+			function meta:ShouldUseDefaultHull()
+				local useHLHull = GetConVar("tf_use_hl_hull_size")
+				local convarForcesHLHull = useHLHull and useHLHull:GetInt() == 1 or false
+				return self:GetNWBool("IsHL2", false) or self:GetNWBool("IsL4D", false) or convarForcesHLHull
+			end
+		end
+
+		if meta.RandomSentence == nil then
+			function meta:RandomSentence(group)
+				-- Fallback no-op until full player extensions are loaded.
+				return nil
+			end
+		end
+	end
+end
+
 local mp_friendlyfire = CreateConVar("mp_friendlyfire", "0", {FCVAR_ARCHIVE, FCVAR_NOTIFY, FCVAR_REPLICATED}, "Enables/Disables Friendly fire (for some reason, Rubat deleted this cvar. This broke TF2 Gamemode and CStrike gamemode.)")
 resource.AddFile("models/weapons/c_models/c_scout_arms_empty.dx90.vtx")
 resource.AddFile("models/weapons/c_models/c_scout_arms_empty.dx80.vtx")
@@ -1395,7 +1528,7 @@ sound.Add( {
  
 
 hook.Add("PlayerFootstep", "RoboStep", function( ply, pos, foot, sound, volume, rf)
-	if ((GetConVar("tf_enable_server_footsteps"):GetBool() or (CLIENT and !LocalPlayer():IsHL2() and LocalPlayer():ShouldDrawLocalPlayer())) && !game.SinglePlayer()) then
+	if ((GetConVar("tf_enable_server_footsteps"):GetBool() or (CLIENT and !TFIsHL2Player(LocalPlayer()) and LocalPlayer():ShouldDrawLocalPlayer())) && !game.SinglePlayer()) then
 		if (SERVER) then
 			return false
 		else
@@ -1439,7 +1572,7 @@ hook.Add("PlayerFootstep", "RoboStep", function( ply, pos, foot, sound, volume, 
 		ply:EmitSound("Zombie.FootstepLeft") 
 		return true
 	end
-	if not ply:IsHL2() and ply:GetInfoNum("jakey_antlionfbii", 0) == 1 then
+	if not TFIsHL2Player(ply) and ply:GetInfoNum("jakey_antlionfbii", 0) == 1 then
 		ply:EmitSound( "^npc/antlion_guard/antlionguard_foot_heavy"..math.random(1,2)..".wav", 120, math.random(98, 103) ) -- Play the footsteps hunter is using
 		return true -- Don't allow default footsteps
 	end
@@ -1447,20 +1580,20 @@ hook.Add("PlayerFootstep", "RoboStep", function( ply, pos, foot, sound, volume, 
 		ply:EmitSound( "physics/concrete/boulder_impact_hard"..math.random(1,3)..".wav", 150, math.random(70,120) ) -- Play the footsteps hunter is using
 		return true -- Don't allow default footsteps
 	end
-	if not ply:IsHL2() and ply:GetInfoNum("tf_mvm_giant_voodoo", 0) == 1 then
+	if not TFIsHL2Player(ply) and ply:GetInfoNum("tf_mvm_giant_voodoo", 0) == 1 then
 		ply:EmitSound( "MVM.GiantHeavyStep" ) -- Play the footsteps hunter is using
 		return true -- Don't allow default footsteps
 	end
-	if not ply:IsHL2() and ply:GetInfoNum("tf_sentrybuster", 0) == 1 then
+	if not TFIsHL2Player(ply) and ply:GetInfoNum("tf_sentrybuster", 0) == 1 then
 		ply:EmitSound( "MVM.SentryBusterStep" ) -- Play the footsteps hunter is using
 		return true -- Don't allow default footsteps
 	end
-	if not ply:IsHL2() and ply:GetPlayerClass() == "merc_dm" and ply:GetInfoNum("tf_silentthirdpersonsteps", 0) == 1 then
+	if not TFIsHL2Player(ply) and ply:GetPlayerClass() == "merc_dm" and ply:GetInfoNum("tf_silentthirdpersonsteps", 0) == 1 then
 		ply:EmitSound("npc/combine_soldier/vo/_period.wav")
 		return true
 	end 
 	
-	if ((CLIENT and ply == LocalPlayer()) or ply:IsHL2()) then
+	if ((CLIENT and ply == LocalPlayer()) or TFIsHL2Player(ply)) then
 		return false
 	else
 		if (game.SinglePlayer()) then
@@ -1796,7 +1929,7 @@ sound.AddSoundOverrides(GM.Folder.."/gamemode/contents/game_sounds.lua")
 
 
 hook.Add("PlayerStepSoundTime", "FootTime", function(ply, iType, iWalking)
-	if (!ply:IsHL2()) then
+	if (!TFIsHL2Player(ply)) then
 		if (iType == STEPSOUNDTIME_ON_LADDER) then
 			local speed = 350
 			return speed
@@ -2529,7 +2662,7 @@ elseif (CLIENT) then
 		render.DrawSprite(pos, 16, 16, Color(color_var, color_var, color_var, 255))
 	end)
 	hook.Add('PostPlayerDraw', 'TalkIcon3', function(ply)
-		if (!ply:IsHL2()) then return end
+		if (!TFIsHL2Player(ply)) then return end
 		if ply == LocalPlayer() and GetViewEntity() == LocalPlayer() and !LocalPlayer():ShouldDrawLocalPlayer() then return end
 		if not ply:Alive() then return end
 		if not ply:GetNWBool("Congaing") then return end
@@ -2549,7 +2682,7 @@ elseif (CLIENT) then
 		render.DrawSprite(pos, 16, 16, Color(color_var, color_var, color_var, 255))
 	end)
 	hook.Add('PostPlayerDraw', 'TalkIcon4', function(ply)
-		if (!ply:IsHL2()) then return end
+		if (!TFIsHL2Player(ply)) then return end
 		if ply == LocalPlayer() and GetViewEntity() == LocalPlayer() and !LocalPlayer():ShouldDrawLocalPlayer() then return end
 		if not ply:Alive() then return end
 		if not ply:GetNWBool("Russian") then return end
@@ -3331,8 +3464,8 @@ include("shd_facefix.lua")
 include("shd_precaches.lua") 
 include("shd_movement.lua")
 include("shd_npcdata.lua")
-include("shd_playerclasses.lua")
 include("ply_extension.lua")
+include("shd_playerclasses.lua")
 include("ent_extension.lua")
 include("shd_playerstates.lua")
 include("shd_parity.lua")

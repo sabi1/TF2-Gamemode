@@ -1324,6 +1324,26 @@ local function ShouldGibLikeTF2(ply, dmginfo, inflictor, isBlastKill)
 	return math.Rand(0, 1) <= p
 end
 
+local DECAP_HEAD_BONES = {
+	"ValveBiped.Bip01_Head1",
+	"ValveBiped.Bip01_Neck1",
+	"ValveBiped.Bip01_Spine4",
+	"bip_head",
+	"bip_neck",
+	"prp_helmet",
+	"jaw_bone",
+}
+
+local function HideDecapitatedHeadBones(ragdoll)
+	if not IsValid(ragdoll) then return end
+	for _, boneName in ipairs(DECAP_HEAD_BONES) do
+		local bone = ragdoll:LookupBone(boneName)
+		if bone and bone >= 0 then
+			ragdoll:ManipulateBoneScale(bone, Vector(0, 0, 0))
+		end
+	end
+end
+
 
 function GM:DoPlayerDeath(ply, attacker, dmginfo)
 	local shouldgib = false
@@ -1456,18 +1476,7 @@ function GM:DoPlayerDeath(ply, attacker, dmginfo)
 			ply.RagdollEntity = ragdoll
 			if (ply:HasDeathFlag(DF_DECAP)) then
 				ragdoll:EmitSound("TFPlayer.Decapitated")
-				local b1 = ragdoll:LookupBone("bip_head")
-				local b2 = ragdoll:LookupBone("bip_neck")
-				local b3 = ragdoll:LookupBone("prp_helmet")
-				local b4 = ragdoll:LookupBone("jaw_bone")
-			
-				local m1 = ragdoll:GetBoneMatrix(b1)
-				local m2 = ragdoll:GetBoneMatrix(b2)
-				ragdoll:ManipulateBoneScale(b1, Vector(0,0,0))
-				ragdoll:ManipulateBoneScale(b2, Vector(0,0,0))	
-				if ragdoll:GetModel() == "models/player/engineer.mdl" then
-					ragdoll:ManipulateBoneScale(b3, Vector(0,0,0))
-				end
+				HideDecapitatedHeadBones(ragdoll)
 			end
 			if (!GetConVar("ai_serverragdolls"):GetBool()) then
 				ragdoll:Fire("FadeAndRemove","",math.random(5,30))
@@ -1995,18 +2004,7 @@ function GM:DoPlayerDeath(ply, attacker, dmginfo)
 			
 				ply:GetRagdollEntity():EmitSound("TFPlayer.Decapitated")
 				if (!ply:IsHL2()) then
-					local b1 = ply:GetRagdollEntity():LookupBone("bip_head")
-					local b2 = ply:GetRagdollEntity():LookupBone("bip_neck")
-					local b3 = ply:GetRagdollEntity():LookupBone("prp_helmet")
-					local b4 = ply:GetRagdollEntity():LookupBone("jaw_bone")
-				
-					local m1 = ply:GetRagdollEntity():GetBoneMatrix(b1)
-					local m2 = ply:GetRagdollEntity():GetBoneMatrix(b2)
-					ply:GetRagdollEntity():ManipulateBoneScale(b1, Vector(0,0,0))
-					ply:GetRagdollEntity():ManipulateBoneScale(b2, Vector(0,0,0))	
-					if ply:GetRagdollEntity():GetModel() == "models/player/engineer.mdl" then
-						ply:GetRagdollEntity():ManipulateBoneScale(b3, Vector(0,0,0))
-					end
+					HideDecapitatedHeadBones(ply:GetRagdollEntity())
 				end
 
 			end)
@@ -2016,18 +2014,7 @@ function GM:DoPlayerDeath(ply, attacker, dmginfo)
 			ply.RagdollEntity:EmitSound("TFPlayer.Decapitated")
 			ply:Decap()
 			if (!ply:IsHL2()) then
-				local b1 = ply.RagdollEntity:LookupBone("bip_head")
-				local b2 = ply.RagdollEntity:LookupBone("bip_neck")
-				local b3 = ply.RagdollEntity:LookupBone("prp_helmet")
-				local b4 = ply.RagdollEntity:LookupBone("jaw_bone")
-			
-				local m1 = ply.RagdollEntity:GetBoneMatrix(b1)
-				local m2 = ply.RagdollEntity:GetBoneMatrix(b2)
-				ply.RagdollEntity:ManipulateBoneScale(b1, Vector(0,0,0))
-				ply.RagdollEntity:ManipulateBoneScale(b2, Vector(0,0,0))	
-				if ply.RagdollEntity:GetModel() == "models/player/engineer.mdl" then
-					ply.RagdollEntity:ManipulateBoneScale(b3, Vector(0,0,0))
-				end
+				HideDecapitatedHeadBones(ply.RagdollEntity)
 			end
 		end
 	end

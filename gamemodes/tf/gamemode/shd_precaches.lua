@@ -62,3 +62,35 @@ PrecacheParticleSystem( "critgun_weaponmodel_blu" )
 PrecacheParticleSystem( "critgun_weaponmodel_red" )
 PrecacheParticleSystem( "critgun_weaponmodel_blu_glow" )
 PrecacheParticleSystem( "critgun_weaponmodel_red_glow" )
+
+-- Additional stock TF2 particle systems frequently used on VSH maps/events.
+local vshStockParticles = {
+	"player_recent_teleport_blue",
+	"player_recent_teleport_red",
+	"teleported_blue",
+	"teleported_red",
+	"teleportedin_blue",
+	"teleportedin_red",
+	"crit_text",
+	"minicrit_text",
+	"doubledonk_text",
+	"bonk_text",
+	"spell_cast_wheel_blue",
+	"spell_cast_wheel_red",
+	"merasmus_tp",
+	"merasmus_spawn",
+	"halloween_boss_summon",
+	"halloween_boss_axe_hit_world",
+	"halloween_boss_injured",
+	"halloween_boss_death",
+}
+
+for _, particleName in ipairs(vshStockParticles) do
+	pcall(PrecacheParticleSystem, particleName)
+end
+
+-- Halloween Skeleton King + skeleton minion models.
+if util and util.PrecacheModel0 then
+	pcall(util.PrecacheModel0, "models/bots/skeleton_sniper/skeleton_sniper.mdl")
+	pcall(util.PrecacheModel0, "models/bots/skeleton_sniper_boss/skeleton_sniper_boss.mdl")
+end

@@ -109,8 +109,8 @@ Register({
 	
 	slot = 5,
 	hidden = true,
-	--v_model = "models/weapons/v_models/v_toolbox_engineer.mdl",
-	--w_model = "models/weapons/w_models/w_toolbox.mdl",
+	v_model = "models/weapons/v_models/v_toolbox_engineer.mdl",
+	w_model = "models/weapons/w_models/w_toolbox.mdl",
 	blueprint_model = "models/buildables/dispenser_blueprint.mdl"
 })
 
@@ -129,8 +129,8 @@ Register({
 	
 	slot = 5,
 	hidden = true,
-	--v_model = "models/weapons/v_models/v_toolbox_engineer.mdl",
-	--w_model = "models/weapons/w_models/w_toolbox.mdl",
+	v_model = "models/weapons/v_models/v_toolbox_engineer.mdl",
+	w_model = "models/weapons/w_models/w_toolbox.mdl",
 	
 	modes = {
 		{
@@ -159,7 +159,7 @@ Register({
 	
 	slot = 5,
 	hidden = true,
-	--v_model = "models/weapons/v_models/v_toolbox_engineer.mdl",
-	--w_model = "models/weapons/w_models/w_toolbox.mdl",
+	v_model = "models/weapons/v_models/v_toolbox_engineer.mdl",
+	w_model = "models/weapons/w_models/w_toolbox.mdl",
 	blueprint_model = "models/buildables/sentry1_blueprint.mdl"
 })

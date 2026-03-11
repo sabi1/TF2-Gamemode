@@ -1,7 +1,24 @@
 
 
+local function TFIsHL2Player(pl)
+	if not IsValid(pl) then return false end
+	if pl.IsHL2 then
+		return pl:IsHL2()
+	end
+	return pl:GetNWBool("IsHL2", false)
+end
+
+local function TFGetPlayerItems(pl)
+	if not IsValid(pl) then return {} end
+	if pl.GetTFItems then
+		return pl:GetTFItems()
+	end
+	return pl:GetWeapons()
+end
+
 function IsCustomHUDVisible(name)
-	for _,v in pairs(LocalPlayer():GetTFItems()) do
+	local lp = LocalPlayer()
+	for _,v in pairs(TFGetPlayerItems(lp)) do
 		local gch = v.GlobalCustomHUD
 		local ch = v.CustomHUD
 		
@@ -19,7 +36,7 @@ function IsCustomHUDVisible(name)
 			ch = nil
 		end
 		
-		if gch or (v==LocalPlayer():GetActiveWeapon() and ch) then
+		if gch or (v==lp:GetActiveWeapon() and ch) then
 			return true
 		end
 	end
@@ -119,6 +136,7 @@ end
 include("cl_crosshairs.lua")
 include("cl_scoreboard.lua")
 include("cl_chatprefix.lua")
+include("cl_vsh_hud.lua")
  
 local W = ScrW()
 local H = ScrH()
@@ -250,7 +268,7 @@ function GM:PlayerBindPress(pl, cmd, down)
 	end
 
 	if ( string.find( cmd, "gmod_undo" ) ) then return true end 
-	if pl:IsHL2() or hud_defaultweaponselect:GetBool() or hl2hudtf:GetBool() or GetConVar("hud_fastswitch"):GetBool() then return end
+	if TFIsHL2Player(pl) or hud_defaultweaponselect:GetBool() or hl2hudtf:GetBool() or GetConVar("hud_fastswitch"):GetBool() then return end
 	if not down then return end
 
 	if IsValid(HudTauntMenu) and HudTauntMenu:IsOpen() then
@@ -368,7 +386,7 @@ end
 -- Using a custom TargetID system
 
 function GM:HUDDrawTargetID()
-	if (LocalPlayer():IsHL2()) then
+	if TFIsHL2Player(LocalPlayer()) then
 		
 		local tr = util.GetPlayerTrace( LocalPlayer() )
 		local trace = util.TraceLine( tr )
@@ -430,7 +448,7 @@ end
 
 local function targetid_trace_condition(tr,ply)
 	ply = ply or LocalPlayer()
-	if ply:IsHL2() then return false end
+	if TFIsHL2Player(ply) then return false end
 	if not IsValid(tr.Entity) or not tr.Entity:IsTFPlayer() then return false end
 
 	local targetTeam = GAMEMODE.GetEntityVisibleTeamForViewer and GAMEMODE:GetEntityVisibleTeamForViewer(tr.Entity, ply) or GAMEMODE:EntityTeam(tr.Entity)
@@ -470,7 +488,7 @@ function GM:TargetIDThink()
 end
 
 function GM:HUDShouldDraw(n)
-	if IsValid(LocalPlayer()) and (LocalPlayer():IsHL2() or hl2hudtf:GetBool()) then
+	if IsValid(LocalPlayer()) and (TFIsHL2Player(LocalPlayer()) or hl2hudtf:GetBool()) then
 		return self.BaseClass:HUDShouldDraw(n)
 	end
 	
@@ -480,10 +498,44 @@ end
 
 function GM:HUDPaint()
 	self.BaseClass:HUDPaint()
-	if LocalPlayer():Alive() and not LocalPlayer():IsHL2() and not hl2hudtf:GetBool() then
+	if LocalPlayer():Alive() and not TFIsHL2Player(LocalPlayer()) and not hl2hudtf:GetBool() then
 		self:DrawDamageNotifiers()
 		self:DrawDamageIndicators()
-		self:DrawCrosshair()
+		if not LocalPlayer():GetNWBool("HalloweenKart", false) then
+			self:DrawCrosshair()
+		end
+	end
+
+	local lp = LocalPlayer()
+	if IsValid(lp) and lp:Alive() and lp:GetNWBool("HalloweenKart", false) then
+		local boostEnd = lp:GetNWFloat("TFKartBoostEndTime", 0)
+		local cooldownEnd = lp:GetNWFloat("TFKartBoostCooldownEndTime", 0)
+		local now = CurTime()
+		local ready = now >= cooldownEnd
+		local boostActive = now < boostEnd
+
+		local barW = math.floor(ScrW() * 0.24)
+		local barH = 16
+		local x = math.floor((ScrW() - barW) * 0.5)
+		local y = math.floor(ScrH() * 0.86)
+		local frac = 1
+		if not ready then
+			local cdTotal = 2.5
+			frac = math.Clamp(1 - ((cooldownEnd - now) / cdTotal), 0, 1)
+		end
+
+		draw.RoundedBox(4, x - 6, y - 26, barW + 12, barH + 34, Color(20, 20, 20, 170))
+		draw.SimpleText("KART BOOST", "HudFontSmall", x + barW * 0.5, y - 18, Color(255, 220, 120), TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP)
+		draw.RoundedBox(2, x, y, barW, barH, Color(40, 40, 40, 220))
+		draw.RoundedBox(2, x + 1, y + 1, math.max(0, (barW - 2) * frac), barH - 2, boostActive and Color(255, 170, 60, 240) or Color(120, 220, 120, 240))
+
+		local status = "READY (MOUSE2)"
+		if boostActive then
+			status = "BOOSTING"
+		elseif not ready then
+			status = string.format("RECHARGING: %.1fs", math.max(cooldownEnd - now, 0))
+		end
+		draw.SimpleText(status, "TFDefaultSmall", x + barW * 0.5, y + barH + 2, color_white, TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP)
 	end
 end
 

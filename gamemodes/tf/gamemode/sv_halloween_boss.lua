@@ -2,18 +2,21 @@ local MAP_SCENARIO = {
     cp_manor_event = "mann_manor",
     koth_viaduct_event = "viaduct",
     koth_lakeside_event = "lakeside",
+    plr_hightower_event = "hightower",
 }
 
 local SCENARIO_BOSS_CANDIDATES = {
     mann_manor = { "headless_hatman" },
     viaduct = { "eyeball_boss" },
     lakeside = { "merasmus" },
+    hightower = { "skeleton_king" },
 }
 
 local SCENARIO_SPAWN_SOUND = {
     mann_manor = "Halloween.HeadlessBossSpawn",
     viaduct = "Halloween.MonoculusBossSpawn",
     lakeside = "Halloween.MerasmusBossSpawn",
+    hightower = "Announcer.Helltower_Red_Skeleton_King01",
 }
 
 local SCENARIO_EVENT_TEXT = {
@@ -42,13 +45,37 @@ local SCENARIO_EVENT_TEXT = {
         warning_30 = "#TF_Halloween_Merasmus_Escaping_In_30",
         warning_10 = "#TF_Halloween_Merasmus_Escaping_In_10",
     },
+    hightower = {
+        appeared = "The Skeleton King has appeared!",
+        killed = "The Skeleton King has been defeated!",
+        killer = "%player% defeated the Skeleton King!",
+        escaped = "The Skeleton King has returned to the underworld!",
+        warning_60 = "The Skeleton King leaves in 60 seconds...",
+        warning_30 = "The Skeleton King leaves in 30 seconds...",
+        warning_10 = "The Skeleton King leaves in 10 seconds...",
+    },
 }
 
 local ALL_BOSS_CLASSES = {
     headless_hatman = true,
     eyeball_boss = true,
     merasmus = true,
+    skeleton_king = true,
 }
+
+local function InferScenarioFromBossClass(className)
+    if not isstring(className) or className == "" then return nil end
+    for scenarioName, candidates in pairs(SCENARIO_BOSS_CANDIDATES) do
+        if istable(candidates) then
+            for _, candidateClass in ipairs(candidates) do
+                if candidateClass == className then
+                    return scenarioName
+                end
+            end
+        end
+    end
+    return nil
+end
 
 local tf_halloween_bosses_enable = CreateConVar(
     "tf_halloween_bosses_enable",
@@ -92,6 +119,18 @@ local tf_merasmus_spawn_interval_variation = CreateConVar(
     { FCVAR_ARCHIVE, FCVAR_NOTIFY },
     "Variation of Merasmus spawn interval (+/-), in seconds."
 )
+local tf_skeleton_king_spawn_interval = CreateConVar(
+    "tf_skeleton_king_spawn_interval",
+    "180",
+    { FCVAR_ARCHIVE, FCVAR_NOTIFY },
+    "Average interval between Skeleton King spawns, in seconds."
+)
+local tf_skeleton_king_spawn_interval_variation = CreateConVar(
+    "tf_skeleton_king_spawn_interval_variation",
+    "30",
+    { FCVAR_ARCHIVE, FCVAR_NOTIFY },
+    "Variation of Skeleton King spawn interval (+/-), in seconds."
+)
 local tf_halloween_bot_min_player_count = CreateConVar(
     "tf_halloween_bot_min_player_count",
     "10",
@@ -109,6 +148,12 @@ local tf_merasmus_lifetime = CreateConVar(
     "120",
     { FCVAR_ARCHIVE, FCVAR_NOTIFY },
     "How long Merasmus can stay active before escaping, in seconds."
+)
+local tf_skeleton_king_lifetime = CreateConVar(
+    "tf_skeleton_king_lifetime",
+    "120",
+    { FCVAR_ARCHIVE, FCVAR_NOTIFY },
+    "How long Skeleton King can stay active before escaping, in seconds."
 )
 
 local state = {
@@ -165,6 +210,20 @@ local function emit_sound_alias(ent, names)
     return false
 end
 
+local function resolve_lang_token(token)
+    if not isstring(token) or token == "" then return "" end
+    if tf_lang and tf_lang.GetRaw then
+        local text = tf_lang.GetRaw(token, true)
+        if isstring(text) and text ~= "" then
+            return text
+        end
+    end
+    if string.StartWith(token, "#") then
+        return string.sub(token, 2)
+    end
+    return token
+end
+
 function GM_REF:GetIT()
     return IsValid(self.HalloweenITVictim) and self.HalloweenITVictim or NULL
 end
@@ -179,8 +238,9 @@ function GM_REF:SetIT(who)
 
     if IsValid(newIT) and newIT ~= oldIT then
         if newIT.PrintMessage then
-            newIT:PrintMessage(HUD_PRINTTALK, "#TF_HALLOWEEN_BOSS_WARN_VICTIM")
-            newIT:PrintMessage(HUD_PRINTCENTER, "#TF_HALLOWEEN_BOSS_WARN_VICTIM")
+            local msg = resolve_lang_token("#TF_HALLOWEEN_BOSS_WARN_VICTIM")
+            newIT:PrintMessage(HUD_PRINTTALK, msg)
+            newIT:PrintMessage(HUD_PRINTCENTER, msg)
         end
         emit_sound_alias(newIT, { "Player.YouAreIT", "Player.YouAreIt" })
         emit_sound_alias(newIT, "Halloween.PlayerScream")
@@ -195,8 +255,9 @@ function GM_REF:SetIT(who)
     if IsValid(oldIT) and oldIT ~= newIT and oldIT:Alive() then
         emit_sound_alias(oldIT, { "Player.TaggedOtherIT", "Player.TaggedOtherIt" })
         if oldIT.PrintMessage then
-            oldIT:PrintMessage(HUD_PRINTTALK, "#TF_HALLOWEEN_BOSS_LOST_AGGRO")
-            oldIT:PrintMessage(HUD_PRINTCENTER, "#TF_HALLOWEEN_BOSS_LOST_AGGRO")
+            local msg = resolve_lang_token("#TF_HALLOWEEN_BOSS_LOST_AGGRO")
+            oldIT:PrintMessage(HUD_PRINTTALK, msg)
+            oldIT:PrintMessage(HUD_PRINTCENTER, msg)
         end
     end
 
@@ -230,6 +291,10 @@ local function GetScenarioInterval(scenario)
     if scenario == "lakeside" then
         return math.max(1, tf_merasmus_spawn_interval:GetFloat()),
             math.max(0, tf_merasmus_spawn_interval_variation:GetFloat())
+    end
+    if scenario == "hightower" then
+        return math.max(1, tf_skeleton_king_spawn_interval:GetFloat()),
+            math.max(0, tf_skeleton_king_spawn_interval_variation:GetFloat())
     end
     return 0, 0
 end
@@ -452,7 +517,8 @@ end
 
 local function BuildBossHudState()
     local boss = IsValid(state.activeBoss) and state.activeBoss or FindActiveBossEntity()
-    local scenario = ResolveManagedScenarioForEnt(boss) or state.activeBossScenario or GetScenario() or ""
+    local classScenario = IsValid(boss) and InferScenarioFromBossClass(boss:GetClass()) or nil
+    local scenario = ResolveManagedScenarioForEnt(boss) or state.activeBossScenario or classScenario or GetScenario() or ""
     local truceActive = scenario == "lakeside" and IsValid(boss) and true or false
 
     if not IsValid(boss) then
@@ -619,6 +685,8 @@ local function SpawnScenarioBoss(scenario)
         state.bossExpireAt = CurTime() + math.max(1, tf_eyeball_boss_lifetime:GetFloat())
     elseif scenario == "lakeside" then
         state.bossExpireAt = CurTime() + math.max(1, tf_merasmus_lifetime:GetFloat())
+    elseif scenario == "hightower" then
+        state.bossExpireAt = CurTime() + math.max(1, tf_skeleton_king_lifetime:GetFloat())
     else
         state.bossExpireAt = 0
     end
@@ -708,7 +776,16 @@ end
 
 local function RunBossScheduler()
     local scenario = GetScenario()
+    local active = FindActiveBossEntity()
+
     if not scenario then
+        if IsValid(active) then
+            state.activeBoss = active
+            state.activeBossScenario = ResolveManagedScenarioForEnt(active) or InferScenarioFromBossClass(active:GetClass())
+            BroadcastBossHudState(nil, false)
+            return
+        end
+
         if next(state.pausedTimers) ~= nil then
             ResumeKothTeamTimers()
         end
@@ -723,7 +800,6 @@ local function RunBossScheduler()
     local interval, variation = GetScenarioInterval(scenario)
     if interval <= 0 then return end
 
-    local active = FindActiveBossEntity()
     if IsValid(active) then
         -- TF2 behavior: while a boss is active, keep re-arming the timer.
         StartTimer(interval, variation)
@@ -735,6 +811,9 @@ local function RunBossScheduler()
             state.warnedAt = {}
         elseif state.activeBossScenario == "lakeside" and state.bossExpireAt <= 0 then
             state.bossExpireAt = CurTime() + math.max(1, tf_merasmus_lifetime:GetFloat())
+            state.warnedAt = {}
+        elseif state.activeBossScenario == "hightower" and state.bossExpireAt <= 0 then
+            state.bossExpireAt = CurTime() + math.max(1, tf_skeleton_king_lifetime:GetFloat())
             state.warnedAt = {}
         end
 
@@ -752,6 +831,12 @@ local function RunBossScheduler()
             end
 
             if remaining <= 0 and IsValid(active) then
+                if active.RequestEscapeDespawn and not active.TF_HalloweenDespawnRequested then
+                    if active:RequestEscapeDespawn() then
+                        state.bossExpireAt = CurTime() + math.max(1.0, tonumber(active.EscapeDespawnAt and (active.EscapeDespawnAt - CurTime()) or 2.0) or 2.0)
+                        return
+                    end
+                end
                 active:Remove()
                 return
             end

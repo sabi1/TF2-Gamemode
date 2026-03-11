@@ -30853,7 +30853,7 @@
 	"rndwave"
 	{
 		"wave"	"vo/mvm_manned_up01.mp3"
-		"wave"	"vo/mvm_manned_up02.mp3"
+		"wave"	"vo/mvm_manned_up02.wav"
 		"wave"	"vo/mvm_manned_up03.mp3"
 		"wave"	"vo/mvm_mann_up_mode02.mp3"
 		"wave"	"vo/mvm_mann_up_mode03.mp3"

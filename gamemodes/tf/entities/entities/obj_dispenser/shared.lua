@@ -17,19 +17,36 @@ ENT.Sound_Idle = Sound("Building_Dispenser.Idle")
 ENT.Sound_Heal = Sound("Building_Dispenser.Heal")
 ENT.ObjectName = "#TF_Object_Dispenser"
 
+function ENT:GetTargetIDSubText()
+	local level = tonumber(self:GetLevel() or 1) or 1
+	local metal = tonumber(self:GetMetalAmount() or self:GetMetal() or 0) or 0
+	local maxMetal = tonumber(self.MaxMetal) or 400
+	return string.format("Level %d, Metal: %d / %d", level, metal, maxMetal)
+end
+
 function ENT:SetAutomaticFrameAdvance(bUsingAnim)
 	self.AutomaticFrameAdvance = bUsingAnim
 end
 
 function ENT:SetMetalAmount(m)
-	--self:SetNWInt("Metal", m)
+	local maxMetal = tonumber(self.MaxMetal) or 400
+	m = math.Clamp(math.floor(tonumber(m) or 0), 0, maxMetal)
 	self.MetalAmount = m
-	self:SetAmmoPercentage(m / self.MaxMetal)
+	-- Replicate to clients through obj_base datatable channel used by building HUD.
+	if self.SetMetal then
+		self:SetMetal(m)
+	end
+	self:SetAmmoPercentage(m / maxMetal)
 end
 
 function ENT:GetMetalAmount()
-	return self.MetalAmount
-	--return self:GetNWInt("Metal") or 0
+	if self.MetalAmount ~= nil then
+		return tonumber(self.MetalAmount) or 0
+	end
+	if self.GetMetal then
+		return tonumber(self:GetMetal()) or 0
+	end
+	return 0
 end
 
 function ENT:AddMetalAmount(m)

@@ -13,14 +13,23 @@ local VALID_LOADOUT_CLASSES = {
     spy = true,
 }
 
+local function GetClassLoadoutSlotCount(className)
+    className = string.lower(tostring(className or ""))
+    if className == "engineer" or className == "spy" then
+        return 8
+    end
+    return LOADOUT_SLOT_COUNT
+end
+
 if SERVER then
     util.AddNetworkString("TF_UpdateLoadoutProperties")
     CreateConVar("tf_debug_item_visuals", "0", {FCVAR_ARCHIVE}, "Debug Steam->loadout->item visual attribute flow.")
 end
 
-local function normalizeLoadout(split)
+local function normalizeLoadout(split, className)
     local normalized = {}
-    for i = 1, LOADOUT_SLOT_COUNT do
+    local slotCount = GetClassLoadoutSlotCount(className)
+    for i = 1, slotCount do
         normalized[i] = split[i] or "-1"
     end
     return normalized
@@ -94,7 +103,8 @@ if SERVER then
         for className, slots in pairs(payload) do
             if VALID_LOADOUT_CLASSES[className] and istable(slots) then
                 cleaned[className] = {}
-                for i = 1, LOADOUT_SLOT_COUNT do
+                local slotCount = GetClassLoadoutSlotCount(className)
+                for i = 1, slotCount do
                     cleaned[className][i] = sanitizeSlotProperties(slots[i])
                     if ItemVisualDebugEnabled() and cleaned[className][i] and cleaned[className][i].attributes then
                         local attrs = cleaned[className][i].attributes
@@ -123,10 +133,27 @@ end
 
 function meta:GiveLoadout()
     local playerClass = self:GetPlayerClass()
+    local classTable = GAMEMODE and GAMEMODE.PlayerClasses and GAMEMODE.PlayerClasses[playerClass] or nil
     local convar = "loadout_" .. self:GetPlayerClass()
-    local split = normalizeLoadout(string.Split(self:GetInfo(convar, "-1,-1,-1,-1,-1,-1,-1"), ","))
+    local defaultLoadout = "-1,-1,-1,-1,-1,-1,-1"
+    if playerClass == "engineer" or playerClass == "spy" then
+        defaultLoadout = "-1,-1,-1,-1,-1,-1,-1,-1"
+    end
+    local split = normalizeLoadout(string.Split(self:GetInfo(convar, defaultLoadout), ","), playerClass)
     local classProperties = self.TFLoadoutProperties and self.TFLoadoutProperties[playerClass] or nil
     local playerModel = self.GetModel and self:GetModel() or ""
+
+    -- Match TF2's equip flow: build desired loadout state first, then equip in one pass.
+    if istable(classTable) and istable(classTable.DefaultLoadout) then
+        self.ItemLoadout = table.Copy(classTable.DefaultLoadout)
+        self.ItemProperties = {}
+        for i = 1, #self.ItemLoadout do
+            self.ItemProperties[i] = {}
+        end
+    else
+        self.ItemLoadout = {}
+        self.ItemProperties = {}
+    end
 
     for slotIndex, id in ipairs(split) do
         id = tonumber(id)
@@ -170,12 +197,15 @@ function meta:GiveLoadout()
                     ))
                 end
             end
-            self:EquipInLoadout(itemname, slotProps)
+            self:EquipInLoadout(itemname, slotProps, true)
             --tf_items.CC_GiveItem(self, _, {itemname})
             --self:ConCommand("__svgiveitem", itemname) --id)
         end
     end
 
+    if self:Alive() then
+        self:SetPlayerClass(playerClass)
+    end
 
     timer.Simple(0.3, function()
 		if not IsValid(self) then return end
