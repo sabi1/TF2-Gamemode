@@ -83,6 +83,7 @@ function RW.SetFiveCP_BLUOwned(n) cp_owned_by_blu = math.Clamp(tonumber(n) or 0,
 function RW.SetAD_BLUOwned(n) ad_blu_owned = math.max(0, tonumber(n) or 0) end
 function RW.SetPL_CheckpointsPassed(n) pl_checkpoints_passed = math.max(0, tonumber(n) or 0) end
 function RW.OverrideTeamWave(tfteam, seconds) explicitWave[tfteam] = seconds and math.max(0, tonumber(seconds)) or nil end
+function RW.GetOverriddenTeamWave(tfteam) return explicitWave[tfteam] end
 
 local function ComputeTeamWave(tfteam)
     if cv_disable:GetBool() then return 0 end

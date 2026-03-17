@@ -227,63 +227,7 @@ end
 local function weaponHasSelectableAmmo(wep)
 	if not IsValid(wep) then return false end
 	if wep.Hidden then return false end
-	if isfunction(wep.HasUsableAmmoForSelection) then
-		return wep:HasUsableAmmoForSelection()
-	end
-
-	local primary = wep.Primary or {}
-	local ammoType = primary.Ammo
-	if isstring(ammoType) then
-		ammoType = string.lower(ammoType)
-		if ammoType == "" or ammoType == "none" then
-			ammoType = nil
-		end
-	end
-
-	local clipSize = tonumber(primary.ClipSize or -1) or -1
-	local clip = tonumber((wep.Clip1 and wep:Clip1()) or -1) or -1
-	local reserve = tonumber((wep.Ammo1 and wep:Ammo1()) or -1) or -1
-	local owner = LocalPlayer()
-
-	-- Throwable Ammo1() can lag while holstered; resolve reserve from all pools.
-	if IsValid(owner) and owner.GetAmmoCount then
-		if ammoType ~= nil then
-			local ownerReserveByName = tonumber(owner:GetAmmoCount(ammoType) or -1) or -1
-			if ownerReserveByName > reserve then
-				reserve = ownerReserveByName
-			end
-		end
-		if isfunction(wep.GetPrimaryAmmoType) then
-			local primaryAmmoType = wep:GetPrimaryAmmoType()
-			if isnumber(primaryAmmoType) and primaryAmmoType >= 0 then
-				local ownerReserveById = tonumber(owner:GetAmmoCount(primaryAmmoType) or -1) or -1
-				if ownerReserveById > reserve then
-					reserve = ownerReserveById
-				end
-			end
-		end
-	end
-
-	-- Throwables can be readiness-driven; trust full meter as selectable.
-	if wep.HasCustomMeleeBehaviour and isfunction(wep.GetHUDMeterValue) then
-		local meter = tonumber(wep:GetHUDMeterValue() or 0) or 0
-		if meter >= 0.999 then
-			return true
-		end
-	end
-
-	if wep.IsPDA then
-		return true
-	end
-	-- Pure melee weapons (ammo type "none") must always remain selectable.
-	if wep.IsMeleeWeapon and ammoType == nil then
-		return true
-	end
-	-- True ammo-less melee/utility remains selectable; throwable melee does not.
-	if clipSize < 0 and ammoType == nil and clip < 0 and reserve < 0 then
-		return true
-	end
-	return clip > 0 or reserve > 0
+	return TF_WeaponHasUsableAmmoForSelection(wep, LocalPlayer())
 end
 
 function PANEL:UpdateLoadout()   
@@ -424,7 +368,12 @@ function PANEL:CurrentWeapon()
 end
 
 function PANEL:Paint()
-	if not LocalPlayer():Alive() or LocalPlayer():Team() == TEAM_SPECTATOR or LocalPlayer():HasWeapon("nil") then
+	if LocalPlayer():HasWeapon("nil") then
+		self:SetVisible(false)
+		return
+	end
+
+	if GAMEMODE and GAMEMODE.ShouldDrawWeaponSelection and not GAMEMODE:ShouldDrawWeaponSelection() then
 		self:SetVisible(false)
 	end
 end

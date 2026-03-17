@@ -509,9 +509,7 @@ local function GetDefaultSpawns()
     if #out == 0 then
         for _, ent in ipairs(ents.FindByClass("info_player_teamspawn")) do
             if not IsValid(ent) then continue end
-            local kv = ent.GetKeyValues and ent:GetKeyValues() or nil
-            local team = kv and tonumber(kv.TeamNum or kv.teamnum or 0) or 0
-            if team == TEAM_BLU or team == TF_TEAM_PVE_INVADERS or team == 3 then
+            if ent.IsAvailableForTeam and ent:IsAvailableForTeam(TEAM_BLU, false) then
                 out[#out + 1] = ent
             end
         end

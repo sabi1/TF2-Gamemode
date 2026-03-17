@@ -12,11 +12,15 @@ local function GetOwnerTeam(ent)
 	return tonumber(ent.OwnerTeam or (ent.Properties and ent.Properties.point_default_owner) or 0) or 0
 end
 
+local function UnlockTimerName(ent)
+	return "TF_ControlPointUnlock_" .. tostring(ent:EntIndex())
+end
+
 function ENT:Initialize()
 	self.Properties = self.Properties or {}
 	self.ID = GetPointID(self)
 	self.OwnerTeam = GetOwnerTeam(self)
-	self.Locked = false
+	self.Locked = tonumber(self.Properties.point_start_locked or 0) == 1
 	self:SetNWInt("Team", self.OwnerTeam)
 	self:UpdateModel()
 end
@@ -77,8 +81,11 @@ function ENT:SendData(pl)
 	umsg.End()
 end
 
-function ENT:SetOwnerTeam(o)
+function ENT:SetOwnerTeam(o, activator, fireCaptureOutputs)
+	local previousOwner = GetOwnerTeam(self)
 	self.OwnerTeam = o
+	self.Properties = self.Properties or {}
+	self.Properties.point_default_owner = o
 	self:SetNWInt("Team", self.OwnerTeam)
 	self.ID = GetPointID(self)
 	if self.ID then
@@ -88,6 +95,22 @@ function ENT:SetOwnerTeam(o)
 		umsg.End()
 	end
 	self:UpdateModel()
+
+	if previousOwner ~= o then
+		if o == 2 then
+			self:TriggerOutput("OnOwnerChangedToTeam1", activator or self)
+			if fireCaptureOutputs then
+				self:TriggerOutput("OnCapTeam1", activator or self)
+			end
+		elseif o == 3 then
+			self:TriggerOutput("OnOwnerChangedToTeam2", activator or self)
+			if fireCaptureOutputs then
+				self:TriggerOutput("OnCapTeam2", activator or self)
+			end
+		else
+			self:TriggerOutput("OnCapReset", activator or self)
+		end
+	end
 end
 function ENT:GetOwnerTeam()
 	return self.OwnerTeam
@@ -114,10 +137,23 @@ function ENT:Lock()
 end
 
 function ENT:SetLocked(b)
+	local wasLocked = self.Locked and true or false
 	if b then
 		self:Lock()
 	else
 		self:Open()
+		if wasLocked then
+			self:TriggerOutput("OnUnlocked", self)
+		end
+	end
+end
+
+function ENT:TriggerRoundStartOutput()
+	local owner = GetOwnerTeam(self)
+	if owner == 2 then
+		self:TriggerOutput("OnRoundStartOwnedByTeam1", self)
+	elseif owner == 3 then
+		self:TriggerOutput("OnRoundStartOwnedByTeam2", self)
 	end
 end
 
@@ -246,10 +282,13 @@ function ENT:Think()
 	
 end
 function ENT:AcceptInput(name, activator, caller, data)
-	if name == "SetOwner" then
+	name = tostring(name or "")
+	local nameLower = string.lower(name)
+
+	if nameLower == "setowner" then
 		local teamNum = tonumber(data)
 		if teamNum then
-			self:SetOwnerTeam(teamNum)
+			self:SetOwnerTeam(teamNum, activator, false)
 
 			local master = ents.FindByClass("team_control_point_master")[1]
 			if IsValid(master) and master.UpdateControlPoints then
@@ -264,5 +303,27 @@ function ENT:AcceptInput(name, activator, caller, data)
 
 			return true
 		end
+	elseif nameLower == "hidemodel" then
+		self:SetNoDraw(true)
+		return true
+	elseif nameLower == "showmodel" then
+		self:SetNoDraw(false)
+		return true
+	elseif nameLower == "setlocked" then
+		self:SetLocked((tonumber(data) or 0) ~= 0)
+		return true
+	elseif nameLower == "setunlocktime" then
+		timer.Remove(UnlockTimerName(self))
+		local delay = math.max(tonumber(data) or 0, 0)
+		if delay <= 0 then
+			self:SetLocked(false)
+		else
+			timer.Create(UnlockTimerName(self), delay, 1, function()
+				if IsValid(self) then
+					self:SetLocked(false)
+				end
+			end)
+		end
+		return true
 	end
 end

@@ -185,37 +185,50 @@ function PANEL:Paint()
 	draw.Text(BackstabsLabel)
 	draw.Text(BonusLabel)
 	
-	Kills.text = LocalPlayer():Kills()
-	Deaths.text = LocalPlayer():Deaths()
-	Assists.text = LocalPlayer():Assists()
+	local lp = LocalPlayer()
+	if not IsValid(lp) then return end
+	local function safeStat(methodName, fallback)
+		local fn = lp[methodName]
+		if isfunction(fn) then
+			local ok, value = pcall(fn, lp)
+			if ok and value ~= nil then
+				return value
+			end
+		end
+		return fallback or 0
+	end
+
+	Kills.text = safeStat("Kills", safeStat("Frags", 0))
+	Deaths.text = safeStat("Deaths", 0)
+	Assists.text = safeStat("Assists", 0)
 	if isMvM then
-		Destruction.text = LocalPlayer():Frags() * 100
-		Captures.text = LocalPlayer():GetNWInt("TF_MVM_Credits", 0)
-		Defenses.text = LocalPlayer():Assists()
-		Domination.text = LocalPlayer():Revenges()
+		Destruction.text = safeStat("Frags", 0) * 100
+		Captures.text = lp:GetNWInt("TF_MVM_Credits", 0)
+		Defenses.text = safeStat("Assists", 0)
+		Domination.text = safeStat("Revenges", 0)
 		local wave = 1
 		if TF_MVMState and TF_MVMState.Get then
 			wave = math.max(1, tonumber(TF_MVMState:Get("wave_current", 1)) or 1)
 		end
 		Revenge.text = wave
 	else
-		Destruction.text = LocalPlayer():Destructions()
-		Captures.text = LocalPlayer():Captures()
-		Defenses.text = LocalPlayer():Defenses()
-		Domination.text = LocalPlayer():Dominations()
-		Revenge.text = LocalPlayer():Revenges()
+		Destruction.text = safeStat("Destructions", 0)
+		Captures.text = safeStat("Captures", 0)
+		Defenses.text = safeStat("Defenses", 0)
+		Domination.text = safeStat("Dominations", 0)
+		Revenge.text = safeStat("Revenges", 0)
 	end
-	Healing.text = LocalPlayer():Healing()
+	Healing.text = safeStat("Healing", 0)
 	if isMvM then
 		Invuln.text = 0
 		Teleports.text = 0
 	else
-		Invuln.text = LocalPlayer():Invulns()
-		Teleports.text = LocalPlayer():Teleports()
+		Invuln.text = safeStat("Invulns", 0)
+		Teleports.text = safeStat("Teleports", 0)
 	end
-	Headshots.text = LocalPlayer():Headshots()
-	Backstabs.text = LocalPlayer():Backstabs()
-	Bonus.text = LocalPlayer():Bonus()
+	Headshots.text = safeStat("Headshots", 0)
+	Backstabs.text = safeStat("Backstabs", 0)
+	Bonus.text = safeStat("Bonus", 0)
 	
 	draw.Text(Kills)
 	draw.Text(Deaths)

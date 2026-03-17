@@ -3,6 +3,14 @@ ENT.Type = "brush"
 local DEPLOY_ALERT_COOLDOWN = 5.0
 TF_MVM_NextDeployingAlertAt = TF_MVM_NextDeployingAlertAt or 0
 
+local function IsSpecialDeliveryCapture(flagEnt, playerEnt)
+	if not IsValid(flagEnt) or not IsValid(playerEnt) then return false end
+	if flagEnt:GetClass() ~= "item_teamflag" then return false end
+	if tonumber(flagEnt.TeamNum or -1) ~= 0 then return false end
+	if not TF_IsSpecialDeliveryMap then return false end
+	return TF_IsSpecialDeliveryMap()
+end
+
 local function PlayDeployingAlertThrottled()
 	local now = CurTime()
 	if now < (tonumber(TF_MVM_NextDeployingAlertAt) or 0) then
@@ -120,6 +128,23 @@ function ENT:StartTouch(ply)
 			
 			ply:Speak("TLK_FLAGCAPTURED")
 			v:Capture()
+
+			if IsSpecialDeliveryCapture(v, ply) then
+				team.AddScore(ply:Team(), 1)
+				if not GAMEMODE.RoundHasWinner then
+					GAMEMODE:RoundWin(ply:Team())
+				end
+
+				for _, receiver in pairs(player.GetAll()) do
+					if receiver:Team() == ply:Team() then
+						receiver:SendLua([[surface.PlaySound("vo/intel_teamcaptured.mp3")]])
+					else
+						receiver:SendLua([[surface.PlaySound("vo/intel_enemycaptured.mp3")]])
+					end
+				end
+				return
+			end
+
 			--team.AddScore(v.TeamNum, 1)
 			if v.TeamNum == TEAM_RED then
 				team.AddScore(TEAM_BLU, 1)

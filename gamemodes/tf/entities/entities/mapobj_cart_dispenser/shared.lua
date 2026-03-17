@@ -22,15 +22,30 @@ function ENT:SetAutomaticFrameAdvance(bUsingAnim)
 	self.AutomaticFrameAdvance = bUsingAnim
 end
 
+function ENT:SetReplicatedDispenserMetal(m)
+	local v = self.dt.BuildingInfoFloat
+	v.z = math.max(0, tonumber(m) or 0)
+	self.dt.BuildingInfoFloat = v
+end
+
+function ENT:GetReplicatedDispenserMetal()
+	local v = self.dt.BuildingInfoFloat
+	return math.max(0, math.floor((tonumber(v.z) or 0) + 0.5))
+end
+
 function ENT:SetMetalAmount(m)
-	--self:SetNWInt("Metal", m)
+	local maxMetal = tonumber(self.MaxMetal) or 400
+	m = math.Clamp(math.floor(tonumber(m) or 0), 0, maxMetal)
 	self.MetalAmount = m
-	self:SetAmmoPercentage(m / self.MaxMetal)
+	self:SetReplicatedDispenserMetal(m)
+	self:SetAmmoPercentage(m / maxMetal)
 end
 
 function ENT:GetMetalAmount()
-	return self.MetalAmount
-	--return self:GetNWInt("Metal") or 0
+	if SERVER then
+		return tonumber(self.MetalAmount) or 0
+	end
+	return self:GetReplicatedDispenserMetal()
 end
 
 function ENT:AddMetalAmount(m)

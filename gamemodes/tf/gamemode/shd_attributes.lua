@@ -572,16 +572,69 @@ local ATTRIBUTES = {
 },
 
 ["set_disguise_on_backstab"] = {-- NOT IMPLEMENTED
-	unimplemented = true,
 	equip = function(v,weapon,owner)
 		
+	end,
+	on_kill = function(v,ent,inf,att)
+		if not IsValid(ent) or not ISPLAYER(ent) then return end
+		if not IsValid(att) or not ISPLAYER(att) then return end
+		if not ent.HasDeathFlag or not ent:HasDeathFlag(DF_BACKSTAB) then return end
+		if not isfunction(TF_DisguiseSpyPlayer) then return end
+
+		local victimClass = ent:GetPlayerClass()
+		if not victimClass or victimClass == "" then return end
+		local victimTeamArg = (ent:Team() == TEAM_BLU or ent:Team() == TF_TEAM_PVE_INVADERS) and "blue" or "red"
+		TF_DisguiseSpyPlayer(att, victimClass, victimTeamArg)
 	end,
 },
 
 ["set_cannot_disguise"] = {-- NOT IMPLEMENTED
-	unimplemented = true,
 	equip = function(v,weapon,owner)
-		
+		if SERVER and IsValid(owner) then
+			owner.TempAttributes = owner.TempAttributes or {}
+			owner.TempAttributes.CannotDisguise = true
+		end
+	end,
+},
+
+["mod_cloak_no_regen_from_items"] = {
+	boolean = true,
+	equip = function(v, weapon, owner)
+		if SERVER and IsValid(owner) then
+			owner.TempAttributes = owner.TempAttributes or {}
+			owner.TempAttributes.NoCloakFromItems = true
+		end
+	end,
+},
+
+["mod_disguise_consumes_cloak"] = {
+	boolean = true,
+	equip = function(v, weapon, owner)
+		-- Enforced in TF_DisguiseSpyPlayer using the active invis watch attribute.
+	end,
+},
+
+["add_cloak_on_kill"] = {
+	on_kill = function(v,ent,inf,att)
+		if not IsValid(att) or not ISPLAYER(att) then return end
+		if ISBUILDING(ent) then return end
+		if not isfunction(TF_AddSpyCloakPercent) then return end
+		TF_AddSpyCloakPercent(att, v, false)
+	end,
+},
+
+["add_cloak_on_hit"] = {
+	post_damage = function(v,ent,hitgroup,dmginfo)
+		if not dmginfo or not dmginfo.GetDamage then return end
+		if dmginfo:GetDamage() <= 0 then return end
+
+		local att = dmginfo:GetAttacker()
+		if not IsValid(att) or not ISPLAYER(att) then return end
+		if not IsValid(ent) or not ent:IsTFPlayer() then return end
+		if not att:CanDamage(ent) then return end
+		if not isfunction(TF_AddSpyCloakPercent) then return end
+
+		TF_AddSpyCloakPercent(att, v, false)
 	end,
 },
 

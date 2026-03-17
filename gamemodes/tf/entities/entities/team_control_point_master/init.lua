@@ -117,6 +117,14 @@ function ENT:UpdateControlPoints()
 	self.ControlPointsReady = true
 end
 
+function ENT:FireRoundStartOutput()
+	for _, cp in ipairs(GetAllControlPoints()) do
+		if IsValid(cp) and cp.TriggerRoundStartOutput then
+			cp:TriggerRoundStartOutput()
+		end
+	end
+end
+
 function ENT:KeyValue(key,value)
 	key = string.lower(key)
 	
@@ -169,5 +177,40 @@ hook.Add("OnPlayerChangedTeam", "TF_ObjectiveHUDSync_TeamChange", function(ply)
 end)
 
 function ENT:AcceptInput(name, activator, caller, data)
-	
+	name = string.lower(tostring(name or ""))
+
+	if name == "setwinner" then
+		local teamNum = tonumber(data)
+		if teamNum ~= nil then
+			GAMEMODE:RoundWin(teamNum)
+			return true
+		end
+	elseif name == "setcaplayout" then
+		self.Properties = self.Properties or {}
+		self.Properties.caplayout = tostring(data or "")
+		self:SyncObjectiveHud()
+		return true
+	elseif name == "setcaplayoutcustompositionx" then
+		self.Properties = self.Properties or {}
+		self.Properties.caplayoutcustompositionx = tonumber(data) or data
+		return true
+	elseif name == "setcaplayoutcustompositiony" then
+		self.Properties = self.Properties or {}
+		self.Properties.caplayoutcustompositiony = tonumber(data) or data
+		return true
+	elseif name == "roundstart" then
+		self:FireRoundStartOutput()
+		return true
+	end
 end
+
+hook.Add("TF_GameRules_RoundWinOutputs", "TF_ControlPointMasterRoundWinOutputs", function(teamnum)
+	for _, master in ipairs(ents.FindByClass("team_control_point_master")) do
+		if not IsValid(master) then continue end
+		if teamnum == 2 then
+			master:TriggerOutput("OnWonByTeam1", master)
+		elseif teamnum == 3 then
+			master:TriggerOutput("OnWonByTeam2", master)
+		end
+	end
+end)

@@ -13,7 +13,10 @@ local character_bg = {
 }
 local character_default = surface.GetTextureID("hud/class_scoutred")
 local character3d_default = "models/player/spy.mdl"
-local convar = CreateClientConVar("cl_hud_playerclass_use_playermodel", "0", true, false)
+local convar = CreateClientConVar("cl_hud_playerclass_use_playermodel", "1", true, false)
+local confirmConvar = CreateClientConVar("cl_hud_playerclass_playermodel_showed_confirm_dialog", "0", true, false)
+local playermodelConfirmDialog
+local classTextureCache = {}
 local DISGUISE_PRIMARY_WEAPON_BY_CLASS = {
 	scout = "models/weapons/c_models/c_scattergun.mdl",
 	soldier = "models/weapons/w_models/w_rocketlauncher.mdl",
@@ -24,6 +27,18 @@ local DISGUISE_PRIMARY_WEAPON_BY_CLASS = {
 	engineer = "models/weapons/c_models/c_shotgun/c_shotgun.mdl",
 	medic = "models/weapons/c_models/c_syringegun/c_syringegun.mdl",
 	sniper = "models/weapons/c_models/c_sniperrifle/c_sniperrifle.mdl",
+	spy = "models/weapons/c_models/c_revolver/c_revolver.mdl",
+}
+local DISGUISE_SECONDARY_WEAPON_BY_CLASS = {
+	scout = "models/weapons/c_models/c_pistol/c_pistol.mdl",
+	soldier = "models/weapons/c_models/c_shotgun/c_shotgun.mdl",
+	pyro = "models/weapons/c_models/c_shotgun/c_shotgun.mdl",
+	demo = "models/weapons/w_models/w_grenadelauncher.mdl",
+	demoman = "models/weapons/w_models/w_grenadelauncher.mdl",
+	heavy = "models/weapons/c_models/c_shotgun/c_shotgun.mdl",
+	engineer = "models/weapons/c_models/c_pistol/c_pistol.mdl",
+	medic = "models/weapons/c_models/c_medigun/c_medigun.mdl",
+	sniper = "models/weapons/c_models/c_smg/c_smg.mdl",
 	spy = "models/weapons/c_models/c_revolver/c_revolver.mdl",
 }
 local DISGUISE_MELEE_WEAPON_BY_CLASS = {
@@ -44,6 +59,62 @@ local function TeamToClassImageIndex(teamNum)
 		return 2
 	end
 	return 1
+end
+
+local function TeamToClassImageSuffix(teamNum)
+	if teamNum == TEAM_BLU or teamNum == TF_TEAM_PVE_INVADERS then
+		return "blue"
+	end
+	return "red"
+end
+
+local function NormalizeClassImageKey(className)
+	local normalized = string.lower(string.Trim(tostring(className or "")))
+	if normalized == "demoman" then
+		return "demo"
+	end
+	if normalized == "engineer" then
+		return "engi"
+	end
+	if normalized == "civilian" then
+		return "civ"
+	end
+	return normalized
+end
+
+local function GetSpyPortraitCloakSuffix(classPly)
+	if not IsValid(classPly) or string.lower(tostring(classPly:GetPlayerClass() or "")) ~= "spy" then
+		return ""
+	end
+
+	if classPly:GetNWBool("Cloaked", false) then
+		return "_cloak"
+	end
+
+	local nextStealthTime = tonumber(classPly:GetNWFloat("TFNextStealthTime", 0)) or 0
+	if nextStealthTime > CurTime() then
+		return "_halfcloak"
+	end
+
+	return ""
+end
+
+local function GetClassPortraitTextureId(className, teamNum, cloakSuffix)
+	local imageKey = NormalizeClassImageKey(className)
+	if imageKey == "" then
+		return nil
+	end
+
+	local suffix = TeamToClassImageSuffix(teamNum)
+	local path = "hud/class_" .. imageKey .. suffix .. tostring(cloakSuffix or "")
+	local cached = classTextureCache[path]
+	if cached ~= nil then
+		return cached > 0 and cached or nil
+	end
+
+	local textureId = surface.GetTextureID(path)
+	classTextureCache[path] = textureId
+	return textureId > 0 and textureId or nil
 end
 
 local function ClassNameToModelPath(className)
@@ -70,7 +141,7 @@ local function GetDisplayClassInfo(basePly, baseTeam, baseTbl)
 		return baseTeam, baseTbl
 	end
 
-	if not (basePly:GetNWBool("Disguised", false) or basePly:GetNWBool("Disguising", false)) then
+	if not basePly:GetNWBool("Disguised", false) or basePly:GetNWBool("Disguising", false) then
 		return baseTeam, baseTbl
 	end
 
@@ -146,6 +217,28 @@ local function GetHUDWeaponModel(classPly)
 		return false
 	end
 
+	local function getDisguiseSlotKind(overrideSlot)
+		local forced = tonumber(overrideSlot)
+		if forced == 0 then return "primary" end
+		if forced == 1 then return "secondary" end
+		if forced == 2 then return "melee" end
+		if forced == 3 then return "sapper" end
+
+		local active = classPly:GetActiveWeapon()
+		if not IsValid(active) then return "primary" end
+		if active:GetClass() == "tf_weapon_builder" then return "sapper" end
+		if isMeleeWeapon(active) then return "melee" end
+		local slot = tonumber(active.Slot or (active.GetSlot and active:GetSlot()) or -1)
+		if slot == 1 then return "secondary" end
+		if active.GetItemData then
+			local itemData = active:GetItemData()
+			if istable(itemData) and itemData.item_slot == "secondary" then
+				return "secondary"
+			end
+		end
+		return "primary"
+	end
+
 	local function findTargetWeaponModel(target, wantSlotNum, wantItemSlot)
 		if not IsValid(target) or not target.GetWeapons then return nil end
 		for _, wep in ipairs(target:GetWeapons()) do
@@ -168,19 +261,29 @@ local function GetHUDWeaponModel(classPly)
 		and string.lower(tostring(classPly:GetPlayerClass() or "")) == "spy"
 		and classPly:GetNWBool("Disguised", false)
 	then
-		local active = classPly:GetActiveWeapon()
 		local disguiseClass = string.lower(string.Trim(classPly:GetNWString("TFSpyDisguiseClass", "")))
 		local target = classPly:GetNWEntity("TFSpyDisguiseTarget")
+		local slotKind = getDisguiseSlotKind(classPly:GetNWInt("TFSpyDisguiseWeaponSlotOverride", -1))
 
-		if IsValid(active) and active:GetClass() == "tf_weapon_builder" then
-			local sapper = getWorldModelFromWeapon(active)
+		if slotKind == "sapper" then
+			local sapper = getWorldModelFromWeapon(classPly:GetActiveWeapon())
 			if sapper then return sapper end
-		elseif isMeleeWeapon(active) then
+			local sapperWep = classPly.GetWeapon and classPly:GetWeapon("tf_weapon_builder") or nil
+			local sapperFallback = getWorldModelFromWeapon(sapperWep)
+			if sapperFallback then return sapperFallback end
+		elseif slotKind == "melee" then
 			local targetMelee = findTargetWeaponModel(target, 2, "melee")
 			if targetMelee then return targetMelee end
 			local fallbackMelee = DISGUISE_MELEE_WEAPON_BY_CLASS[disguiseClass]
 			if isstring(fallbackMelee) and fallbackMelee ~= "" and util.IsValidModel(fallbackMelee) then
 				return fallbackMelee
+			end
+		elseif slotKind == "secondary" then
+			local targetSecondary = findTargetWeaponModel(target, 1, "secondary")
+			if targetSecondary then return targetSecondary end
+			local fallbackSecondary = DISGUISE_SECONDARY_WEAPON_BY_CLASS[disguiseClass] or DISGUISE_PRIMARY_WEAPON_BY_CLASS[disguiseClass]
+			if isstring(fallbackSecondary) and fallbackSecondary ~= "" and util.IsValidModel(fallbackSecondary) then
+				return fallbackSecondary
 			end
 		else
 			local targetPrimary = findTargetWeaponModel(target, 0, "primary")
@@ -468,6 +571,44 @@ local function RemoveHUDAttachments(ent)
 	ent.Cosmetics = {}
 end
 
+local function GetPhraseOrFallback(key, fallback)
+	local phrase = language.GetPhrase(key)
+	if isstring(phrase) and phrase ~= "" and phrase ~= key then
+		return phrase
+	end
+
+	return fallback
+end
+
+local function EnsurePlayerModelConfirmDialog()
+	if not convar:GetBool() or confirmConvar:GetBool() or IsValid(playermodelConfirmDialog) then
+		return
+	end
+
+	RunConsoleCommand("cl_hud_playerclass_playermodel_showed_confirm_dialog", "1")
+
+	playermodelConfirmDialog = Derma_Query(
+		GetPhraseOrFallback("GameUI_HudPlayerClassUsePlayerModelDialogMessage", "This feature is not recommended for older machines and can be toggled in Advanced Options.\n\nKeep the feature enabled?"),
+		GetPhraseOrFallback("GameUI_HudPlayerClassUsePlayerModelDialogTitle", "HUD 3D Character"),
+		GetPhraseOrFallback("GameUI_HudPlayerClassUsePlayerModelDialogConfirm", "Yes"),
+		function()
+			RunConsoleCommand("cl_hud_playerclass_use_playermodel", "1")
+			playermodelConfirmDialog = nil
+		end,
+		GetPhraseOrFallback("GameUI_HudPlayerClassUsePlayerModelDialogCancel", "No"),
+		function()
+			RunConsoleCommand("cl_hud_playerclass_use_playermodel", "0")
+			playermodelConfirmDialog = nil
+		end
+	)
+
+	if IsValid(playermodelConfirmDialog) then
+		playermodelConfirmDialog.OnClose = function()
+			playermodelConfirmDialog = nil
+		end
+	end
+end
+
 function PANEL:Init()
 	self:SetPaintBackgroundEnabled(false)
 	self:ParentToHUD()
@@ -498,12 +639,14 @@ function PANEL:Paint()
 		return
 	end
 		local t = LocalPlayer():Team()
+		local hudBgTeam = t
 		local tbl = LocalPlayer():GetPlayerClassTable()
 		local classPly = LocalPlayer()
 
 		if LocalPlayer():GetObserverTarget() and LocalPlayer():GetObserverTarget():IsPlayer() then
 			classPly = LocalPlayer():GetObserverTarget()
 			t = classPly:Team()
+			hudBgTeam = t
 			tbl = classPly:GetPlayerClassTable()
 		end
 		t, tbl = GetDisplayClassInfo(classPly, t, tbl)
@@ -554,7 +697,7 @@ function PANEL:Paint()
 
 			----print("ACT_MP_STAND_"..LocalPlayer():GetActiveWeapon().HoldType)]]
 		local w, h = self:LocalToScreen( self:GetWide(), self:GetTall() - 30 )
-		local tex = character_bg[t] or character_bg[1]
+		local tex = character_bg[hudBgTeam] or character_bg[1]
 		if (LocalPlayer():IsL4D()) then
 			tex = surface.GetTextureID("vgui/hud/pz_charge_bg")
 		end
@@ -566,6 +709,8 @@ function PANEL:Paint()
 				surface.DrawTexturedRect(9*Scale, (480-60)*Scale, 100*Scale, 50*Scale)
 			end
 	if convar:GetBool() then
+		EnsurePlayerModelConfirmDialog()
+
 		local ply = classPly
 		if (ply:Health() < 0 or ply:IsHL2()) then
 			if self.ClassModel then
@@ -598,7 +743,30 @@ function PANEL:Paint()
 			ApplyHUDWearableBodygroups(ent, wearableOwner, t, displayClassName)
 			local activeWep = ply:GetActiveWeapon()
 			local holdtype = IsValid(activeWep) and (activeWep.HoldType or activeWep:GetHoldType()) or "normal"
-			ent:SetSequence("stand_"..holdtype)
+			local srcSeq = ply:GetSequence()
+			local srcAct = (ply.GetSequenceActivity and ply:GetSequenceActivity(srcSeq)) or -1
+			local applied = false
+			if srcAct and srcAct >= 0 then
+				local seq = ent:SelectWeightedSequence(srcAct)
+				if seq and seq >= 0 then
+					ent:SetSequence(seq)
+					ent:SetCycle(ply:GetCycle())
+					ent:SetPlaybackRate(ply:GetPlaybackRate())
+					applied = true
+				end
+			end
+			if not applied then
+				local seqName = "stand_" .. tostring(holdtype or "normal")
+				local seq = ent:LookupSequence(seqName)
+				if seq and seq >= 0 then
+					ent:SetSequence(seq)
+				else
+					local idle = ent:LookupSequence("idle")
+					if idle and idle >= 0 then
+						ent:SetSequence(idle)
+					end
+				end
+			end
 			for i = 0, ply:GetNumPoseParameters() - 1 do
 				local flMin, flMax = ply:GetPoseParameterRange(i)
 				local sPose = ply:GetPoseParameterName(i)
@@ -653,6 +821,13 @@ function PANEL:Paint()
 		tex = character_default
 		if tbl and tbl.CharacterImage and tbl.CharacterImage[1] then
 			tex = tbl.CharacterImage[TeamToClassImageIndex(t)] or tbl.CharacterImage[1]
+		end
+		local cloakSuffix = GetSpyPortraitCloakSuffix(classPly)
+		if cloakSuffix ~= "" then
+			local cloakTexture = GetClassPortraitTextureId(tbl and tbl.ModelName or nil, t, cloakSuffix)
+			if cloakTexture then
+				tex = cloakTexture
+			end
 		end
 		surface.SetTexture(tex)
 		surface.SetDrawColor(255,255,255,255)

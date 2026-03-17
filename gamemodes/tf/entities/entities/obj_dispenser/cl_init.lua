@@ -10,10 +10,8 @@ local ScreenTexture = {
 local ArrowTexture = surface.GetTextureID("vgui/dispenser_meter_arrow")
 local Offset = Vector(-1.1, -11, -0.6)
 local Scale=0.0465
-local DialSpeed = 1
 local AngleStart = 85
 local AngleEnd = -85
-local debugDispenserScreen = CreateClientConVar("tf_debug_dispenser_screen", "0", true, false)
 
 function ENT:CalcAngle(m)
 	return Lerp(math.Clamp(tonumber(m) or 0, 0, 1), AngleStart, AngleEnd)
@@ -57,39 +55,30 @@ local function IsTextureValid(id)
 	return isnumber(id) and id > 0
 end
 
-function ENT:DrawDispenserPanels()
-	if self:GetState()<2 then return end
+local function AlphaOf(ent)
+	if not IsValid(ent) then return 255 end
+	local c = ent:GetColor()
+	return (c and c.a) or 255
+end
 
+function ENT:ShouldDrawDispenserPanels(modelEnt)
+	if self:GetState() < 2 then return false end
+	if not IsValid(modelEnt) then return false end
+	if isfunction(self.GetInvisibilityLevel) and self:GetInvisibilityLevel() >= 1 then
+		return false
+	end
+	if AlphaOf(self) <= 0 or AlphaOf(modelEnt) <= 0 then
+		return false
+	end
+	return true
+end
+
+function ENT:DrawDispenserPanels()
 	local modelEnt = ResolveDispenserModel(self)
-	if not IsValid(modelEnt) then
-		if debugDispenserScreen:GetBool() and (self._NextDispenserDebug or 0) < CurTime() then
-			self._NextDispenserDebug = CurTime() + 1
-			print(string.format("[tf_debug_dispenser_screen] no model link ent=%s state=%s", tostring(self), tostring(self:GetState())))
-		end
-		return
-	end
+	if not self:ShouldDrawDispenserPanels(modelEnt) then return end
 	
-	local metal = self:GetAmmoPercentage()
-	if metal and metal~=self.LastMetalAmount then
-		if not self.Ang then
-			self.Ang = self:CalcAngle(metal)
-		else
-			if metal>self.LastMetalAmount then
-				self.DAng = -DialSpeed
-			else
-				self.DAng = DialSpeed
-			end
-			self.TargetAngle = self:CalcAngle(metal)
-		end
-		self.LastMetalAmount = metal
-	elseif self.TargetAngle then
-		if self.Ang*self.DAng > self.TargetAngle*self.DAng then
-			self.Ang = self.TargetAngle
-			self.TargetAngle = nil
-		else
-			self.Ang = self.Ang + self.DAng
-		end
-	end
+	local metal = math.Clamp(tonumber(self:GetAmmoPercentage() or 0) or 0, 0, 1)
+	self.Ang = self:CalcAngle(metal)
 	
 	local cp0_ll = ResolveControlPanelWithFallback(
 		modelEnt,
@@ -103,13 +92,7 @@ function ENT:DrawDispenserPanels()
 		Vector(-10.5, 8.5, 49),
 		Angle(0, 90, 90)
 	)
-	if not cp0_ll or not cp1_ll then
-		if debugDispenserScreen:GetBool() and (self._NextDispenserDebug or 0) < CurTime() then
-			self._NextDispenserDebug = CurTime() + 1
-			print(string.format("[tf_debug_dispenser_screen] no panel attach ent=%s model=%s", tostring(self), tostring(modelEnt:GetModel())))
-		end
-		return
-	end
+	if not cp0_ll or not cp1_ll then return end
 
 	cam.Start3D2D(cp0_ll.Pos
 		+ Offset.x * cp0_ll.Ang:Forward()
@@ -134,45 +117,17 @@ function ENT:DrawScreen()
 	local teamTex = (self:Team() == TEAM_BLU or self:Team() == TF_TEAM_PVE_INVADERS) and ScreenTexture[1] or ScreenTexture[0]
 	local validTeamTex = IsTextureValid(teamTex)
 	local validArrowTex = IsTextureValid(ArrowTexture)
-
-	if validTeamTex then
-		surface.SetDrawColor(255,255,255,255)
-		surface.SetTexture(teamTex)
-		surface.DrawTexturedRect(0, 0, 480, 240)
-	else
-		-- Forced visible fallback so we can distinguish "render path dead" from "material missing".
-		surface.SetDrawColor(30, 40, 50, 235)
-		surface.DrawRect(0, 0, 480, 240)
-		surface.SetDrawColor(140, 180, 220, 255)
-		surface.DrawOutlinedRect(0, 0, 480, 240)
-		draw.SimpleText("DISP DEBUG BG", "DermaDefaultBold", 10, 10, Color(220, 230, 255), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
-	end
+	if not validTeamTex or not validArrowTex then return end
+	surface.SetDrawColor(255,255,255,255)
+	surface.SetTexture(teamTex)
+	surface.DrawTexturedRect(0, 0, 480, 240)
 	
 	local a = self.Ang or self:CalcAngle(0)
 	local r = math.rad(a)
 	local s, c = math.sin(r), math.cos(r)
-
-	if validArrowTex then
-		surface.SetTexture(ArrowTexture)
-		surface.SetDrawColor(255,255,255,255)
-		surface.DrawTexturedRectRotated(480*0.5 - math.floor(81*s), 240*0.90625 - math.floor(81*c), 50, 200, a)
-	else
-		surface.SetDrawColor(250, 230, 120, 255)
-		surface.DrawRect(240 + math.floor(70 * s), 190 + math.floor(35 * c), 8, 28)
-	end
-
-	if debugDispenserScreen:GetBool() and (self._NextDispenserDebug or 0) < CurTime() then
-		self._NextDispenserDebug = CurTime() + 1
-		print(string.format(
-			"[tf_debug_dispenser_screen] draw ent=%s state=%s metal=%.3f teamTex=%s arrowTex=%s team=%s",
-			tostring(self),
-			tostring(self:GetState()),
-			tonumber(self:GetAmmoPercentage() or 0) or -1,
-			tostring(teamTex),
-			tostring(ArrowTexture),
-			tostring(self:Team())
-		))
-	end
+	surface.SetTexture(ArrowTexture)
+	surface.SetDrawColor(255,255,255,255)
+	surface.DrawTexturedRectRotated(480*0.5 - math.floor(81*s), 240*0.90625 - math.floor(81*c), 50, 200, a)
 end
 
 hook.Add("PostDrawOpaqueRenderables", "TF_DrawDispenserPanels", function()

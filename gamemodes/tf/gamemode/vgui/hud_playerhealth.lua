@@ -100,10 +100,12 @@ function PANEL:Paint()
 	if not LocalPlayer():Alive() or LocalPlayer():IsHL2() or GetConVar("tf_forcehl2hud"):GetBool() or GAMEMODE.ShowScoreboard or GetConVarNumber("cl_drawhud")==0 or LocalPlayer():Team() == TEAM_SPECTATOR or LocalPlayer():GetPlayerClass()=="" then return end
 	
 	local size, amplitude, frequency
-	local health = LocalPlayer():Health()
+	local healthOwner = LocalPlayer()
+	local health = healthOwner:Health()
 
 	if LocalPlayer():GetObserverTarget() and LocalPlayer():GetObserverTarget():IsPlayer() then
-		health = LocalPlayer():GetObserverTarget():Health()
+		healthOwner = LocalPlayer():GetObserverTarget()
+		health = healthOwner:Health()
 	end
 	
 	if health<=0 then
@@ -121,7 +123,7 @@ function PANEL:Paint()
 	end
 	
 	maxhealth = maxhealth + LocalPlayer():GetNWInt("PlayerMaxHealthBuff")]]
-	local maxhealth = LocalPlayer():GetMaxHealth()
+	local maxhealth = healthOwner:GetMaxHealth()
 	
 	local ratio = math.Clamp(health/maxhealth,0,1)
 	
@@ -179,7 +181,7 @@ function PANEL:Paint()
 	}
 	if health and maxhealth then
 	----print(health-maxhealth)
-		if health <= maxhealth and health ~= maxhealth and GetConVar("tf_maxhealth_hud"):GetInt() ~= 0 then
+		if (maxhealth - health) >= 5 and GetConVar("tf_maxhealth_hud"):GetInt() ~= 0 then
 		--	--print(health-maxhealth+5)
 		--	--print(health)
 		--	--print(maxhealth)
@@ -196,41 +198,41 @@ function PANEL:Paint()
 
 	local droplet_x = (HealthRes.statusX - 16) * Scale
 	
-	if LocalPlayer():HasPlayerState(PLAYERSTATE_MARKED) then
+	if healthOwner:HasPlayerState(PLAYERSTATE_MARKED) then
 		surface.SetTexture(marked_for_death)
 		surface.SetDrawColor(255,255,255,255)
-		surface.DrawTexturedRect((HealthRes.statusX)*Scale, (HealthRes.statusY)*Scale, HealthRes.statusW*Scale, HealthRes.statusH*Scale)
+		surface.DrawTexturedRect(droplet_x, (HealthRes.statusY)*Scale, HealthRes.statusW*Scale, HealthRes.statusH*Scale)
 		droplet_x = droplet_x + 30 * Scale
 	end
-	if LocalPlayer():HasPlayerState(PLAYERSTATE_BLEEDING) then
+	if healthOwner:HasPlayerState(PLAYERSTATE_BLEEDING) then
 		surface.SetTexture(bleed_drop)
 		surface.SetDrawColor(255,0,0,255)
-		surface.DrawTexturedRect((HealthRes.statusX)*Scale, (HealthRes.statusY)*Scale, HealthRes.statusW*Scale, HealthRes.statusH*Scale)
+		surface.DrawTexturedRect(droplet_x, (HealthRes.statusY)*Scale, HealthRes.statusW*Scale, HealthRes.statusH*Scale)
 		droplet_x = droplet_x + 30 * Scale
 	end
 	
-	if LocalPlayer():HasPlayerState(PLAYERSTATE_MILK) then
+	if healthOwner:HasPlayerState(PLAYERSTATE_MILK) then
 		surface.SetTexture(bleed_drop)
 		surface.SetDrawColor(255,255,255,255)
-		surface.DrawTexturedRect((HealthRes.statusX)*Scale, (HealthRes.statusY)*Scale, HealthRes.statusW*Scale, HealthRes.statusH*Scale)
+		surface.DrawTexturedRect(droplet_x, (HealthRes.statusY)*Scale, HealthRes.statusW*Scale, HealthRes.statusH*Scale)
 		droplet_x = droplet_x + 30 * Scale
 	end
-	if LocalPlayer():HasPlayerState(PLAYERSTATE_JARATED) then
+	if healthOwner:HasPlayerState(PLAYERSTATE_JARATED) then
 		surface.SetTexture(bleed_drop)
 		surface.SetDrawColor(255,255,0,255)
-		surface.DrawTexturedRect((HealthRes.statusX)*Scale, (HealthRes.statusY)*Scale, HealthRes.statusW*Scale, HealthRes.statusH*Scale)
+		surface.DrawTexturedRect(droplet_x, (HealthRes.statusY)*Scale, HealthRes.statusW*Scale, HealthRes.statusH*Scale)
 		droplet_x = droplet_x + 30 * Scale
 	end
-	if LocalPlayer():HasPlayerState(PLAYERSTATE_PUKEDON) then
+	if healthOwner:HasPlayerState(PLAYERSTATE_PUKEDON) then
 		surface.SetTexture(bleed_drop)
 		surface.SetDrawColor(0,100,0,255)
-		surface.DrawTexturedRect((HealthRes.statusX)*Scale, (HealthRes.statusY)*Scale, HealthRes.statusW*Scale, HealthRes.statusH*Scale)
+		surface.DrawTexturedRect(droplet_x, (HealthRes.statusY)*Scale, HealthRes.statusW*Scale, HealthRes.statusH*Scale)
 		droplet_x = droplet_x + 30 * Scale
 	end
-	if LocalPlayer():HasPlayerState(PLAYERSTATE_STUNNED) then
+	if healthOwner:HasPlayerState(PLAYERSTATE_STUNNED) then
 		surface.SetTexture(slowed)
 		surface.SetDrawColor(255,255,0,255)
-		surface.DrawTexturedRect((HealthRes.statusX)*Scale, (HealthRes.statusY)*Scale, HealthRes.statusW*Scale, HealthRes.statusH*Scale)
+		surface.DrawTexturedRect(droplet_x, (HealthRes.statusY)*Scale, HealthRes.statusW*Scale, HealthRes.statusH*Scale)
 		droplet_x = droplet_x + 30 * Scale
 	end
 end

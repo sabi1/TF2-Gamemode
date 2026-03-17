@@ -41,8 +41,31 @@ SWEP.ProjectileShootOffset = Vector(0, 0, 0)
 
 SWEP.Force = 800
 SWEP.AddPitch = -4
-SWEP.RechargeTime = 180
 SWEP.MaxCarry = 1
+SWEP.RechargeTime = 60
+
+local TF_GAS_DAMAGE_FOR_FULL_CHARGE = 750
+local TF_GAS_AFTERBURN_DURATION = 10
+local TF_GAS_EXPLODE_ON_IGNITE_RADIUS = 200
+
+local function IsInvulnerableLikeValve(ent)
+	if not IsValid(ent) or not ent.InCond then return false end
+	return ent:InCond(TF_COND_INVULNERABLE)
+		or ent:InCond(TF_COND_INVULNERABLE_USER_BUFF)
+		or ent:InCond(TF_COND_INVULNERABLE_CARD_EFFECT)
+		or ent:InCond(TF_COND_INVULNERABLE_HIDE_UNLESS_DAMAGED)
+end
+
+local function CanGasAffectTarget(attacker, target)
+	if not IsValid(attacker) or not IsValid(target) then return false end
+	if not target.IsTFPlayer or not target:IsTFPlayer() then return false end
+	if target == attacker then return false end
+	if not attacker.IsValidEnemy or not attacker:IsValidEnemy(target) then return false end
+	if target.InCond and (target:InCond(TF_COND_PHASE) or target:InCond(TF_COND_PASSTIME_INTERCEPTION)) then return false end
+	if IsInvulnerableLikeValve(target) then return false end
+	if target.CanReceiveCrits and not target:CanReceiveCrits() then return false end
+	return true
+end
 
 function SWEP:InspectAnimCheck()
 self:CallBaseFunction("InspectAnimCheck")
@@ -58,7 +81,13 @@ function SWEP:Think()
 	self.BaseClass.Think(self)
 	self.Owner:SetPoseParameter("r_arm", 2.2)
 	self.Owner:SetPoseParameter("r_hand_grip", 10.8)
-	if CLIENT then
+	if SERVER then
+		if self.Owner:GetActiveWeapon() == self then
+			self:ResetForCurrentLife()
+			self:BlockExternalAmmoGain()
+			self:ClampAmmo()
+		end
+	else
 		self:UpdateRechargeBar()
 	end
 end
@@ -91,13 +120,9 @@ end
 
 function SWEP:ResetForCurrentLife()
 	if not IsValid(self.Owner) then return end
-	if self.LastTrackedAmmo == nil then
-		self.LastTrackedAmmo = self:Ammo1()
-	end
-	
-	if self:Ammo1() < (self.MaxCarry or 1) and not self.NextRechargeTime then
-		self:SetRechargeEndTime(CurTime() + (self.RechargeTime or 20))
-	end
+	self:SetRechargeEndTime(nil)
+	self:RestorePersistentCharge()
+	self.LastTrackedAmmo = self:Ammo1()
 end
 
 function SWEP:GetPersistentChargeFraction()
@@ -115,31 +140,46 @@ function SWEP:GetCurrentChargeFraction()
 	if self:Ammo1() >= maxcarry then
 		return 1
 	end
-	
-	local recharge = self.RechargeTime or 20
-	local recharge_end = self.NextRechargeTime or self:GetNWFloat("GasRechargeEnd", 0)
-	if recharge_end and recharge_end > CurTime() then
-		local remaining = math.max(0, recharge_end - CurTime())
-		return math.Clamp(1 - (remaining / recharge), 0, 1)
+
+	return self:GetPersistentChargeFraction()
+end
+
+function SWEP:AdvancePassiveRecharge()
+	if not IsValid(self.Owner) then return end
+	if self:Ammo1() >= (self.MaxCarry or 1) then return end
+
+	local now = CurTime()
+	local last = self._GasLastRechargeUpdate or now
+	self._GasLastRechargeUpdate = now
+
+	local recharge = tonumber(self.RechargeTime) or 180
+	if recharge <= 0 then return end
+
+	local frac = self:GetPersistentChargeFraction() + math.max(0, now - last) / recharge
+	self:SetPersistentChargeFraction(math.Clamp(frac, 0, 1))
+
+	if self:GetPersistentChargeFraction() >= 1 then
+		self.Owner:SetAmmoCount(self.MaxCarry or 1, self.Primary.Ammo)
+		self.LastTrackedAmmo = self:Ammo1()
+		self.Owner:EmitSoundEx("Recon.Ping", 75)
 	end
-	
-	return 0
+end
+
+function SWEP:GetDamageForFullCharge()
+	return tonumber(self:GetAttributeValue("item_meter_damage_for_full_charge", TF_GAS_DAMAGE_FOR_FULL_CHARGE)) or TF_GAS_DAMAGE_FOR_FULL_CHARGE
+end
+
+function SWEP:GetChargeRateMultiplier()
+	return tonumber(self:GetAttributeValue("mult_item_meter_charge_rate", 1)) or 1
 end
 
 function SWEP:RestorePersistentCharge()
 	if not IsValid(self.Owner) then return end
 	local frac = self:GetPersistentChargeFraction()
 	local maxcarry = self.MaxCarry or 1
-	
-	if frac >= 1 then
-		self.Owner:SetAmmoCount(maxcarry, self.Primary.Ammo)
-		self:SetRechargeEndTime(nil)
-	else
-		self.Owner:SetAmmoCount(0, self.Primary.Ammo)
-		local remaining = (1 - frac) * (self.RechargeTime or 20)
-		self:SetRechargeEndTime(CurTime() + math.max(0, remaining))
-	end
-	
+
+	self:SetRechargeEndTime(nil)
+	self.Owner:SetAmmoCount((frac >= 1) and maxcarry or 0, self.Primary.Ammo)
 	self.LastTrackedAmmo = self:Ammo1()
 end
 
@@ -152,34 +192,7 @@ function SWEP:ClampAmmo()
 end
 
 function SWEP:ProcessRechargeTimer()
-	if not IsValid(self.Owner) then return end
-	local maxcarry = self.MaxCarry or 1
-	if self:Ammo1() >= maxcarry then
-		self:SetRechargeEndTime(nil)
-		return
-	end
-	
-	if not self.NextRechargeTime then
-		self:SetRechargeEndTime(CurTime() + (self.RechargeTime or 20))
-		return
-	end
-	
-	if CurTime() < self.NextRechargeTime then return end
-	
-	if self:Ammo1() < maxcarry then
-		local ammoid = game.GetAmmoID(self.Primary.Ammo)
-		if ammoid and ammoid >= 0 then
-			self.Owner:SetAmmo(math.min(self:Ammo1() + 1, maxcarry), ammoid)
-		else
-			self.Owner:GiveAmmo(1, self.Primary.Ammo)
-		end
-		if self:Ammo1() >= maxcarry then
-			self.Owner:EmitSoundEx("Recon.Ping", 75)
-		end
-	end
-	
-	self.LastTrackedAmmo = self:Ammo1()
-	self:SetRechargeEndTime(nil)
+	return
 end
 
 function SWEP:BlockExternalAmmoGain()
@@ -190,21 +203,18 @@ function SWEP:BlockExternalAmmoGain()
 		return
 	end
 	
-	if current > self.LastTrackedAmmo then
-		self.Owner:SetAmmoCount(self.LastTrackedAmmo, self.Primary.Ammo)
-		current = self.LastTrackedAmmo
+	local maxcarry = self.MaxCarry or 1
+	local expected = (self:GetPersistentChargeFraction() >= 1) and maxcarry or 0
+	if current ~= expected then
+		self.Owner:SetAmmoCount(expected, self.Primary.Ammo)
+		current = expected
 	end
 	
 	self.LastTrackedAmmo = current
 end
 
 function SWEP:ServerRechargeThink()
-	if not IsValid(self.Owner) then return end
-	self:ResetForCurrentLife()
-	self:BlockExternalAmmoGain()
-	self:ClampAmmo()
-	self:ProcessRechargeTimer()
-	self:SetPersistentChargeFraction(self:GetCurrentChargeFraction())
+	return
 end
 
 function SWEP:UpdateRechargeBar()
@@ -221,20 +231,19 @@ function SWEP:GetHUDMeterResFile()
 end
 
 function SWEP:GetHUDMeterValue()
-	local maxcarry = self.MaxCarry or 1
-	if self:Ammo1() >= maxcarry then
-		return 1
+	return self:GetCurrentChargeFraction()
+end
+
+function SWEP:CanAttack()
+	if self:GetCurrentChargeFraction() < 1 then
+		return false
 	end
 
-	local recharge_end = self:GetNWFloat("GasRechargeEnd", 0)
-	if recharge_end > 0 then
-		local recharge = self.RechargeTime or 20
-		if recharge <= 0 then return 0 end
-		local elapsed = recharge - math.max(0, recharge_end - CurTime())
-		return math.Clamp(elapsed / recharge, 0, 1)
-	end
+	return self.BaseClass.CanAttack(self)
+end
 
-	return 0
+function SWEP:ShouldUpdateMeter()
+	return IsValid(self.Owner) and self.Owner:Alive()
 end
 
 function SWEP:PredictCriticalHit()
@@ -308,6 +317,84 @@ function SWEP:MeleeAttack()
 	end
 end
 
+function SWEP:SetChargeFraction(frac)
+	if not IsValid(self.Owner) then return end
+
+	local clamped = math.Clamp(tonumber(frac) or 0, 0, 1)
+	local maxcarry = self.MaxCarry or 1
+
+	self:SetRechargeEndTime(nil)
+	self._GasLastRechargeUpdate = CurTime()
+	self:SetPersistentChargeFraction(clamped)
+	self.Owner:SetAmmoCount((clamped >= 1) and maxcarry or 0, self.Primary.Ammo)
+	self.LastTrackedAmmo = self:Ammo1()
+
+	if clamped >= 1 then
+		self.Owner:EmitSoundEx("Recon.Ping", 75)
+	end
+end
+
+function SWEP:AddChargeFromDamage(damage, dmginfo)
+	if not IsValid(self.Owner) then return end
+	if self:Ammo1() >= (self.MaxCarry or 1) then return end
+	if not dmginfo or not IsValid(dmginfo:GetAttacker()) or dmginfo:GetDamage() <= 0 then return end
+
+	local inflictor = dmginfo:GetInflictor()
+	if IsValid(inflictor) and inflictor:GetClass() == "tf_entitybleed" and inflictor.TFGasPasserExplodeBleed and inflictor:GetOwner() == self.Owner then
+		return
+	end
+
+	local damageToFull = self:GetDamageForFullCharge()
+	if damageToFull <= 0 then return end
+
+	damageToFull = damageToFull * self:GetChargeRateMultiplier()
+	if damageToFull <= 0 then return end
+
+	local nextFrac = self:GetPersistentChargeFraction() + (math.max(0, damage or 0) / damageToFull)
+	local wasFull = self:GetPersistentChargeFraction() >= 1
+	self:SetPersistentChargeFraction(math.Clamp(nextFrac, 0, 1))
+
+	if self:GetPersistentChargeFraction() >= 1 then
+		self.Owner:SetAmmoCount(self.MaxCarry or 1, self.Primary.Ammo)
+		if not wasFull then
+			self.Owner:EmitSoundEx("Recon.Ping", 75)
+		end
+	else
+		self.Owner:SetAmmoCount(0, self.Primary.Ammo)
+	end
+
+	self.LastTrackedAmmo = self:Ammo1()
+end
+
+function SWEP:HandleExplodeOnIgnite(victim)
+	if tonumber(self:GetAttributeValue("explode_on_ignite", 0)) == 0 then return end
+	if not IsValid(self.Owner) or not IsValid(victim) then return end
+
+	local exploded = false
+	for _, ent in ipairs(ents.FindInSphere(victim:GetPos(), TF_GAS_EXPLODE_ON_IGNITE_RADIUS)) do
+		if ent ~= victim and CanGasAffectTarget(self.Owner, ent) then
+			local tr = util.TraceLine({
+				start = victim:WorldSpaceCenter(),
+				endpos = ent:WorldSpaceCenter(),
+				filter = {victim, ent, self.Owner},
+				mask = MASK_SHOT,
+			})
+
+			if not tr.Hit or tr.Entity == ent then
+				ent:AddCond(TF_COND_BLEEDING, 0.1, self.Owner)
+				if IsValid(ent.BleedEntity) then
+					ent.BleedEntity.TFGasPasserExplodeBleed = true
+				end
+				exploded = true
+			end
+		end
+	end
+
+	if exploded then
+		victim:EmitSound("Weapon_Grenade_Pipebomb.Explode", 75, 100)
+	end
+end
+
 function SWEP:PrimaryAttack()	
 	if self:Ammo1() == 0 then
 		return
@@ -324,7 +411,7 @@ function SWEP:PrimaryAttack()
 	
 	self:TakePrimaryAmmo(1)
 	if SERVER then
-		self:SetRechargeEndTime(CurTime() + (self.RechargeTime or 20))
+		self:SetChargeFraction(0)
 		self.LastTrackedAmmo = self:Ammo1()
 	end
 	self:EmitSound("Weapon_GasCan.Throw")
@@ -343,12 +430,47 @@ function SWEP:PrimaryAttack()
 end
 
 if SERVER then
-	hook.Add("Think", "TFGasPasser_RechargeThink", function()
+	hook.Add("Think", "TFGasPasser_PassiveRecharge", function()
 		for _, ply in ipairs(player.GetAll()) do
-			local wep = ply:GetWeapon("tf_weapon_jar_gas")
-			if IsValid(wep) then
-				wep:ServerRechargeThink()
+			if not IsValid(ply) then continue end
+
+			local gasWep = ply:GetWeapon("tf_weapon_jar_gas")
+			if IsValid(gasWep) then
+				gasWep:ResetForCurrentLife()
+				gasWep:AdvancePassiveRecharge()
+				gasWep:BlockExternalAmmoGain()
+				gasWep:ClampAmmo()
 			end
+		end
+	end)
+
+	hook.Add("EntityTakeDamage", "TFGasPasser_SourceParity", function(target, dmginfo)
+		local attacker = dmginfo:GetAttacker()
+
+		if IsValid(attacker) and attacker:IsPlayer() and IsValid(target) and attacker ~= target and (target:IsPlayer() or target:IsNPC() or target:IsNextBot()) and attacker.CanDamage and attacker:CanDamage(target) then
+			local gasWep = attacker:GetWeapon("tf_weapon_jar_gas")
+			if IsValid(gasWep) then
+				gasWep:AddChargeFromDamage(dmginfo:GetDamage(), dmginfo)
+			end
+		end
+
+		if not IsValid(target) or not target.IsTFPlayer or not target:IsTFPlayer() or not target.InCond or not target:InCond(TF_COND_GAS) then return end
+		if dmginfo:GetDamage() <= 0 then return end
+
+		local douser = target.GetConditionProvider and target:GetConditionProvider(TF_COND_GAS) or nil
+		if not IsValid(douser) or not douser:IsPlayer() then
+			douser = target
+		end
+
+		local gasWep = IsValid(douser) and douser:GetWeapon("tf_weapon_jar_gas") or nil
+		if target.GetPlayerClass and target:GetPlayerClass() == "pyro" then
+			target:AddCond(TF_COND_BURNING_PYRO, TF_GAS_AFTERBURN_DURATION, douser)
+		end
+		target:AddCond(TF_COND_BURNING, TF_GAS_AFTERBURN_DURATION, douser)
+		target:RemoveCond(TF_COND_GAS, true)
+
+		if IsValid(gasWep) then
+			gasWep:HandleExplodeOnIgnite(target)
 		end
 	end)
 end

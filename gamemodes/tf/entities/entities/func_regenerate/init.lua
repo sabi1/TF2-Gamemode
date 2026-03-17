@@ -26,7 +26,6 @@ local function PreserveMeterAmmo(pl, fn)
 				ammo_type = wep.Primary.Ammo,
 				ammo_count = authoritative,
 				gas_frac = pl:GetNWFloat("GasPasserChargeFrac", 0),
-				gas_end = pl:GetNWFloat("GasRechargeEnd", 0),
 			}
 		end
 	end
@@ -34,15 +33,14 @@ local function PreserveMeterAmmo(pl, fn)
 	fn()
 	
 	for class,data in pairs(saved) do
-		pl:SetAmmoCount(data.ammo_count, data.ammo_type)
 		pl:SetNWFloat("GasPasserChargeFrac", data.gas_frac or 0)
-		pl:SetNWFloat("GasRechargeEnd", data.gas_end or 0)
+		pl:SetAmmoCount(((data.gas_frac or 0) >= 1) and data.ammo_count or 0, data.ammo_type)
 		
 		local wep = pl:GetWeapon(class)
 		if IsValid(wep) then
-			wep.LastTrackedAmmo = data.ammo_count
-			if wep.SetRechargeEndTime then
-				wep:SetRechargeEndTime(data.gas_end and data.gas_end > 0 and data.gas_end or nil)
+			wep.LastTrackedAmmo = ((data.gas_frac or 0) >= 1) and data.ammo_count or 0
+			if wep.RestorePersistentCharge then
+				wep:RestorePersistentCharge()
 			end
 			if wep.ClampAmmo then
 				wep:ClampAmmo()

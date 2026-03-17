@@ -124,6 +124,23 @@ local function IsKothMap()
 	return string.StartWith(string.lower(game.GetMap() or ""), "koth_")
 end
 
+local function ShouldSuppressTimerHUD()
+	local lp = LocalPlayer()
+	if not IsValid(lp) then
+		return true
+	end
+
+	if gui.IsGameUIVisible() then
+		return true
+	end
+
+	if lp.GetObserverMode and lp:GetObserverMode() == OBS_MODE_FREEZECAM then
+		return true
+	end
+
+	return false
+end
+
 local function applyRoundTimerState(msg, waitingMode, pausedMode)
 	local t = msg:ReadFloat()
 	RoundTimerState.Reference = t
@@ -349,6 +366,8 @@ function PANEL:DrawSingleTimer(state, teamIndex, xOffset, active)
 end
 
 function PANEL:Paint()
+	if ShouldSuppressTimerHUD() then return end
+
 	if IsKothMap() and not IsMvMMap() then
 		local red = KothTimerState[TEAM_RED_ID]
 		local blu = KothTimerState[TEAM_BLU_ID]

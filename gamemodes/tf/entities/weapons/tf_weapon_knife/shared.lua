@@ -117,10 +117,6 @@ function SWEP:OnMeleeHit(tr)
 				ent:SetMaterial("models/shadertest/predator")
 				ent:GetRagdollEntity():SetMaterial("models/shadertest/predator")
 				ent:TakeDamage(ent:Health() * 2, self.Owner, self)
-				timer.Simple(0.2, function()
-					self.Owner:SetModel(ent:GetModel())
-					self.Owner:SetSkin(ent:GetSkin())
-				end)
 			end
 		end
 	end

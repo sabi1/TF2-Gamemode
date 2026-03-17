@@ -252,7 +252,11 @@ function meta:UpdateStateParticles(state_override)
 		end
 		
 		for k,v in pairs(PlayerStates) do
-			if v.particle and self:HasPlayerState(k, state_override) then
+			local shouldSpawnPrimary = v.particle and self:HasPlayerState(k, state_override)
+			if shouldSpawnPrimary and v.particlepredicate then
+				shouldSpawnPrimary = v.particlepredicate(v, self, state_override) ~= false
+			end
+			if shouldSpawnPrimary then
 				local f = v.particlenamefunc or DefaultParticleNameFunc
 				local att = v.particleattachment or 0
 				if type(att)=="string" then
@@ -266,7 +270,11 @@ function meta:UpdateStateParticles(state_override)
 					att
 				)
 			end
-			if v.particle2 and self:HasPlayerState(k, state_override) and TF2_IsPyrovisionEnabled(CLIENT and LocalPlayer() or self) then
+			local shouldSpawnSecondary = v.particle2 and self:HasPlayerState(k, state_override) and TF2_IsPyrovisionEnabled(CLIENT and LocalPlayer() or self)
+			if shouldSpawnSecondary and v.particle2predicate then
+				shouldSpawnSecondary = v.particle2predicate(v, self, state_override) ~= false
+			end
+			if shouldSpawnSecondary then
 				local f = v.particlenamefunc or DefaultParticleNameFunc
 				local att = v.particleattachment or 0
 				if type(att)=="string" then
@@ -369,8 +377,19 @@ PlayerStates = {
 		particle = "speed_boost_trail",
 	},
 	[PLAYERSTATE_PUKEDON] = {
+		particle = "gas_can_drips_%s",
 		color = {0,0,-255,0},
 		overlay = "effects/gas_overlay",
+		particlepredicate = function(_, p)
+			if p.InCond then
+				return not (p:InCond(TF_COND_BURNING) or p:InCond(TF_COND_BURNING_PYRO))
+			end
+			return not p:HasPlayerState(PLAYERSTATE_ONFIRE)
+		end,
+		particlenamefunc = function(v, p)
+			local suffix = (p:EntityTeam() == TEAM_BLU or p:EntityTeam() == TF_TEAM_PVE_INVADERS) and "red" or "blue"
+			return string.format(v.particle, suffix)
+		end,
 		proxyvars = {
 			{"Jarated", true},
 			{"YellowLevel", 0.5},
@@ -428,6 +447,8 @@ PrecacheParticleSystem("overhealedplayer_blue_pluses")
 PrecacheParticleSystem("blood_antlionguard_injured_heavy")
 PrecacheParticleSystem("peejar_drips")
 PrecacheParticleSystem("peejar_drips_milk")
+PrecacheParticleSystem("gas_can_drips_red")
+PrecacheParticleSystem("gas_can_drips_blue")
 
 PrecacheParticleSystem("eye_powerup_red_lvl_1")
 PrecacheParticleSystem("eye_powerup_blue_lvl_1")
@@ -1582,6 +1603,11 @@ function meta:OnAddStealthed()
 		self:SetNWBool("Stealthed", true)
 		self:SetNWBool("Cloaked", true)
 	end
+	if SERVER and self:IsPlayer() and self.EmitSound then
+		if not (self.InCond and self:InCond(TF_COND_FEIGN_DEATH)) then
+			self:EmitSound("Player.Spy_Cloak")
+		end
+	end
 	if SERVER and self.SetNoTarget then
 		self:SetNoTarget(true)
 	end
@@ -1603,6 +1629,17 @@ function meta:OnRemoveStealthed()
 	if self.SetNWBool then
 		self:SetNWBool("Stealthed", false)
 		self:SetNWBool("Cloaked", false)
+	end
+	if SERVER and self:IsPlayer() and self.EmitSound then
+		local soundName = "Player.Spy_UnCloak"
+		local invis = self.GetWeapon and self:GetWeapon("tf_weapon_invis") or nil
+		local quiet = IsValid(invis) and invis.GetAttributeValue and (tonumber(invis:GetAttributeValue("set_quiet_unstealth", 0)) or 0) > 0
+		if quiet then
+			soundName = "Player.Spy_UnCloakReduced"
+		elseif IsValid(invis) and invis.HasFeignDeath and invis:HasFeignDeath() then
+			soundName = "Player.Spy_UnCloakFeignDeath"
+		end
+		self:EmitSound(soundName)
 	end
 	if SERVER and self.SetNoTarget then
 		self:SetNoTarget(false)
@@ -2444,7 +2481,24 @@ function meta:OnRemoveImmuneToPushback() set_cond_flag(self, "ImmuneToPushback",
 function meta:OnAddDoNotUse0() end
 function meta:OnRemoveDoNotUse0() end
 
-function meta:OnAddFeignDeath() set_cond_flag(self, "FeignDeath", true) end
+function meta:OnAddFeignDeath()
+	set_cond_flag(self, "FeignDeath", true)
+	if not self:InCond(TF_COND_STEALTHED) then
+		self:AddCond(TF_COND_STEALTHED, PERMANENT_CONDITION or -1, self)
+	end
+	local duration = 3.0
+	local invis = self.GetWeapon and self:GetWeapon("tf_weapon_invis") or nil
+	if IsValid(invis) and invis.GetFeignDeathSpeedDuration then
+		duration = tonumber(invis:GetFeignDeathSpeedDuration()) or duration
+	end
+	if TF_COND_SPEED_BOOST then
+		self:AddCond(TF_COND_SPEED_BOOST, duration, self)
+	end
+	if TF_COND_AFTERBURN_IMMUNE then
+		self:AddCond(TF_COND_AFTERBURN_IMMUNE, duration, self)
+	end
+end
+
 function meta:OnRemoveFeignDeath() set_cond_flag(self, "FeignDeath", false) end
 function meta:OnAddDisguising() set_cond_flag(self, "Disguising", true) end
 function meta:OnRemoveDisguising() set_cond_flag(self, "Disguising", false) end
@@ -2991,13 +3045,16 @@ if SERVER then
 			cmd:RemoveKey(IN_ATTACK)
 			cmd:RemoveKey(IN_ATTACK2)
 			cmd:RemoveKey(IN_RELOAD)
-		elseif pl:GetNWBool("NoWeapon", false) and not allowTauntMotion then
-			cmd:RemoveKey(IN_ATTACK)
-			-- TF2 kart: no weapon use, but keep +attack2 available for kart boost input.
-			if not pl:InCond(TF_COND_HALLOWEEN_KART) then
-				cmd:RemoveKey(IN_ATTACK2)
+		else
+			local allowDisguisedSpyAttack = pl:GetPlayerClass() == "spy" and pl:InCond(TF_COND_DISGUISED)
+			if pl:GetNWBool("NoWeapon", false) and not allowTauntMotion and not allowDisguisedSpyAttack then
+				cmd:RemoveKey(IN_ATTACK)
+				-- TF2 kart: no weapon use, but keep +attack2 available for kart boost input.
+				if not pl:InCond(TF_COND_HALLOWEEN_KART) then
+					cmd:RemoveKey(IN_ATTACK2)
+				end
+				cmd:RemoveKey(IN_RELOAD)
 			end
-			cmd:RemoveKey(IN_RELOAD)
 		end
 	end)
 
@@ -3024,7 +3081,10 @@ if SERVER then
 			end
 		end
 
-		if pl:InCond(TF_COND_MELEE_ONLY) and not is_melee_weapon(newWep) then
+		if pl:InCond(TF_COND_MELEE_ONLY)
+			and not is_melee_weapon(newWep)
+			and not (TF_IsWeaponAllowedInMedievalMode and TF_IsWeaponAllowedInMedievalMode(newWep))
+		then
 			force_select_melee(pl)
 			return true
 		end
@@ -3062,6 +3122,7 @@ if CLIENT then
 	local spyDisguiseModelByEnt = {}
 	local spyDisguiseWeaponModelByEnt = {}
 	local spyDisguiseCosmeticModelsByEnt = {}
+	local spyDisguiseMaskModelByEnt = {}
 	local DispenserScreenTexture = {
 		[0] = surface.GetTextureID("vgui/dispenser_meter_bg_red"),
 		[1] = surface.GetTextureID("vgui/dispenser_meter_bg_blue"),
@@ -3095,6 +3156,18 @@ if CLIENT then
 		sniper = "models/weapons/c_models/c_sniperrifle/c_sniperrifle.mdl",
 		spy = "models/weapons/c_models/c_revolver/c_revolver.mdl",
 	}
+	local DISGUISE_SECONDARY_WEAPON_BY_CLASS = {
+		scout = "models/weapons/c_models/c_pistol/c_pistol.mdl",
+		soldier = "models/weapons/c_models/c_shotgun/c_shotgun.mdl",
+		pyro = "models/weapons/c_models/c_shotgun/c_shotgun.mdl",
+		demo = "models/weapons/w_models/w_grenadelauncher.mdl",
+		demoman = "models/weapons/w_models/w_grenadelauncher.mdl",
+		heavy = "models/weapons/c_models/c_shotgun/c_shotgun.mdl",
+		engineer = "models/weapons/c_models/c_pistol/c_pistol.mdl",
+		medic = "models/weapons/c_models/c_medigun/c_medigun.mdl",
+		sniper = "models/weapons/c_models/c_smg/c_smg.mdl",
+		spy = "models/weapons/c_models/c_revolver/c_revolver.mdl",
+	}
 	local DISGUISE_MELEE_WEAPON_BY_CLASS = {
 		scout = "models/weapons/c_models/c_bat.mdl",
 		soldier = "models/weapons/c_models/c_shovel/c_shovel.mdl",
@@ -3106,6 +3179,19 @@ if CLIENT then
 		medic = "models/weapons/c_models/c_bonesaw/c_bonesaw.mdl",
 		sniper = "models/weapons/c_models/c_machete/c_machete.mdl",
 		spy = "models/weapons/c_models/c_knife/c_knife.mdl",
+	}
+	local SPY_DISGUISE_MASK_MODEL = "models/player/items/spy/fwk_spy_disguisedhat.mdl"
+	local MASK_CLASS_INDEX_BY_NAME = {
+		scout = 1,
+		sniper = 2,
+		soldier = 3,
+		demo = 4,
+		demoman = 4,
+		medic = 5,
+		heavy = 6,
+		pyro = 7,
+		spy = 8,
+		engineer = 9,
 	}
 
 	local function get_disguise_weapon_model_from_weapon(wep)
@@ -3169,16 +3255,30 @@ if CLIENT then
 		return ""
 	end
 
-	local function get_disguise_slot_kind(ply)
+	local function get_disguise_slot_kind(ply, overrideSlot)
+		local forced = tonumber(overrideSlot)
+		if forced == 0 then return "primary" end
+		if forced == 1 then return "secondary" end
+		if forced == 2 then return "melee" end
+		if forced == 3 then return "sapper" end
+
 		local wep = IsValid(ply) and ply:GetActiveWeapon() or nil
 		if not IsValid(wep) then return "primary" end
 		if wep:GetClass() == "tf_weapon_builder" then return "sapper" end
 		if is_melee_weapon(wep) then return "melee" end
+		local slot = tonumber(wep.Slot or (wep.GetSlot and wep:GetSlot()) or -1)
+		if slot == 1 then return "secondary" end
+		if wep.GetItemData then
+			local item = wep:GetItemData()
+			if istable(item) and item.item_slot == "secondary" then
+				return "secondary"
+			end
+		end
 		return "primary"
 	end
 
 	local function resolve_disguise_weapon_model(ply, className)
-		local slotKind = get_disguise_slot_kind(ply)
+		local slotKind = get_disguise_slot_kind(ply, IsValid(ply) and ply:GetNWInt("TFSpyDisguiseWeaponSlotOverride", -1) or -1)
 		if slotKind == "sapper" then
 			local sapperWep = IsValid(ply) and ply:GetActiveWeapon() or nil
 			local sapperModel = get_disguise_weapon_model_from_weapon(sapperWep)
@@ -3193,19 +3293,53 @@ if CLIENT then
 			if slotKind == "melee" then
 				local mdl = find_model_for_slot(target, 2, "melee")
 				if mdl ~= "" then return mdl, slotKind end
+			elseif slotKind == "secondary" then
+				local mdl = find_model_for_slot(target, 1, "secondary")
+				if mdl ~= "" then return mdl, slotKind end
 			else
 				local mdl = find_model_for_slot(target, 0, "primary")
 				if mdl ~= "" then return mdl, slotKind end
 			end
 		end
 
-		local fallback = slotKind == "melee"
-			and DISGUISE_MELEE_WEAPON_BY_CLASS[className]
-			or DISGUISE_PRIMARY_WEAPON_BY_CLASS[className]
+		local fallback
+		if slotKind == "melee" then
+			fallback = DISGUISE_MELEE_WEAPON_BY_CLASS[className]
+		elseif slotKind == "secondary" then
+			fallback = DISGUISE_SECONDARY_WEAPON_BY_CLASS[className] or DISGUISE_PRIMARY_WEAPON_BY_CLASS[className]
+		else
+			fallback = DISGUISE_PRIMARY_WEAPON_BY_CLASS[className]
+		end
 		if isstring(fallback) and fallback ~= "" and util.IsValidModel(fallback) then
 			return fallback, slotKind
 		end
 		return "", slotKind
+	end
+
+	local function resolve_friendly_spy_weapon_model(ply)
+		local slotKind = get_disguise_slot_kind(ply)
+		if slotKind == "sapper" then
+			local sapperWep = IsValid(ply) and ply:GetActiveWeapon() or nil
+			local sapperModel = get_disguise_weapon_model_from_weapon(sapperWep)
+			if sapperModel == "" and IsValid(ply) and ply.GetWeapon then
+				sapperModel = get_disguise_weapon_model_from_weapon(ply:GetWeapon("tf_weapon_builder"))
+			end
+			return sapperModel, slotKind
+		end
+
+		if slotKind == "melee" then
+			local meleeModel = find_model_for_slot(ply, 2, "melee")
+			if meleeModel ~= "" then
+				return meleeModel, slotKind
+			end
+			return DISGUISE_MELEE_WEAPON_BY_CLASS.spy or "", slotKind
+		end
+
+		local primaryModel = find_model_for_slot(ply, 0, "primary")
+		if primaryModel ~= "" then
+			return primaryModel, slotKind
+		end
+		return DISGUISE_PRIMARY_WEAPON_BY_CLASS.spy or "", slotKind
 	end
 
 	local function split_disguise_model_list(raw)
@@ -3242,6 +3376,10 @@ if CLIENT then
 		local wmdl = spyDisguiseWeaponModelByEnt[idx]
 		if IsValid(wmdl) then wmdl:Remove() end
 		spyDisguiseWeaponModelByEnt[idx] = nil
+
+		local mmdl = spyDisguiseMaskModelByEnt[idx]
+		if IsValid(mmdl) then mmdl:Remove() end
+		spyDisguiseMaskModelByEnt[idx] = nil
 
 		local cosmetics = spyDisguiseCosmeticModelsByEnt[idx]
 		if istable(cosmetics) then
@@ -3390,8 +3528,7 @@ if CLIENT then
 		if ply:GetNWBool("Cloaked", false) then return nil end
 
 		local className = string.lower(ply:GetNWString("TFSpyDisguiseClass", ""))
-		local model = DISGUISE_MODEL_BY_CLASS[className]
-		if not isstring(model) or model == "" then return nil end
+		if className == "" then return nil end
 
 		local disguiseTeam = ply:GetNWInt("TFSpyDisguiseTeam", -1)
 		if disguiseTeam < 0 then return nil end
@@ -3400,18 +3537,96 @@ if CLIENT then
 		if not IsValid(lp) then return nil end
 		local forceLocal = GetConVar("tf_debug_spy_disguise_local") and GetConVar("tf_debug_spy_disguise_local"):GetBool() or false
 		if lp == ply and not lp:ShouldDrawLocalPlayer() and not forceLocal then return nil end
-		if lp:Team() ~= disguiseTeam then return nil end
+		local viewerTeam = lp:Team()
+		local ownerTeam = ply:Team()
+		local isEnemyView = (viewerTeam == disguiseTeam)
+		local isFriendlyView = (viewerTeam == ownerTeam)
+		if not isEnemyView and not isFriendlyView then return nil end
 
-		local weaponModel, slotKind = resolve_disguise_weapon_model(ply, className)
+		local model = DISGUISE_MODEL_BY_CLASS[className]
+		local skin = (disguiseTeam == TEAM_BLU or disguiseTeam == TF_TEAM_PVE_INVADERS) and 1 or 0
+		local weaponModel, slotKind
+		local cosmeticModels = {}
+		local maskModel = ""
+		local maskClassIndex = nil
+		if isEnemyView then
+			if not isstring(model) or model == "" then return nil end
+			weaponModel, slotKind = resolve_disguise_weapon_model(ply, className)
+			cosmeticModels = split_disguise_model_list(ply:GetNWString("TFSpyDisguiseFallbackCosmeticModels", ""))
+		else
+			model = DISGUISE_MODEL_BY_CLASS.spy
+			if not isstring(model) or model == "" then return nil end
+			skin = (ownerTeam == TEAM_BLU or ownerTeam == TF_TEAM_PVE_INVADERS) and 1 or 0
+			weaponModel, slotKind = resolve_friendly_spy_weapon_model(ply)
+			if util.IsValidModel(SPY_DISGUISE_MASK_MODEL) then
+				maskModel = SPY_DISGUISE_MASK_MODEL
+				maskClassIndex = MASK_CLASS_INDEX_BY_NAME[className]
+			end
+		end
+
 		local sapperAttackUntil = tonumber(ply:GetNWFloat("TFSpyDisguiseSapperAttackUntil", 0)) or 0
 		return {
 			model = model,
-			skin = (disguiseTeam == TEAM_BLU or disguiseTeam == TF_TEAM_PVE_INVADERS) and 1 or 0,
+			skin = skin,
 			weaponModel = weaponModel,
 			slotKind = slotKind,
 			sapperAttackUntil = sapperAttackUntil,
-			cosmeticModels = split_disguise_model_list(ply:GetNWString("TFSpyDisguiseFallbackCosmeticModels", "")),
+			cosmeticModels = cosmeticModels,
+			maskModel = maskModel,
+			maskClassIndex = maskClassIndex,
 		}
+	end
+
+	local DISGUISE_STAND_ACTIVITY_BY_SLOT = {
+		primary = ACT_MP_STAND_PRIMARY,
+		secondary = ACT_MP_STAND_SECONDARY,
+		melee = ACT_MP_STAND_MELEE,
+		sapper = ACT_MP_STAND_ITEM2,
+	}
+
+	local function apply_disguise_activity_sequence(mdl, ply, slotKind, forceSapperPose, sapperAttackUntil)
+		if not IsValid(mdl) or not IsValid(ply) then return end
+
+		if forceSapperPose then
+			local attack = CurTime() < (sapperAttackUntil or 0)
+			local act = attack and ACT_MP_ATTACK_STAND_ITEM2 or ACT_MP_STAND_ITEM2
+			local seq = mdl:SelectWeightedSequence(act)
+			if seq and seq >= 0 then
+				mdl:SetSequence(seq)
+				mdl:SetPlaybackRate(1)
+				mdl:SetCycle(attack and ply:GetCycle() or 0)
+				return
+			end
+		end
+
+		-- 1:1 parity direction: resolve by shared ACT first, never by raw sequence index across different models.
+		local sourceSeq = ply:GetSequence()
+		local srcAct = (ply.GetSequenceActivity and ply:GetSequenceActivity(sourceSeq)) or -1
+		if srcAct and srcAct >= 0 then
+			local seq = mdl:SelectWeightedSequence(srcAct)
+			if seq and seq >= 0 then
+				mdl:SetSequence(seq)
+				mdl:SetCycle(ply:GetCycle())
+				mdl:SetPlaybackRate(ply:GetPlaybackRate())
+				return
+			end
+		end
+
+		local standAct = DISGUISE_STAND_ACTIVITY_BY_SLOT[slotKind] or ACT_MP_STAND_PRIMARY
+		local standSeq = mdl:SelectWeightedSequence(standAct)
+		if standSeq and standSeq >= 0 then
+			mdl:SetSequence(standSeq)
+			mdl:SetCycle(0)
+			mdl:SetPlaybackRate(1)
+			return
+		end
+
+		local fallback = mdl:LookupSequence("idle")
+		if fallback and fallback >= 0 then
+			mdl:SetSequence(fallback)
+			mdl:SetCycle(0)
+			mdl:SetPlaybackRate(1)
+		end
 	end
 
 	function TF_ShouldHideOwnerWearablesForViewer(owner, viewer)
@@ -3424,7 +3639,10 @@ if CLIENT then
 		if not owner:GetNWBool("Disguised", false) then return false end
 		if owner:GetNWBool("Cloaked", false) then return false end
 		if owner:InCond(TF_COND_DISGUISED_AS_DISPENSER) then return false end
-		return viewer:Team() == disguiseTeam
+		local viewerTeam = viewer:Team()
+		if viewerTeam == disguiseTeam then return true end
+		if viewerTeam == owner:Team() then return true end
+		return false
 	end
 
 	hook.Add("PrePlayerDraw", "TFCondDispenserDisguiseDraw", function(ply)
@@ -3477,24 +3695,7 @@ if CLIENT then
 		mdl:SetAngles(ply:GetAngles())
 		mdl:SetSkin(info.skin)
 		local forceSapperPose = info.slotKind == "sapper"
-		if forceSapperPose then
-			local attack = CurTime() < (info.sapperAttackUntil or 0)
-			local act = attack and ACT_MP_ATTACK_STAND_ITEM2 or ACT_MP_STAND_ITEM2
-			local seq = mdl:SelectWeightedSequence(act)
-			if seq and seq >= 0 then
-				mdl:SetSequence(seq)
-				mdl:SetPlaybackRate(1)
-				mdl:SetCycle(attack and ply:GetCycle() or 0)
-			else
-				mdl:SetSequence(ply:GetSequence())
-				mdl:SetCycle(ply:GetCycle())
-				mdl:SetPlaybackRate(ply:GetPlaybackRate())
-			end
-		else
-			mdl:SetSequence(ply:GetSequence())
-			mdl:SetCycle(ply:GetCycle())
-			mdl:SetPlaybackRate(ply:GetPlaybackRate())
-		end
+		apply_disguise_activity_sequence(mdl, ply, info.slotKind, forceSapperPose, info.sapperAttackUntil)
 		mdl:SetupBones()
 		mdl:DrawModel()
 
@@ -3557,6 +3758,36 @@ if CLIENT then
 			cosmeticModels[i] = nil
 		end
 
+		local maskModel = (isstring(info.maskModel) and util.IsValidModel(info.maskModel)) and info.maskModel or ""
+		if maskModel ~= "" then
+			local mmdl = spyDisguiseMaskModelByEnt[idx]
+			if not IsValid(mmdl) then
+				mmdl = ClientsideModel(maskModel, RENDERGROUP_OPAQUE)
+				if IsValid(mmdl) then
+					mmdl:SetNoDraw(true)
+					mmdl:SetParent(mdl)
+					mmdl:AddEffects(bit.bor(EF_BONEMERGE, EF_BONEMERGE_FASTCULL))
+					spyDisguiseMaskModelByEnt[idx] = mmdl
+				end
+			elseif mmdl:GetModel() ~= maskModel then
+				mmdl:SetModel(maskModel)
+			end
+			mmdl = spyDisguiseMaskModelByEnt[idx]
+			if IsValid(mmdl) then
+				local classGroup = mmdl:FindBodygroupByName("class")
+				if classGroup and classGroup >= 0 and info.maskClassIndex then
+					mmdl:SetBodygroup(classGroup, math.max(0, tonumber(info.maskClassIndex) or 0))
+				end
+				mmdl:SetSkin(info.skin)
+				mmdl:SetupBones()
+				mmdl:DrawModel()
+			end
+		else
+			local staleMask = spyDisguiseMaskModelByEnt[idx]
+			if IsValid(staleMask) then staleMask:Remove() end
+			spyDisguiseMaskModelByEnt[idx] = nil
+		end
+
 		return true
 	end)
 
@@ -3579,6 +3810,9 @@ if CLIENT then
 		for _, mdl in pairs(spyDisguiseWeaponModelByEnt) do
 			if IsValid(mdl) then mdl:Remove() end
 		end
+		for _, mdl in pairs(spyDisguiseMaskModelByEnt) do
+			if IsValid(mdl) then mdl:Remove() end
+		end
 		for _, t in pairs(spyDisguiseCosmeticModelsByEnt) do
 			if istable(t) then
 				for _, mdl in ipairs(t) do
@@ -3588,6 +3822,7 @@ if CLIENT then
 		end
 		spyDisguiseModelByEnt = {}
 		spyDisguiseWeaponModelByEnt = {}
+		spyDisguiseMaskModelByEnt = {}
 		spyDisguiseCosmeticModelsByEnt = {}
 	end)
 end

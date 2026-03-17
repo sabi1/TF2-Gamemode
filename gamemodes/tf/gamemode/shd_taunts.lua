@@ -2008,7 +2008,8 @@ concommand.Add("tf_taunt", function(ply,cmd,args)
 			return
 		end
 	end
-	ply:TFTaunt(args and args[1])
+	if not ply.TFTaunt then return end
+	ply:TFTaunt(args)
 end)
 local function getTauntItemByID(itemId)
 	local defindex = tonumber(itemId)
@@ -2679,7 +2680,8 @@ concommand.Add("tf_taunt_item", function(ply, cmd, args)
 		end
 	end
 
-	ply:TFTaunt(slot and tostring(slot) or nil)
+	if not ply.TFTaunt then return end
+	ply:TFTaunt({slot and tostring(slot) or nil})
 end)
 local function StartTokenTaunt(ply, rawToken)
 	if not IsValid(ply) or not ply:IsPlayer() then return false end
@@ -3030,19 +3032,19 @@ concommand.Add("tf_taunt_drg_spawn", function(ply)
 		ply:SetFOV(0, 0.3)
 		for k,v in ipairs(ents.FindByClass("info_player_teamspawn")) do
 			if ply:Team() == TEAM_BLU then
-				if v:GetKeyValues()["TeamNum"] == 3 then
+				if v.IsAvailableForTeam and v:IsAvailableForTeam(TEAM_BLU, false) then
 					ply:SetPos(v:GetPos())
 				end
 			elseif ply:Team() == TEAM_RED then
-				if v:GetKeyValues()["TeamNum"] == 2 then
+				if v.IsAvailableForTeam and v:IsAvailableForTeam(TEAM_RED, false) then
 					ply:SetPos(v:GetPos())
 				end
 			elseif ply:Team() == TEAM_NEUTRAL then
-				if v:GetKeyValues()["TeamNum"] == 2 then
+				if v.IsAvailableForTeam and v:IsAvailableForTeam(TEAM_RED, false) then
 					ply:SetPos(v:GetPos())
 				end
 			else
-				if v:GetKeyValues()["TeamNum"] == 3 then
+				if v.IsAvailableForTeam and v:IsAvailableForTeam(TEAM_BLU, false) then
 					ply:SetPos(v:GetPos())
 				end
 			end

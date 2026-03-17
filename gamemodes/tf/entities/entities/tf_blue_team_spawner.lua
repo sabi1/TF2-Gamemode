@@ -165,12 +165,10 @@ function ENT:Initialize()
 	if SERVER then
 		self:EmitSound("MVM.Robot_Engineer_Spawn")
 		for k, v in pairs(ents.FindByClass("info_player_teamspawn")) do
-			if v:GetKeyValues()["StartDisabled"] == 0 then
-				if v:GetKeyValues()["TeamNum"] == 3 then
-					table.insert(self.spawnsblu, v)
-				elseif v:GetKeyValues()["TeamNum"] == 2 then
-					table.insert(self.spawnsred, v)
-				end
+			if v.IsAvailableForTeam and v:IsAvailableForTeam(TEAM_BLU, false) then
+				table.insert(self.spawnsblu, v)
+			elseif v.IsAvailableForTeam and v:IsAvailableForTeam(TEAM_RED, false) then
+				table.insert(self.spawnsred, v)
 			end
 		end
 	end

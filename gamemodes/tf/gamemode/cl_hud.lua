@@ -77,6 +77,7 @@ local VGUIFiles = {
 	"hud_objectiveflagpanel";
 	"hud_objectiveflagpanel_blue";
 	"hud_objectivebombpanel";
+	"hud_passtime";
 	"hud_payloadpanel";
 	
 	"hud_demomanpipes";
@@ -207,7 +208,10 @@ end
 
 -- Using concommands to make sure weapon selection is done properly in demos
 
+local TFCanDrawWeaponSelection
+
 concommand.Add("tf_selectslot", function(pl, cmd, args)
+	if not TFCanDrawWeaponSelection(pl) then return end
 	GAMEMODE:ShowWeaponSelection()
 	local fastSwitch = GetConVar("tf_fastweaponswitch")
 	if not (fastSwitch and fastSwitch:GetBool()) then
@@ -226,12 +230,56 @@ local function TFShouldFastSwitch()
 	return cvar and cvar:GetBool()
 end
 
+local SELECTION_TIMEOUT_THRESHOLD = 2.5
+local SELECTION_FADEOUT_TIME = 3.0
+local FASTSWITCH_DISPLAY_TIMEOUT = 0.5
+local FASTSWITCH_FADEOUT_TIME = 0.5
+
+function TFCanDrawWeaponSelection(pl)
+	if not IsValid(pl) or not pl:Alive() or pl:Team() == TEAM_SPECTATOR then
+		return false
+	end
+
+	if TF_PlayerHasPasstimeBall and TF_PlayerHasPasstimeBall(pl) then
+		return false
+	end
+
+	if pl.InCond then
+		local allowTauntMotion = pl:GetNWBool("TauntingMoped", false) or pl:GetNWBool("TauntingSchemaMove", false)
+		if pl:InCond(TF_COND_FREEZE_INPUT) or (pl:InCond(TF_COND_TAUNTING) and not allowTauntMotion) then
+			return false
+		end
+
+		if TF_COND_HALLOWEEN_GHOST_MODE and pl:InCond(TF_COND_HALLOWEEN_GHOST_MODE) then
+			return false
+		end
+	end
+
+	if pl:GetNWBool("NoWeapon", false) then
+		local allowDisguisedSpyAttack = pl.GetPlayerClass and pl:GetPlayerClass() == "spy" and pl.InCond and pl:InCond(TF_COND_DISGUISED)
+		if not allowDisguisedSpyAttack then
+			return false
+		end
+	end
+
+	return true
+end
+
+local function TFGetWeaponSelectionHideDelay()
+	if TFShouldFastSwitch() then
+		return FASTSWITCH_DISPLAY_TIMEOUT + FASTSWITCH_FADEOUT_TIME
+	end
+
+	return SELECTION_TIMEOUT_THRESHOLD + SELECTION_FADEOUT_TIME
+end
+
 local function TFAttemptFastSwitch(slot)
 	if not TFShouldFastSwitch() then return end
 
 	-- Defer by one tick so hud selection state is fully updated first.
 	timer.Simple(0, function()
 		if not IsValid(HudWeaponSelection) then return end
+		if not TFCanDrawWeaponSelection(LocalPlayer()) then return end
 		if slot then
 			HudWeaponSelection:Select(slot)
 		end
@@ -267,6 +315,14 @@ function GM:PlayerBindPress(pl, cmd, down)
 		return true
 	end
 
+	if down and string.find(bind, "^%+attack3") then
+		if TF_IsPasstimeMap and TF_IsPasstimeMap() and not (TF_PlayerHasPasstimeBall and TF_PlayerHasPasstimeBall(pl)) then
+			net.Start("TFPasstimeAskForBall")
+			net.SendToServer()
+			return true
+		end
+	end
+
 	if ( string.find( cmd, "gmod_undo" ) ) then return true end 
 	if TFIsHL2Player(pl) or hud_defaultweaponselect:GetBool() or hl2hudtf:GetBool() or GetConVar("hud_fastswitch"):GetBool() then return end
 	if not down then return end
@@ -286,7 +342,7 @@ function GM:PlayerBindPress(pl, cmd, down)
 	
 	local n = tonumber(string.match(cmd, "slot(%d+)"))
 	if n then
-		if not pl:Alive() then return true end
+		if not self:ShouldDrawWeaponSelection() then return true end
 		
 		if not HudWeaponSelection.NumSlots then
 			self:InitWeaponSelection(pl:GetPlayerClass())
@@ -308,7 +364,7 @@ function GM:PlayerBindPress(pl, cmd, down)
 	end
 	
 	if string.find(cmd, "^invnext") then
-		if not pl:Alive() then return true end
+		if not self:ShouldDrawWeaponSelection() then return true end
 		
 		if not HudWeaponSelection.NumSlots then
 			self:InitWeaponSelection(pl:GetPlayerClass())
@@ -329,7 +385,7 @@ function GM:PlayerBindPress(pl, cmd, down)
 		TFAttemptFastSwitch(n)
 		return true
 	elseif string.find(cmd, "^invprev") then
-		if not pl:Alive() then return true end
+		if not self:ShouldDrawWeaponSelection() then return true end
 		
 		if not HudWeaponSelection.NumSlots then
 			self:InitWeaponSelection(pl:GetPlayerClass())
@@ -350,7 +406,7 @@ function GM:PlayerBindPress(pl, cmd, down)
 		TFAttemptFastSwitch(n)
 		return true
 	elseif HudWeaponSelection:IsVisible() and string.find(cmd, "^+attack") then
-		if not pl:Alive() then return true end
+		if not self:ShouldDrawWeaponSelection() then return true end
 		
 		if HudWeaponSelection:CanSelectWeapon() then
 			RunConsoleCommand("tf_useweapon", HudWeaponSelection:CurrentWeapon())
@@ -363,11 +419,20 @@ function GM:GetCurrentWeaponSlot()
 	return HudWeaponSelection:CalcCurrentWeaponSlot()
 end
 
+function GM:ShouldDrawWeaponSelection()
+	return TFCanDrawWeaponSelection(LocalPlayer())
+end
+
 function GM:ShowWeaponSelection()
+	if not self:ShouldDrawWeaponSelection() then
+		self:HideWeaponSelection()
+		return
+	end
+
 	if not HudWeaponSelection:IsVisible() then
 		HudWeaponSelection:SetVisible(true)
 	end
-	HudWeaponSelection.NextHide = CurTime() + 2
+	HudWeaponSelection.NextHide = CurTime() + TFGetWeaponSelectionHideDelay()
 end
 
 function GM:HideWeaponSelection()
@@ -378,6 +443,11 @@ function GM:HideWeaponSelection()
 end
 
 function GM:WeaponSelectionThink()
+	if not self:ShouldDrawWeaponSelection() then
+		self:HideWeaponSelection()
+		return
+	end
+
 	if HudWeaponSelection.NextHide and CurTime()>HudWeaponSelection.NextHide then
 		self:HideWeaponSelection()
 	end

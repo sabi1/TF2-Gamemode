@@ -36,7 +36,7 @@ function ENT:PlayerTouched(pl)
 	self:EmitSound("Christmas.GiftPickup", 100, 100)
 	self:Hide()
 	if pl:IsPlayer() then
-		GAMEMODE:GiveAmmoPercent(pl, a)
+		GAMEMODE:GiveAmmoPercent(pl, a, nil, true)
 	end
 end
 

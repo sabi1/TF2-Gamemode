@@ -45,18 +45,27 @@ local TimeRemainingToOutputMVM = {
 function ENT:Initialize()
 end
 
+function ENT:ReloadProperties()
+	local props = self.Properties or {}
+
+	self.StartPaused = (tonumber(props.start_paused or 0) == 1)
+	self.SetupLength = tonumber(props.setup_length) or 0
+	self.TimerLength = tonumber(props.timer_length) or 0
+	self.MaxLength = tonumber(props.max_length) or 0
+	self.AutoCountdown = (tonumber(props.auto_countdown or 0) == 1)
+	self.ShowInHUD = (tonumber(props.show_in_hud or 0) == 1)
+	self.ResetTimeOnRoundRestart = (tonumber(props.reset_time or 0) == 1)
+
+	if self.MaxLength == 0 then
+		self.MaxLength = math.huge
+	end
+end
+
 function ENT:InitPostEntity()
 	--print(self)
 	PrintTable(self.Properties or {})
-	
-	self.StartPaused = (self.Properties.start_paused == 1)
-	self.SetupLength = self.Properties.setup_length or 0
-	self.TimerLength = self.Properties.timer_length
-	self.MaxLength = self.Properties.max_length or 0
-	self.AutoCountdown = (self.Properties.auto_countdown == 1)
-	self.ShowInHUD = (self.Properties.show_in_hud == 1)
-	
-	if self.MaxLength == 0 then self.MaxLength = math.huge end
+
+	self:ReloadProperties()
 	
 	if self.ShowInHUD then
 		GAMEMODE.CurrentHUDTimer = self
@@ -77,6 +86,7 @@ function ENT:RestartTimer(endsetup)
 			self:SetAndResumeTimer(self.SetupLength, true)
 		end
 		self:TriggerOutput("OnSetupStart",self)
+		hook.Run("TF_PreRoundStarted", self)
 	else
 		
 		timer.Simple(1, function()
@@ -111,6 +121,12 @@ function ENT:RestartTimer(endsetup)
 				end
 			end
 			self:TriggerOutput("OnRoundStart",self)
+			hook.Run("TF_RoundStarted", self)
+			for _, master in ipairs(ents.FindByClass("team_control_point_master")) do
+				if IsValid(master) and master.AcceptInput then
+					master:AcceptInput("RoundStart", self, self, "")
+				end
+			end
 			self:TriggerOutput("OnSetupFinished",self)
 		end)
 	end
@@ -128,6 +144,7 @@ function ENT:RestartTimer2(endsetup)
 			self:SetAndResumeTimer(self.SetupLength, true)
 		end
 		self:TriggerOutput("OnSetupStart")
+		hook.Run("TF_PreRoundStarted", self)
 	else
 		
 		self.IsSetupPhase = false
@@ -155,6 +172,12 @@ function ENT:RestartTimer2(endsetup)
 				end
 			end
 			self:TriggerOutput("OnRoundStart",self)
+			hook.Run("TF_RoundStarted", self)
+			for _, master in ipairs(ents.FindByClass("team_control_point_master")) do
+				if IsValid(master) and master.AcceptInput then
+					master:AcceptInput("RoundStart", self, self, "")
+				end
+			end
 			self:TriggerOutput("OnSetupFinished",self)
 		
 	end
@@ -253,6 +276,87 @@ function ENT:SetAndPauseTimer(sec, setmax)
 			umsg.Float(sec)
 			umsg.Float((setmax and sec) or 0)
 			umsg.Bool(self.IsSetupPhase)
+		umsg.End()
+	end
+end
+
+function ENT:GetHUDTimerMax()
+	if self.IsSetupPhase then
+		local setupLength = tonumber(self.SetupLength) or 0
+		if setupLength > 0 then
+			return setupLength
+		end
+	end
+
+	local timerLength = tonumber(self.TimerLength) or 0
+	if timerLength > 0 then
+		return timerLength
+	end
+
+	local maxLength = tonumber(self.MaxLength)
+	if maxLength and maxLength > 0 and maxLength < math.huge then
+		return maxLength
+	end
+
+	return tonumber(self:GetTime()) or 0
+end
+
+function ENT:SyncHUDTimerState(recipient)
+	if GAMEMODE.CurrentHUDTimer ~= self then return end
+
+	local timeLeft = tonumber(self:GetTime()) or 0
+	local maxTime = tonumber(self:GetHUDTimerMax()) or 0
+
+	if self.WaitingForPlayers then
+		umsg.Start("TF_SetAndResumeTimerWaiting", recipient)
+			umsg.Float(timeLeft)
+			umsg.Float(maxTime)
+			umsg.Bool(true)
+		umsg.End()
+		return
+	end
+
+	if self.TimerPaused ~= nil then
+		umsg.Start("TF_SetAndPauseTimer", recipient)
+			umsg.Float(timeLeft)
+			umsg.Float(maxTime)
+			umsg.Bool(self.IsSetupPhase and true or false)
+		umsg.End()
+		return
+	end
+
+	umsg.Start("TF_SetAndResumeTimer", recipient)
+		umsg.Float(timeLeft)
+		umsg.Float(maxTime)
+		umsg.Bool(self.IsSetupPhase and true or false)
+	umsg.End()
+end
+
+function ENT:SetShowInHUD(enabled, recipient)
+	self.ShowInHUD = enabled and true or false
+
+	if self.ShowInHUD then
+		GAMEMODE.CurrentHUDTimer = self
+		self:SyncHUDTimerState(recipient)
+		return
+	end
+
+	if GAMEMODE.CurrentHUDTimer ~= self then
+		return
+	end
+
+	GAMEMODE.CurrentHUDTimer = nil
+	for _, v in pairs(ents.FindByClass("team_round_timer")) do
+		if v ~= self and IsValid(v) and v.ShowInHUD then
+			GAMEMODE.CurrentHUDTimer = v
+			break
+		end
+	end
+
+	if IsValid(GAMEMODE.CurrentHUDTimer) and GAMEMODE.CurrentHUDTimer.SyncHUDTimerState then
+		GAMEMODE.CurrentHUDTimer:SyncHUDTimerState(recipient)
+	else
+		umsg.Start("TF_RemoveTimer", recipient)
 		umsg.End()
 	end
 end
@@ -512,21 +616,19 @@ function ENT:Input_Restart(activator, caller, data)
 	self:RestartTimer()
 end
 
+function ENT:Input_RoundSpawn()
+	self:ReloadProperties()
+
+	if self.ResetTimeOnRoundRestart or not self.TimerReference then
+		self:RestartTimer()
+	end
+end
+
 function ENT:Input_ShowInHUD(activator, caller, data)
 	if tonumber(data)==1 then
-		self.ShowInHUD = true
-		GAMEMODE.CurrentHUDTimer = self
+		self:SetShowInHUD(true)
 	else
-		self.ShowInHUD = false
-		if GAMEMODE.CurrentHUDTimer == self then
-			GAMEMODE.CurrentHUDTimer = nil
-			for _,v in pairs(ents.FindByClass("team_round_timer")) do
-				if v.ShowInHUD then
-					GAMEMODE.CurrentHUDTimer = v
-					break
-				end
-			end
-		end
+		self:SetShowInHUD(false)
 	end
 end
 
@@ -544,9 +646,7 @@ end
 
 function ENT:OnRemove()
 	self:BroadcastKothTimerRemoved()
-
-	umsg.Start("TF_RemoveTimer")
-	umsg.End()
+	self:SetShowInHUD(false)
 end
 
 function ENT:GetKothTimerTeam()
@@ -611,21 +711,38 @@ local function SyncKothTimersToPlayer(ply)
 	end
 end
 
+local function SyncRoundTimerToPlayer(ply)
+	if not IsValid(ply) or not ply:IsPlayer() then return end
+	if string.StartWith(string.lower(game.GetMap() or ""), "koth_") then return end
+
+	local timerEnt = GAMEMODE.CurrentHUDTimer
+	if IsValid(timerEnt) and timerEnt.SyncHUDTimerState then
+		timerEnt:SyncHUDTimerState(ply)
+		return
+	end
+
+	umsg.Start("TF_RemoveTimer", ply)
+	umsg.End()
+end
+
 hook.Add("PlayerInitialSpawn", "TF_KothTimerSync_InitialSpawn", function(ply)
 	timer.Simple(1.0, function()
 		SyncKothTimersToPlayer(ply)
+		SyncRoundTimerToPlayer(ply)
 	end)
 end)
 
 hook.Add("PlayerSpawn", "TF_KothTimerSync_Spawn", function(ply)
 	timer.Simple(0.25, function()
 		SyncKothTimersToPlayer(ply)
+		SyncRoundTimerToPlayer(ply)
 	end)
 end)
 
 hook.Add("OnPlayerChangedTeam", "TF_KothTimerSync_TeamChange", function(ply)
 	timer.Simple(0.25, function()
 		SyncKothTimersToPlayer(ply)
+		SyncRoundTimerToPlayer(ply)
 	end)
 end)
 function ENT:Input_AutoCountdown(activator, caller, data)

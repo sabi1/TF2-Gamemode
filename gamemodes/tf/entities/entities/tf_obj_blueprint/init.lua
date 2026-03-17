@@ -27,6 +27,64 @@ local function ShouldBuildDisposableSentry(ply)
 	return regular >= 1 and disposable < limit
 end
 
+local function IsOwnedEngineerBuilding(ent, ply)
+	if not IsValid(ent) or not IsValid(ply) then return false end
+	return ent:GetOwner() == ply or ent:GetBuilder() == ply or ent.Player == ply
+end
+
+local function CanPlaceEngineerObject(ply, className, mode)
+	if isfunction(TF_CanPlayerBuildObject) then
+		local groupByClass = {
+			obj_dispenser = 0,
+			obj_teleporter = 1,
+			obj_sentrygun = 2,
+		}
+		local group = groupByClass[className]
+		if group ~= nil then
+			return TF_CanPlayerBuildObject(ply, group, mode, false)
+		end
+	end
+
+	if not IsValid(ply) then return false end
+	mode = tonumber(mode) or 0
+	local cvUnlimited = GetConVar("tf_unlimited_buildings")
+	if cvUnlimited and cvUnlimited:GetBool() then
+		return true
+	end
+
+	if className == "obj_dispenser" then
+		for _, ent in ipairs(ents.FindByClass("obj_dispenser")) do
+			if IsOwnedEngineerBuilding(ent, ply) then
+				return false
+			end
+		end
+		return true
+	end
+
+	if className == "obj_teleporter" then
+		for _, ent in ipairs(ents.FindByClass("obj_teleporter")) do
+			if not IsOwnedEngineerBuilding(ent, ply) then continue end
+			if mode == 0 and ent.IsEntrance and ent:IsEntrance() then
+				return false
+			end
+			if mode == 1 and ent.IsExit and ent:IsExit() then
+				return false
+			end
+		end
+		return true
+	end
+
+	if className == "obj_sentrygun" then
+		local regular, _ = CountOwnedSentries(ply)
+		if regular < 1 then
+			return true
+		end
+		return ShouldBuildDisposableSentry(ply)
+	end
+
+	return true
+end
+
 function ENT:Initialize()
 	local owner = self:GetOwner()
 	if not IsValid(owner) then
@@ -92,6 +150,12 @@ function ENT:Build()
 	
 	local obj = self:GetOwner():GetBuilding()
 	if not obj then return end
+	if not CanPlaceEngineerObject(self.Player, obj.class_name, self:GetOwner():GetBuildMode()) then
+		if IsValid(self.Player) then
+			self.Player:EmitSound("Player.DenyWeaponSelection")
+		end
+		return false
+	end
 	local buildDisposableSentry = obj.class_name == "obj_sentrygun" and ShouldBuildDisposableSentry(self.Player)
 	
 	local ent = ents.Create(obj.class_name)   

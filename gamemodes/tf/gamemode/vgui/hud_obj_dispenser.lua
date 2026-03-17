@@ -25,23 +25,30 @@ function PANEL:PaintActive()
 	surface.DrawRect(72*Scale, 6*Scale, 38*Scale, 8*Scale)
 	surface.DrawRect(72*Scale, 17*Scale, 38*Scale, 8*Scale)
 	
-	progress = math.Clamp(tonumber(self.TargetEntity:GetAmmoPercentage() or 0) or 0, 0, 1)
-	if progress > 0 then
+	-- Dispenser stored metal (separate from building upgrade metal).
+	local maxMetal = tonumber(self.TargetEntity.MaxMetal) or 400
+	local storedMetal = 0
+	if self.TargetEntity.GetMetalAmount then
+		storedMetal = tonumber(self.TargetEntity:GetMetalAmount() or 0) or 0
+	end
+	local storedProgress = math.Clamp(storedMetal / maxMetal, 0, 1)
+	if storedProgress > 0 then
 		surface.SetDrawColor(Colors.Yellow)
-		surface.DrawRect(72*Scale, 6*Scale, 38*Scale*progress, 8*Scale)
+		surface.DrawRect(72*Scale, 6*Scale, 38*Scale*storedProgress, 8*Scale)
 	end
 	
-	local maxMetal = tonumber(self.TargetEntity.MaxMetal) or 400
-	local metal = 0
-	if self.TargetEntity.GetMetalAmount then
-		metal = tonumber(self.TargetEntity:GetMetalAmount() or 0) or 0
-	else
-		metal = tonumber(self.TargetEntity:GetMetal() or 0) or 0
+	-- Building upgrade progress.
+	local upgradeCost = tonumber(self.TargetEntity.UpgradeCost) or 200
+	local upgradeMetal = tonumber(self.TargetEntity:GetMetal() or 0) or 0
+	local upgradeProgress = 0
+	if level >= (tonumber(self.TargetEntity.NumLevels) or 3) then
+		upgradeProgress = 1
+	elseif upgradeCost > 0 then
+		upgradeProgress = math.Clamp(upgradeMetal / upgradeCost, 0, 1)
 	end
-	progress = math.Clamp(metal / maxMetal, 0, 1)
-	if progress > 0 then
+	if upgradeProgress > 0 then
 		surface.SetDrawColor(Colors.Yellow)
-		surface.DrawRect(72*Scale, 17*Scale, 38*Scale*progress, 8*Scale)
+		surface.DrawRect(72*Scale, 17*Scale, 38*Scale*upgradeProgress, 8*Scale)
 	end
 	
 	surface.SetDrawColor(Colors.ProgressOffWhite)

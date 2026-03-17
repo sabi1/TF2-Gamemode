@@ -143,6 +143,7 @@ end
 
 function ENT:Initialize()
 	self.Properties = self.Properties or {}
+	self.Disabled = false
 	self.Occupants = {}
 	self.PostEntityDone = false
 	self.PayloadWatcher = NULL
@@ -410,6 +411,7 @@ function ENT:CleanupPayloadTrainHurts()
 end
 
 function ENT:InitPostEntity()
+	self.Disabled = ToBool(self.Properties.startdisabled, false)
 	self.CapturePoint = ResolveEntByName(self.Properties.area_cap_point or "")
 
 	if IsValid(self.CapturePoint) then
@@ -567,6 +569,7 @@ function ENT:BroadcastHudCapState(force)
 end
 
 function ENT:StartControlPointCapture(ply)
+	if self.Disabled then return end
 	if not IsValid(self.CapturePoint) then return end
 	local pointID = GetControlPointID(self.CapturePoint)
 	if pointID == nil then return end
@@ -623,7 +626,7 @@ function ENT:StartControlPointCapture(ply)
 					return
 				end
 
-				self.CapturePoint:SetOwnerTeam(captureTeam)
+				self.CapturePoint:SetOwnerTeam(captureTeam, ply, true)
 				self.CappingTeam = nil
 				self.CaptureStartedAt = nil
 				self.CaptureEndsAt = nil
@@ -632,6 +635,12 @@ function ENT:StartControlPointCapture(ply)
 				self.DecayStartProgress = 0
 				self.CapturePoint:StopSound("ControlPoint.Move")
 				self.CapturePoint:EmitSound("ControlPoint.Stop")
+				self:TriggerOutput("OnCapture", ply, self.CapturePoint)
+				if captureTeam == 2 then
+					self:TriggerOutput("OnCapTeam1", ply, self.CapturePoint)
+				elseif captureTeam == 3 then
+					self:TriggerOutput("OnCapTeam2", ply, self.CapturePoint)
+				end
 				self:RefreshControlPointLocks()
 				self:BroadcastHudCapState(true)
 			end)
@@ -646,6 +655,7 @@ function ENT:StartControlPointCapture(ply)
 end
 
 function ENT:EndControlPointCapture(ply)
+	if self.Disabled then return end
 	if not IsValid(self.CapturePoint) then return end
 	local pointID = GetControlPointID(self.CapturePoint)
 	if pointID == nil or ply.CurrentControlPoint ~= pointID then return end
@@ -690,6 +700,60 @@ function ENT:EndControlPointCapture(ply)
 		end)
 	end
 
+	self:BroadcastHudCapState(true)
+end
+
+function ENT:Input_Enable()
+	self.Disabled = false
+end
+
+function ENT:Input_Disable()
+	self.Disabled = true
+	self.Occupants = {}
+	self:AbortControlPointCaptureForTruce()
+	if self:IsPayloadMode() then
+		self:UpdatePayloadCapperState()
+	end
+end
+
+function ENT:Input_CaptureCurrentCP(_, _, data)
+	if self.Disabled then return end
+	if not IsValid(self.CapturePoint) or not self.CappingTeam then return end
+
+	local ownerTeam = GetControlPointOwnerTeam(self.CapturePoint)
+	local captureTeam = tonumber(self.CappingTeam)
+	if not captureTeam or captureTeam == ownerTeam then return end
+	if not TeamCanCapturePoint(self, captureTeam) then return end
+
+	local activator = NULL
+	for ply in pairs(self.Occupants or {}) do
+		if IsValid(ply) and ply:IsPlayer() and GetPlayerControlPointTeam(ply) == captureTeam then
+			activator = ply
+			break
+		end
+	end
+
+	local pointID = GetControlPointID(self.CapturePoint)
+	if pointID ~= nil then
+		timer.Stop("CapPoint" .. tostring(pointID))
+	end
+
+	self.CapturePoint:SetOwnerTeam(captureTeam, activator, true)
+	self.CappingTeam = nil
+	self.CaptureStartedAt = nil
+	self.CaptureEndsAt = nil
+	self.CaptureBaseProgress = 0
+	self.DecayStartedAt = nil
+	self.DecayStartProgress = 0
+	self.CapturePoint:StopSound("ControlPoint.Move")
+	self.CapturePoint:EmitSound("ControlPoint.Stop")
+	self:TriggerOutput("OnCapture", activator, self.CapturePoint)
+	if captureTeam == 2 then
+		self:TriggerOutput("OnCapTeam1", activator, self.CapturePoint)
+	elseif captureTeam == 3 then
+		self:TriggerOutput("OnCapTeam2", activator, self.CapturePoint)
+	end
+	self:RefreshControlPointLocks()
 	self:BroadcastHudCapState(true)
 end
 
@@ -798,6 +862,7 @@ function ENT:AcceptInput(name, activator, caller, data)
 end
 
 function ENT:StartTouch(ent)
+	if self.Disabled then return end
 	if not (IsValid(ent) and ent:IsPlayer()) then return end
 	self.Occupants[ent] = true
 
@@ -810,6 +875,7 @@ function ENT:StartTouch(ent)
 end
 
 function ENT:EndTouch(ent)
+	if self.Disabled then return end
 	if not (IsValid(ent) and ent:IsPlayer()) then return end
 	self.Occupants[ent] = nil
 

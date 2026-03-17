@@ -872,7 +872,7 @@ function PANEL:PerformLayout()
 
 	for id, item in pairs(tf_items.Items) do
 		if istable(item) and itemUsableByClass(item, oldclass) then
-			if GetConVar("tf_hud_loadout_class"):GetInt() != 4 && GetConVar("tf_hud_loadout_class"):GetInt() != 9 then
+			if GetConVar("tf_hud_loadout_class"):GetInt() != 9 then
 				if item.item_slot == "primary" then
 					weapons[1][id] = item -- table.insert(weapons[1], ) --id) -- weapon1:AddChoice(item.name, item.id)
 				elseif item.item_slot == "secondary" then
@@ -936,7 +936,7 @@ function PANEL:PerformLayout()
 
 	for name, wep in pairs(tf_items.Items) do
 		if istable(wep) then	
-			if GetConVar("tf_hud_loadout_class"):GetInt() != 4 && GetConVar("tf_hud_loadout_class"):GetInt() != 9 then
+			if GetConVar("tf_hud_loadout_class"):GetInt() != 9 then
 				if wep.id == tonumber(loadout[1]) then
 					Items[1] = makeLoadoutItemEntry(wep)
 				elseif wep.id == tonumber(loadout[2]) then
@@ -1900,6 +1900,15 @@ local function classCanUseItem(item, className)
 	return itemUsableByClass(item, className)
 end
 
+local function isWearableLoadoutItem(item)
+	if not istable(item) then return false end
+	local class = string.lower(tostring(item.item_class or ""))
+	if class == "tf_wearable_item" or class == "tf_wearable" then
+		return true
+	end
+	return string.StartWith(class, "tf_wearable_")
+end
+
 local function createBackpackPicker(title, oldclass, canEquipFn, onEquipFn)
 	if IsValid(BackpackPickerPanel) then
 		BackpackPickerPanel:Remove()
@@ -2053,7 +2062,7 @@ local function mapItemToLoadoutSlot(item, className)
 		return 8
 	end
 
-	if item.item_class == "tf_wearable_item" then
+	if isWearableLoadoutItem(item) then
 		return 4
 	end
 
@@ -2349,7 +2358,7 @@ end
 
 local function hasCosmeticEquipRegionConflict(item, equippedLoadout, itemsById, forcedSlot)
 	if not istable(item) or not istable(equippedLoadout) then return false end
-	if not (item.item_class == "tf_wearable_item" and (item.item_slot == "head" or item.item_slot == "misc")) then
+	if not (isWearableLoadoutItem(item) and (item.item_slot == "head" or item.item_slot == "misc")) then
 		return false
 	end
 
@@ -3172,7 +3181,7 @@ function TF_OpenStandaloneBackpack(initialClassName, initialClassIndex, forcedLo
 				if tauntSlot then
 					slotCompatible = isTauntItem(item)
 				elseif forcedSlot >= 4 and forcedSlot <= 6 then
-					slotCompatible = item.item_class == "tf_wearable_item" and (item.item_slot == "head" or item.item_slot == "misc")
+					slotCompatible = isWearableLoadoutItem(item) and (item.item_slot == "head" or item.item_slot == "misc")
 				elseif forcedSlot == 7 then
 					slotCompatible = mapItemToLoadoutSlot(item, activeClass) == 7
 				else
@@ -3191,7 +3200,7 @@ function TF_OpenStandaloneBackpack(initialClassName, initialClassIndex, forcedLo
 		currentPage = math.Clamp(currentPage, 1, totalPages)
 
 		if panel.LoadoutMode and forcedSlot and forcedSlot >= 4 and forcedSlot <= 6 then
-			infoLabel:SetText("Owned: " .. tostring(visibleCount) .. "  |  Class: " .. string.upper(activeClass) .. slotText .. "  |  Page " .. tostring(currentPage) .. "/" .. tostring(totalPages) .. "  |  Region conflicts are disabled")
+			infoLabel:SetText("Owned: " .. tostring(visibleCount) .. "  |  Class: " .. string.upper(activeClass) .. slotText .. "  |  Page " .. tostring(currentPage) .. "/" .. tostring(totalPages) .. "  |  Region conflicts are enforced")
 		elseif panel.LoadoutMode then
 			infoLabel:SetText("Owned: " .. tostring(visibleCount) .. "  |  Class: " .. string.upper(activeClass) .. slotText .. "  |  Page " .. tostring(currentPage) .. "/" .. tostring(totalPages) .. "  |  Showing equippable items only")
 		else
@@ -3314,7 +3323,7 @@ function TF_OpenStandaloneBackpack(initialClassName, initialClassIndex, forcedLo
 				if tauntSlot then
 					slotCompatible = isTauntItem(item)
 				elseif forcedSlot >= 4 and forcedSlot <= 6 then
-					slotCompatible = item.item_class == "tf_wearable_item" and (item.item_slot == "head" or item.item_slot == "misc")
+					slotCompatible = isWearableLoadoutItem(item) and (item.item_slot == "head" or item.item_slot == "misc")
 				elseif forcedSlot == 7 then
 					slotCompatible = mapItemToLoadoutSlot(item, activeClass) == 7
 				else
@@ -3376,7 +3385,7 @@ function TF_OpenStandaloneBackpack(initialClassName, initialClassIndex, forcedLo
 				if forcedSlot then
 					slot = forcedSlot
 				end
-				if item.item_class == "tf_wearable_item" then
+				if isWearableLoadoutItem(item) then
 					slot = forcedSlot or getWearableTargetSlot(activeClass, item.id)
 				end
 				if not slot and not tauntForcedSlot then return end

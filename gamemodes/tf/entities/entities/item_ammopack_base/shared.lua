@@ -68,7 +68,15 @@ end
 
 function ENT:CanPickup(ply)
 	if IsTFStylePlayer(ply) then
-		return not ply:HasFullAmmo()
+		if not ply:HasFullAmmo() then
+			return true
+		end
+		if isfunction(TF_CanSpyGainCloakFromItems) and isfunction(TF_GetSpyCloakMeter) then
+			if TF_CanSpyGainCloakFromItems(ply) and (TF_GetSpyCloakMeter(ply) or 100) < 100 then
+				return true
+			end
+		end
+		return false
 	end
 	return not HasFullAmmoGeneric(ply)
 end
@@ -81,7 +89,7 @@ function ENT:PlayerTouched(pl)
 	if pl:IsPlayer() then
 		local gaveAmmo = false
 		if IsTFStylePlayer(pl) then
-			gaveAmmo = GAMEMODE:GiveAmmoPercent(pl, a)
+			gaveAmmo = GAMEMODE:GiveAmmoPercent(pl, a, nil, true)
 		else
 			gaveAmmo = GiveAmmoPercentGeneric(pl, a)
 		end

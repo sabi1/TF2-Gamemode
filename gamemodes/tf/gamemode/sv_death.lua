@@ -1519,6 +1519,23 @@ function GM:PlayerDeath(ent, inflictor, attacker)
 	elseif (ent:GetNWBool("Russian")) then
 		ent:ConCommand("tf_taunt_russian_stop")
 	end
+
+	local respawnOverride = TF_FindPlayerRespawnOverride and TF_FindPlayerRespawnOverride(ent) or nil
+	ent.TFRespawnOverrideTime = nil
+	ent.TFRespawnOverrideName = nil
+	ent.TFRespawnOverrideEntity = nil
+	if istable(respawnOverride) then
+		local overrideTime = tonumber(respawnOverride.time)
+		local overrideName = tostring(respawnOverride.name or "")
+		if overrideTime and overrideTime >= 0 then
+			ent.TFRespawnOverrideTime = overrideTime
+		end
+		if overrideName ~= "" then
+			ent.TFRespawnOverrideName = overrideName
+		end
+		ent.TFRespawnOverrideEntity = respawnOverride.entity
+	end
+
 	if (!GAMEMODE.RoundHasWinner) then
 		if (GetConVar("mp_disable_respawn_times"):GetBool()) then
 			if (GetConVar("civ2_allow_respawn_with_key_press"):GetBool()) then
@@ -1531,6 +1548,9 @@ function GM:PlayerDeath(ent, inflictor, attacker)
 		end
 	else
 		ent.NextSpawnTime = CurTime() + 15
+	end
+	if !GAMEMODE.RoundHasWinner and ent.TFRespawnOverrideTime != nil then
+		ent.NextSpawnTime = CurTime() + ent.TFRespawnOverrideTime
 	end
 	ent.DeathTime = CurTime()
 	

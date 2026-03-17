@@ -433,6 +433,21 @@ local function ensureTauntCommandDefindexMap()
 	end
 end
 
+local function runPlayerTauntCommand(ply, cmd)
+	if not IsValid(ply) or not isstring(cmd) then return false end
+	cmd = string.Trim(cmd)
+	if cmd == "" then return false end
+
+	local parts = string.Explode(" ", cmd, false)
+	local name = parts[1]
+	if not isstring(name) or name == "" then return false end
+	table.remove(parts, 1)
+
+	if not concommand or not concommand.Run then return false end
+	concommand.Run(ply, name, parts, table.concat(parts, " "))
+	return true
+end
+
 function meta:TryExecuteEquippedTauntSlot(slotIndex)
 	if not SERVER then return false end
 	local slot = tonumber(slotIndex)
@@ -464,14 +479,13 @@ function meta:TryExecuteEquippedTauntSlot(slotIndex)
 		-- SDK-style slot taunt path: if a taunt item is equipped, consume the request
 		-- rather than falling back to weapon taunt.
 		if isLikelyTauntItem(item) then
-			self:ConCommand("tf_taunt_laugh")
+			runPlayerTauntCommand(self, "tf_taunt_laugh")
 			return true
 		end
 		return false
 	end
 
-	self:ConCommand(cmd)
-	return true
+	return runPlayerTauntCommand(self, cmd)
 end
 
 function meta:TryExecuteTauntItemByID(itemId, slotIndex)
@@ -500,12 +514,28 @@ function meta:TryExecuteTauntItemByID(itemId, slotIndex)
 		end
 	end
 
-	self:ConCommand(cmd)
-	return true
+	return runPlayerTauntCommand(self, cmd)
 end
 
 function meta:TFTaunt(args)
 	local ply = self 
+	local tauntArg
+	if istable(args) then
+		tauntArg = tostring(args[1] or "")
+	elseif args ~= nil then
+		tauntArg = tostring(args)
+	else
+		tauntArg = ""
+	end
+	if tauntArg == "" then
+		local w = ply:GetActiveWeapon()
+		if IsValid(w) and w.GetSlot then
+			tauntArg = tostring((w:GetSlot() or 0) + 1)
+		end
+	end
+	if tauntArg == "" then
+		tauntArg = "1"
+	end
 	if SERVER then
 		if ply:IsHL2() then ply:SendLua("RunConsoleCommand('act','dance')") return end
 		if ply:GetNWBool("Taunting") == true then return end
@@ -523,7 +553,7 @@ function meta:TFTaunt(args)
 		end
 		--[[if ply:GetInfoNum("tf_robot", 0) == 1 then ply:ChatPrint("You can't taunt as a robot!") return end
 		if ply:GetInfoNum("tf_giantrobot", 0) == 1 then ply:ChatPrint("You can't taunt as a mighty robot!") return end]]
-		if not table.HasValue(allowedtaunts, args[1]) then return end
+		if not table.HasValue(allowedtaunts, tauntArg) then return end
 		for k,v in ipairs(ents.FindInSphere(ply:GetPos(), 120)) do
 			if v:GetNWBool("IWantToTaunt") ==  true then
 				self:SetNWBool("IWantToTauntToo", true)
@@ -536,7 +566,7 @@ function meta:TFTaunt(args)
 			end
 		end
 		if ply:GetPlayerClass() != "spy" then
-			if table.KeyFromValue(allowedtaunts,args[1]) == 1 then
+			if table.KeyFromValue(allowedtaunts,tauntArg) == 1 then
 		
 				if ply:GetWeapons()[1]:GetClass() == "weapon_crowbar" then
 				
@@ -699,7 +729,7 @@ function meta:TFTaunt(args)
 					ply:DoTauntEvent("taunt01", true)
 					
 				end
-			elseif table.KeyFromValue(allowedtaunts,args[1]) == 2 then
+			elseif table.KeyFromValue(allowedtaunts,tauntArg) == 2 then
 		
 				if ply:GetPlayerClass() == "combinesoldier" then
 					ply:DoAnimationEvent(ACT_SPECIAL_ATTACK1, true)
@@ -790,7 +820,7 @@ function meta:TFTaunt(args)
 					ply:SelectWeapon(ply:GetWeapons()[2]:GetClass())
 					ply:DoTauntEvent("taunt02", true)
 				end
-			elseif table.KeyFromValue(allowedtaunts,args[1]) == 3 then	
+			elseif table.KeyFromValue(allowedtaunts,tauntArg) == 3 then	
 				if ply:GetPlayerClass() == "pyro" then
 					if ply:GetWeapons()[3]:GetClass() == "tf_weapon_neonsign" then
 						ply:EmitSound("player/sign_bass_solo.wav", 95, 100)
@@ -1056,10 +1086,10 @@ function meta:TFTaunt(args)
 			end
 			
 		else
-			if table.KeyFromValue(allowedtaunts,args[1]) == 1 then
+			if table.KeyFromValue(allowedtaunts,tauntArg) == 1 then
 				ply:SelectWeapon(ply:GetWeapons()[1]:GetClass())
 				ply:DoTauntEvent("taunt01", true)
-			elseif table.KeyFromValue(allowedtaunts,args[1]) == 3 then
+			elseif table.KeyFromValue(allowedtaunts,tauntArg) == 3 then
 				timer.Simple(2, function()
 					for k,v in pairs(ents.FindInSphere(ply:GetPos(), 90)) do 
 						if v:IsTFPlayer() and not v:IsFriendly(ply) and v:EntIndex() != ply:EntIndex() then
@@ -1086,7 +1116,7 @@ function meta:TFTaunt(args)
 				end)			
 				ply:SelectWeapon(ply:GetWeapons()[2]:GetClass())
 				ply:DoTauntEvent("taunt03", true)
-			elseif table.KeyFromValue(allowedtaunts,args[1]) == 4 then
+			elseif table.KeyFromValue(allowedtaunts,tauntArg) == 4 then
 				ply:SelectWeapon(ply:GetWeapons()[3]:GetClass())
 				ply:DoTauntEvent("taunt04", true)
 			elseif ply:GetActiveWeapon():GetClass() == "weapon_physcannon" then
@@ -1199,6 +1229,65 @@ local function IsOwnedEngineerBuilding(ent, ply)
 	return ent.Player == ply or ent:GetBuilder() == ply or ent:GetOwner() == ply
 end
 
+function TF_IsOwnedEngineerBuilding(ent, ply)
+	return IsOwnedEngineerBuilding(ent, ply)
+end
+
+function TF_CountOwnedSentries(ply)
+	return CountOwnedSentries(ply)
+end
+
+-- Canonical TF2 build-limit baseline check for Engineer objects.
+-- Custom systems can layer on top, but all core build paths should pass through here.
+function TF_CanPlayerBuildObject(ply, group, sub, ignoreUnlimited)
+	group = tonumber(group)
+	sub = tonumber(sub) or 0
+	if not IsValid(ply) or not group then return false end
+
+	if not ignoreUnlimited then
+		local cv = GetConVar("tf_unlimited_buildings")
+		if cv and cv:GetBool() then
+			return true
+		end
+	end
+
+	local className = builds[group]
+	if not className then
+		return true
+	end
+
+	if className == "obj_sentrygun" then
+		local disposableLimit = 0
+		if ply.TF_MVM_Dynamic then
+			disposableLimit = math.max(0, math.floor(tonumber(ply.TF_MVM_Dynamic.DisposableSentryCount) or 0))
+		end
+		local regularCount, disposableCount = CountOwnedSentries(ply)
+		local allowDisposable = disposableLimit > 0 and regularCount >= 1 and disposableCount < disposableLimit
+		return regularCount < 1 or allowDisposable
+	end
+
+	if className == "obj_teleporter" then
+		for _, ent in ipairs(ents.FindByClass("obj_teleporter")) do
+			if not IsOwnedEngineerBuilding(ent, ply) then continue end
+			if (sub == 0 and ent.IsEntrance and ent:IsEntrance()) or (sub == 1 and ent.IsExit and ent:IsExit()) then
+				return false
+			end
+		end
+		return true
+	end
+
+	if className == "obj_dispenser" then
+		for _, ent in ipairs(ents.FindByClass("obj_dispenser")) do
+			if IsOwnedEngineerBuilding(ent, ply) then
+				return false
+			end
+		end
+		return true
+	end
+
+	return true
+end
+
 function meta:Build(number1,number2)
 	local group = tonumber(number1)
 	local sub = tonumber(number2)
@@ -1215,36 +1304,9 @@ function meta:Build(number1,number2)
 	end
 	if not IsValid(builder) then return false end
 
-	if builds[group] and not GetConVar("tf_unlimited_buildings"):GetBool() then
-		local tab = ents.FindByClass(builds[group])
-		if builds[group] == "obj_sentrygun" then
-			local disposableLimit = 0
-			if self.TF_MVM_Dynamic then
-				disposableLimit = math.max(0, math.floor(tonumber(self.TF_MVM_Dynamic.DisposableSentryCount) or 0))
-			end
-			local regularCount, disposableCount = CountOwnedSentries(self)
-			local allowDisposable = disposableLimit > 0 and regularCount >= 1 and disposableCount < disposableLimit
-			if regularCount >= 1 and not allowDisposable then
-				self:EmitSound("Player.DenyWeaponSelection")
-				return false
-			end
-		elseif builds[group] ~= "obj_teleporter" then
-			for _, v in pairs(tab) do
-				if IsOwnedEngineerBuilding(v, self) then
-					self:EmitSound("Player.DenyWeaponSelection")
-					return false
-				end
-			end
-		else
-			for _, v in pairs(tab) do
-				if IsOwnedEngineerBuilding(v, self) then
-					if (sub == 0 and v:IsEntrance()) or (sub == 1 and v:IsExit()) then
-						self:EmitSound("Player.DenyWeaponSelection")
-						return false
-					end
-				end
-			end
-		end
+	if not TF_CanPlayerBuildObject(self, group, sub, false) then
+		self:EmitSound("Player.DenyWeaponSelection")
+		return false
 	end
 
 	builder:SetHoldType("BUILDING")
@@ -1483,8 +1545,6 @@ function meta:ResetAttributes()
 	self:ResetClassSpeed(c.Speed or 100)
 	self:ResetMaxHealth()
 	self.AmmoMax = table.Copy(c.AmmoMax or {})
-end
-
 end
 
 -- Shared

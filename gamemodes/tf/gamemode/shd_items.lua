@@ -216,7 +216,7 @@ function ParseGameItems(data, silent)
 			for a,w in pairs(v.attributes) do
 				--local num,name = string.match(a, "(%d)%-([%w%-%s]+)")
 				local name,num = string.match(a, "([%w%-%s]+)%-(%d+)") -- util.KeyValuesToTable is bugged, work around
-				name = string.lower(name)
+				name = string.lower(tostring(name or ""))
 				w.name = name
 				v.attributes0[name] = w
 				v.attributes[a] = nil
@@ -353,7 +353,10 @@ function ParseGameItems(data, silent)
 	for k,v in pairs(util.KeyValuesToTable(data_attribs)) do
 		Attributes.n = Attributes.n + 1
 		v.id = tonumber(k)
-		v.name = string.lower(v.name)
+		v.name = string.lower(tostring(v.name or ""))
+		if v.name == "" then
+			v.name = "attribute_" .. tostring(v.id or Attributes.n)
+		end
 		Attributes[v.name] = v
 		AttributesByID[v.id] = v
 		numreg = numreg + 1
@@ -381,7 +384,7 @@ function ParseGameItems(data, silent)
 				for a,w in pairs(v.attributes) do
 					--local num,name = string.match(a, "(%d)%-([%w%-%s]+)")
 					local name,num = string.match(a, "([%w%-%s]+)%-(%d+)") -- util.KeyValuesToTable is bugged, work around
-					name = string.lower(name)
+					name = string.lower(tostring(name or ""))
 					w.name = name
 					v.attributes0[name] = w
 					v.attributes[a] = nil

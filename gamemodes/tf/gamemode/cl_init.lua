@@ -507,6 +507,42 @@ hook.Add("CreateMove", "TF2Gamemode_AutoReload", function(cmd)
 	cmd:AddKey(IN_RELOAD)
 end)
 
+hook.Add("CreateMove", "TF2Gamemode_ClientInputRestrictions", function(cmd)
+	local lp = LocalPlayer()
+	if not IsValid(lp) or not lp:Alive() then return end
+
+	local allowTauntMotion = lp:GetNWBool("TauntingMoped", false) or lp:GetNWBool("TauntingSchemaMove", false)
+
+	if lp.InCond and (lp:InCond(TF_COND_FREEZE_INPUT) or (lp:InCond(TF_COND_TAUNTING) and not allowTauntMotion)) then
+		cmd:RemoveKey(IN_ATTACK)
+		cmd:RemoveKey(IN_ATTACK2)
+		cmd:RemoveKey(IN_RELOAD)
+		return
+	end
+
+	local allowDisguisedSpyAttack = lp.GetPlayerClass and lp:GetPlayerClass() == "spy" and lp.InCond and lp:InCond(TF_COND_DISGUISED)
+	if lp:GetNWBool("NoWeapon", false) and not allowTauntMotion and not allowDisguisedSpyAttack then
+		cmd:RemoveKey(IN_ATTACK)
+		if not (lp.InCond and lp:InCond(TF_COND_HALLOWEEN_KART)) then
+			cmd:RemoveKey(IN_ATTACK2)
+		end
+		cmd:RemoveKey(IN_RELOAD)
+		return
+	end
+
+	local noAttackUntil = tonumber(lp:GetNWFloat("TFStealthNoAttackExpire", 0)) or 0
+	local userBuffStealth = lp.InCond and lp:InCond(TF_COND_STEALTHED_USER_BUFF)
+	if noAttackUntil > CurTime() and not userBuffStealth then
+		local wep = lp:GetActiveWeapon()
+		local class = IsValid(wep) and wep:GetClass() or ""
+		local isWatch = class == "tf_weapon_invis" or class == "tf_weapon_invis_dringer"
+		if not isWatch then
+			cmd:RemoveKey(IN_ATTACK)
+			cmd:RemoveKey(IN_ATTACK2)
+		end
+	end
+end)
+
 hook.Add("PlayerBindPress", "TF2Gamemode_InspectBind_BlockOriginalBind", function(ply, bind, pressed, code)
 	if not pressed then return end
 	if not IsValid(ply) or ply ~= LocalPlayer() then return end
@@ -4184,7 +4220,7 @@ hook.Add( "SpawnMenuOpen", "BlockThisShit", function(  )
 end )   
 
 local function GetConfiguredSteamAPIKey()
-	local keyFromFile = "BD3C029DC2F1F21A87F7D9FCEB9D0E84"
+	local keyFromFile = file.Read("tf_steam_api_key.txt", "DATA")
 	if isstring(keyFromFile) then
 		keyFromFile = string.Trim(keyFromFile)
 		if keyFromFile ~= "" then
@@ -4192,7 +4228,7 @@ local function GetConfiguredSteamAPIKey()
 		end
 	end
 
-	local keyFromConvar = "BD3C029DC2F1F21A87F7D9FCEB9D0E84"
+	local keyFromConvar = GetConVar("tf_steam_api_key") and GetConVar("tf_steam_api_key"):GetString() or ""
 	if isstring(keyFromConvar) then
 		keyFromConvar = string.Trim(keyFromConvar)
 		if keyFromConvar ~= "" then
@@ -4630,6 +4666,25 @@ end)
 
 CreateClientConVar("tf_steam_api_key", "", true, false, "Steam Web API key used for TF2 inventory merge.")
 CreateClientConVar("tf_debug_item_visuals", "0", true, false, "Debug Steam->loadout->item visual attribute flow.")
+
+local function MigrateAndHideSteamAPIKeyConVar()
+	local keyConVar = GetConVar("tf_steam_api_key")
+	if not keyConVar then return end
+
+	local keyFromConvar = string.Trim(keyConVar:GetString() or "")
+	if keyFromConvar == "" then return end
+
+	local keyFromFile = file.Read("tf_steam_api_key.txt", "DATA")
+	keyFromFile = isstring(keyFromFile) and string.Trim(keyFromFile) or ""
+	if keyFromFile == "" then
+		file.Write("tf_steam_api_key.txt", keyFromConvar)
+	end
+
+	RunConsoleCommand("tf_steam_api_key", "")
+end
+
+timer.Simple(0, MigrateAndHideSteamAPIKeyConVar)
+
 concommand.Add("tf_set_steam_api_key", function(_, _, args)
 	local key = string.Trim(table.concat(args or {}, " "))
 	if key == "" then
@@ -4637,7 +4692,7 @@ concommand.Add("tf_set_steam_api_key", function(_, _, args)
 		return
 	end
 	file.Write("tf_steam_api_key.txt", key)
-	RunConsoleCommand("tf_steam_api_key", key)
+	RunConsoleCommand("tf_steam_api_key", "")
 	chat.AddText(Color(120, 220, 140), "[TF2-Gamemode] Steam API key saved to data/tf_steam_api_key.txt")
 end)
 
@@ -4645,6 +4700,7 @@ CreateClientConVar("tf_auto_merge_loadout", "1", true, false, "Automatically ref
 hook.Add("InitPostEntity", "TFAutoMergeLoadoutOnMapStart", function()
 	timer.Simple(2, function()
 		if not IsValid(LocalPlayer()) then return end
+		MigrateAndHideSteamAPIKeyConVar()
 		local c = GetConVar("tf_auto_merge_loadout")
 		local keyFile = file.Read("tf_steam_api_key.txt", "DATA")
 		local hasKey = isstring(keyFile) and string.Trim(keyFile) ~= ""

@@ -228,6 +228,12 @@ end)
 hook.Add("SetupMove", "TFSetupMove", function(pl, move)
 	if TFIsHL2Player(pl) then return end
 
+	local suppressUntil = tonumber(pl.TFTriggerCatapultAirControlSuppressedUntil) or 0
+	if suppressUntil > CurTime() and not pl:OnGround() then
+		move:SetForwardSpeed(0)
+		move:SetSideSpeed(0)
+	end
+
 	-- Can't move when crouched in the loser state
 	if pl:Crouching() then
 		if pl:IsLoser() then

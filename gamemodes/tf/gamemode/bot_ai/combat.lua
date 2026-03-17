@@ -9,6 +9,10 @@ local cv_low_ammo_flee_dist = CreateConVar("tf_bot_low_ammo_flee_dist", "700", {
 local cv_red_respect_blu_spawn = CreateConVar("tf_bot_red_respect_blu_spawn", "1", {FCVAR_ARCHIVE, FCVAR_NOTIFY}, "RED bots do not fire at BLU still inside BLU spawn.")
 local cv_allow_carrier_fight = CreateConVar("tf_mvm_bot_allow_flag_carrier_to_fight", "1", {FCVAR_ARCHIVE, FCVAR_NOTIFY})
 
+local function isPasstimeMap()
+	return TF_IsPasstimeMap and TF_IsPasstimeMap() or false
+end
+
 local function wepValid(wep)
 	return IsValid(wep) or (istable(wep) and wep.__isFakeWeapon == true)
 end
@@ -120,6 +124,59 @@ local function inSpawnAreaForTeam(pos, team)
 	return false
 end
 
+local function passtimeAimPos(ent, fallback)
+	if IsValid(ent) then
+		if ent.WorldSpaceCenter then
+			local ok, pos = pcall(ent.WorldSpaceCenter, ent)
+			if ok and isvector(pos) then
+				return pos
+			end
+		end
+		if ent.GetPos then
+			return ent:GetPos()
+		end
+	end
+	return fallback
+end
+
+local function handlePasstimeCarrier(bot, cmd, state)
+	if not isPasstimeMap() then return false end
+	if not (TF_PlayerHasPasstimeBall and TF_PlayerHasPasstimeBall(bot)) then return false end
+
+	local ball = bot:GetWeapon("tf_weapon_passtime_gun")
+	if not IsValid(ball) then return false end
+	if bot:GetActiveWeapon() ~= ball then
+		bot:SelectWeapon("tf_weapon_passtime_gun")
+	end
+
+	local mode = tostring(state.objective and state.objective.mode or "")
+	local actionTarget = state.objective and state.objective.targetEnt or nil
+	local targetPos = passtimeAimPos(actionTarget, state.objective and state.objective.targetPos or nil)
+	if not isvector(targetPos) then
+		cmd:RemoveKey(IN_ATTACK)
+		cmd:RemoveKey(IN_ATTACK2)
+		return true
+	end
+
+	local lookAng = (targetPos - bot:GetShootPos()):Angle()
+	cmd:SetViewAngles(lookAng)
+	bot:SetEyeAngles(lookAng)
+
+	if mode ~= "passtime_pass" and mode ~= "passtime_throw_goal" then
+		cmd:RemoveKey(IN_ATTACK)
+		cmd:RemoveKey(IN_ATTACK2)
+		return true
+	end
+
+	local aimDot = lookAng:Forward():Dot(bot:GetAimVector())
+	local dist = bot:GetShootPos():Distance(targetPos)
+	if aimDot >= 0.985 or dist <= 140 then
+		cmd:SetButtons(bit.bor(cmd:GetButtons(), IN_ATTACK))
+	end
+	cmd:RemoveKey(IN_ATTACK2)
+	return true
+end
+
 local function chooseWeapon(bot, threat)
 	if not IsValid(bot) then return nil, {} end
 	local weapons = bot:GetWeapons()
@@ -201,6 +258,9 @@ end
 
 function M:Update(bot, cmd, state)
 	if not IsValid(bot) or not state or not bot:Alive() then return end
+	if handlePasstimeCarrier(bot, cmd, state) then
+		return
+	end
 	if bot.TF_MVM_IgnoreEnemies then
 		return
 	end

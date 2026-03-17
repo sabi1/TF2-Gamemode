@@ -27,10 +27,40 @@ end
 
 if CLIENT then
 
+local function IsOwnerStealthed(owner)
+	if not IsValid(owner) then return false end
+	if owner.InCond then
+		if owner:InCond(TF_COND_STEALTHED) or owner:InCond(TF_COND_STEALTHED_USER_BUFF) or owner:InCond(TF_COND_STEALTHED_USER_BUFF_FADING) then
+			return true
+		end
+	end
+	return owner:GetNWBool("Cloaked", false)
+end
+
+local function SyncStealthFromOwner(self)
+	local owner = self:GetOwner()
+	if not IsValid(owner) then return end
+
+	if IsOwnerStealthed(owner) then
+		local ownerColor = owner:GetColor()
+		self:SetRenderMode(RENDERMODE_TRANSALPHA)
+		self:SetColor(Color(ownerColor.r, ownerColor.g, ownerColor.b, ownerColor.a))
+		self:SetMaterial(owner:GetMaterial() or "")
+		return
+	end
+
+	self:SetRenderMode(RENDERMODE_NORMAL)
+	self:SetColor(Color(255, 255, 255, 255))
+	if self:GetMaterial() ~= "" then
+		self:SetMaterial("")
+	end
+end
+
 function ENT:Draw()
 	if self.IsHiddenByVision and self:IsHiddenByVision(LocalPlayer()) then return end
 	if TF_ShouldHideOwnerWearablesForViewer and TF_ShouldHideOwnerWearablesForViewer(self:GetOwner(), LocalPlayer()) then return end
 	if self:GetOwner() ~= LocalPlayer() or LocalPlayer():ShouldDrawLocalPlayer() then
+		SyncStealthFromOwner(self)
 		self:StartVisualOverrides()
 		self:StartItemTint(self:GetItemTint())
 		self:GetOwner().RenderingWorldModel = true
@@ -107,6 +137,7 @@ end
 
 function ENT:Think()
 	if CLIENT then
+		SyncStealthFromOwner(self)
 		local model = ResolveWearableDisplayModel(self, LocalPlayer())
 		if model and self:GetModel() ~= model then
 			self:SetModel(model)

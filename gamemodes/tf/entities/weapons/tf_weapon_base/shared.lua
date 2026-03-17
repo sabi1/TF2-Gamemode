@@ -15,6 +15,8 @@ SWEP.ShootCritSound = Sound("Weapon_Scatter_Gun.SingleCrit")
 SWEP.ReloadSound = Sound("Weapon_Scatter_Gun.WorldReload") 
 SWEP.ReloadSoundFinish = nil
 SWEP.IsMeleeWeapon = false
+SWEP.Primary = SWEP.Primary or {}
+SWEP.Secondary = SWEP.Secondary or {}
 
 local function DebugTFWorldModelDraw(wep, stage, model)
 	if not CLIENT then return end
@@ -108,6 +110,21 @@ local function GetDefaultViewModelMaterial(wep)
 		return "color"
 	end
 	return ""
+end
+
+local function IsOverridingViewmodelMaterial(wep, drawLocalViewModel, drawMat)
+	if not CLIENT then return false end
+	if not IsValid(wep) then return false end
+	if not drawLocalViewModel then return false end
+	if IsValid(wep.CModel) then return false end
+	return isstring(drawMat) and drawMat ~= ""
+end
+
+local function GetViewmodelMaterialOverride(wep, drawLocalViewModel, drawMat)
+	if IsOverridingViewmodelMaterial(wep, drawLocalViewModel, drawMat) then
+		return drawMat
+	end
+	return GetDefaultViewModelMaterial(wep)
 end
 local defaultdeployspeed = CreateConVar( "tf_default_deploy_speed", "1.34", {FCVAR_SERVER_CAN_EXECUTE, FCVAR_REPLICATED, FCVAR_NOTIFY, FCVAR_ARCHIVE}, "LEGS!" )
 -- Sounds
@@ -987,108 +1004,8 @@ function SWEP:InitializeAttachedModels()
 	end
 end
 
-local function NormalizeAmmoType(ammoType)
-	if ammoType == nil then return nil end
-	if isstring(ammoType) then
-		local lowered = string.lower(ammoType)
-		if lowered == "" or lowered == "none" then
-			return nil
-		end
-	end
-	return ammoType
-end
-
-local function WeaponSlotIndex(wep)
-	if not IsValid(wep) then return 0 end
-	local slot = wep.Slot
-	if slot == nil and isfunction(wep.GetSlot) then
-		slot = wep:GetSlot()
-	end
-	return tonumber(slot) or 0
-end
-
-local function WeaponIsMedigunForSelection(wep)
-	if not IsValid(wep) then return false end
-	local class = wep:GetClass()
-	if not isstring(class) then return false end
-	return class == "tf_weapon_ampgun"
-		or class == "tf_weapon_builder"
-		or string.find(class, "tf_weapon_medigun", 1, true) == 1
-end
-
-local function WeaponHasUsableAmmoForSelection(wep)
-	if not IsValid(wep) then return false end
-	local class = wep:GetClass()
-	if string.find(class, "tf_weapon_pda_engineer", 1, true) == 1 then
-		return true
-	end
-	if wep.Hidden or wep.IsPDA then
-		return true
-	end
-
-	-- Mediguns are always usable even when Uber starts at 0%.
-	if WeaponIsMedigunForSelection(wep) then
-		return true
-	end
-
-	local primary = wep.Primary or {}
-	local clipSize = tonumber(primary.ClipSize or -1) or -1
-	local clip = tonumber((wep.Clip1 and wep:Clip1()) or -1) or -1
-	local ammoType = NormalizeAmmoType(primary.Ammo)
-	local reserve = tonumber((wep.Ammo1 and wep:Ammo1()) or -1) or -1
-	local owner = wep:GetOwner()
-
-	-- Some throwables while holstered can report stale Ammo1().
-	-- Resolve reserve ammo from all known pools and use the max.
-	if IsValid(owner) and owner.GetAmmoCount then
-		if ammoType ~= nil then
-			local ownerReserveByName = tonumber(owner:GetAmmoCount(ammoType) or -1) or -1
-			if ownerReserveByName > reserve then
-				reserve = ownerReserveByName
-			end
-		end
-		if isfunction(wep.GetPrimaryAmmoType) then
-			local primaryAmmoType = wep:GetPrimaryAmmoType()
-			if isnumber(primaryAmmoType) and primaryAmmoType >= 0 then
-				local ownerReserveById = tonumber(owner:GetAmmoCount(primaryAmmoType) or -1) or -1
-				if ownerReserveById > reserve then
-					reserve = ownerReserveById
-				end
-			end
-		end
-	end
-
-	-- Throwables can be readiness-driven; trust full meter as usable.
-	if wep.HasCustomMeleeBehaviour and isfunction(wep.GetHUDMeterValue) then
-		local meter = tonumber(wep:GetHUDMeterValue() or 0) or 0
-		if meter >= 0.999 then
-			return true
-		end
-	end
-
-	-- Pure melee weapons (ammo type "none") must always remain selectable.
-	if wep.IsMeleeWeapon and ammoType == nil then
-		return true
-	end
-
-	-- Ammo-less weapons (true melee, mediguns, utility, etc.) are always selectable.
-	if clipSize < 0 and ammoType == nil and clip < 0 and reserve < 0 then
-		return true
-	end
-
-	if clip > 0 then
-		return true
-	end
-
-	if reserve > 0 then
-		return true
-	end
-
-	return false
-end
-
 function SWEP:HasUsableAmmoForSelection()
-	return WeaponHasUsableAmmoForSelection(self)
+	return TF_WeaponHasUsableAmmoForSelection(self)
 end
 
 function SWEP:FindNextWeaponWithAmmo()
@@ -1105,8 +1022,8 @@ function SWEP:FindNextWeaponWithAmmo()
 	if #weapons <= 1 then return nil end
 
 	table.sort(weapons, function(a, b)
-		local as = WeaponSlotIndex(a)
-		local bs = WeaponSlotIndex(b)
+		local as = TF_WeaponSlotIndex(a)
+		local bs = TF_WeaponSlotIndex(b)
 		if as == bs then
 			return (a:GetClass() or "") < (b:GetClass() or "")
 		end
@@ -1124,7 +1041,7 @@ function SWEP:FindNextWeaponWithAmmo()
 	for offset = 1, #weapons - 1 do
 		local index = ((currentIndex - 1 + offset) % #weapons) + 1
 		local candidate = weapons[index]
-		if IsValid(candidate) and WeaponHasUsableAmmoForSelection(candidate) then
+		if IsValid(candidate) and TF_WeaponHasUsableAmmoForSelection(candidate) then
 			return candidate
 		end
 	end
@@ -1875,6 +1792,13 @@ function SWEP:CanPrimaryAttack()
 			return false
 		end
 	end
+	if IsValid(self.Owner) and self:GetClass() ~= "tf_weapon_invis" and self:GetClass() ~= "tf_weapon_invis_dringer" then
+		local noAttackUntil = tonumber(self.Owner:GetNWFloat("TFStealthNoAttackExpire", 0)) or 0
+		local userBuffStealth = self.Owner.InCond and self.Owner:InCond(TF_COND_STEALTHED_USER_BUFF)
+		if noAttackUntil > CurTime() and not userBuffStealth then
+			return false
+		end
+	end
 
 	if (self.Owner:GetNWBool("Bonked")) then return false end
 	if (((self.Primary.ClipSize == -1 and self:Ammo1() > 0) or self:Clip1() > 0) and self.Owner:GetNWBool("Bonked",false) == false) then
@@ -1885,6 +1809,19 @@ function SWEP:CanPrimaryAttack()
 end
 
 function SWEP:CanSecondaryAttack()
+	if IsValid(self.Owner) and self.Owner.InCond and self.Owner:InCond(TF_COND_STEALTHED) then
+		if self:GetClass() ~= "tf_weapon_invis" and self:GetClass() ~= "tf_weapon_invis_dringer" then
+			return false
+		end
+	end
+	if IsValid(self.Owner) and self:GetClass() ~= "tf_weapon_invis" and self:GetClass() ~= "tf_weapon_invis_dringer" then
+		local noAttackUntil = tonumber(self.Owner:GetNWFloat("TFStealthNoAttackExpire", 0)) or 0
+		local userBuffStealth = self.Owner.InCond and self.Owner:InCond(TF_COND_STEALTHED_USER_BUFF)
+		if noAttackUntil > CurTime() and not userBuffStealth then
+			return false
+		end
+	end
+
 	if (self.Secondary.ClipSize == -1 and self:Ammo2() > 0) or self:Clip2() > 0 then
 		return true
 	end
@@ -1906,7 +1843,25 @@ function SWEP:RustyBulletHole()
 		return
 	end
 
-	if self.Base ~= "tf_weapon_melee_base" and self.GetClass ~= "tf_weapon_builder" and not self.IsPDA and self.ProjectileShootOffset == Vector(0,0,0) or self.ProjectileShootOffset == Vector(3,8,-5) and self.IsDeployed == true then
+	local owner = self.Owner
+	if not IsValid(owner) then
+		return
+	end
+	if owner.InCond and (owner:InCond(TF_COND_DISGUISED) or owner:InCond(TF_COND_STEALTHED)) then
+		return
+	end
+	local noAttackUntil = tonumber(owner:GetNWFloat("TFStealthNoAttackExpire", 0)) or 0
+	local userBuffStealth = owner.InCond and owner:InCond(TF_COND_STEALTHED_USER_BUFF)
+	if noAttackUntil > CurTime() and not userBuffStealth then
+		return
+	end
+	self._NextRustyBulletHole = self._NextRustyBulletHole or 0
+	if CurTime() < self._NextRustyBulletHole then
+		return
+	end
+	self._NextRustyBulletHole = CurTime() + 0.05
+
+	if (self.Base ~= "tf_weapon_melee_base" and self:GetClass() ~= "tf_weapon_builder" and not self.IsPDA and self.ProjectileShootOffset == Vector(0,0,0)) or (self.ProjectileShootOffset == Vector(3,8,-5) and self.IsDeployed == true) then
 		--self:ShootBullet(0, self.BulletsPerShot, self.BulletSpread)
 		if (self.Owner:GetEyeTrace()) then  
 			if (self.Owner:GetEyeTrace().Entity) then
@@ -2167,9 +2122,13 @@ function SWEP:Think()
 			and (not IsValid(GetViewEntity()) or GetViewEntity() == lp)
 		local vm = IsValid(self.Owner) and self.Owner:GetViewModel() or nil
 		if IsValid(vm) then
-			local vmat = GetDefaultViewModelMaterial(self)
+			local vmat = GetViewmodelMaterialOverride(self, not hideForTaunt and drawLocalViewModel, drawMat)
 			if vm:GetMaterial() ~= vmat then
 				vm:SetMaterial(vmat)
+			end
+			local vskin = self.WeaponSkin or (IsValid(self.Owner) and self.Owner:GetSkin()) or 0
+			if vm:GetSkin() ~= vskin then
+				vm:SetSkin(vskin)
 			end
 		end
 		if (self:GetItemData().item_name) then

@@ -2,6 +2,7 @@ include("sv_clientfiles.lua")
 include("sv_resource.lua")
 include("sv_response_rules.lua")
 include("sv_ctf_bots.lua")
+include("sv_tf_nav_generate.lua")
 include("bot_ai/init.lua")
 include("shared.lua")
 include("sv_gamelogic.lua")
@@ -2270,6 +2271,9 @@ concommand.Add("randomweapon", function(ply, _, args)
 end)
   
 function GM:PlayerSpawn(ply)
+	ply.TFRespawnOverrideTime = nil
+	ply.TFRespawnOverrideName = nil
+	ply.TFRespawnOverrideEntity = nil
 	
 	if (ply:GetPlayerClass() != "") then
 		local c = GAMEMODE.PlayerClasses[ply:GetPlayerClass()]
@@ -2821,6 +2825,23 @@ function GM:PlayerSelectSpawn(pl)
 		end
 	end
 	
+	local overrideName = tostring(pl.TFRespawnOverrideName or "")
+	if overrideName ~= "" then
+		local overrideSpawns = {}
+		for _, spawn in ipairs(ents.FindByName(overrideName)) do
+			if not IsValid(spawn) then continue end
+			if spawn:GetClass() ~= "info_player_teamspawn" then continue end
+			if spawn.IsAvailableForTeam and not spawn:IsAvailableForTeam(pl:Team(), true) then
+				continue
+			end
+			overrideSpawns[#overrideSpawns + 1] = spawn
+		end
+
+		if IsValid(overrideSpawns[1]) then
+			return table.Random(overrideSpawns)
+		end
+	end
+
 	if self.MasterSpawn then
 		return self.MasterSpawn
 	end
@@ -2829,16 +2850,10 @@ function GM:PlayerSelectSpawn(pl)
 	local spawnsblu = {}
 
 	for k, v in pairs(ents.FindByClass("info_player_teamspawn")) do
-		----print(v, "says")
-		local kv = v:GetKeyValues() or {}
-		local startDisabled = tonumber(kv["StartDisabled"] or 0) or 0
-		local teamNum = tonumber(kv["TeamNum"] or -1) or -1
-		if startDisabled == 0 then
-		if teamNum == 3 then
+		if v.IsAvailableForTeam and v:IsAvailableForTeam(TEAM_BLU, false) then
 			table.insert(spawnsblu, v)
-		elseif teamNum == 2 then
+		elseif v.IsAvailableForTeam and v:IsAvailableForTeam(TEAM_RED, false) then
 			table.insert(spawnsred, v)
-		end
 		end
 	end
 
@@ -2927,6 +2942,10 @@ local function EnsureEngineerCommandBindings()
 	end
 
 	local function canBuildByLimit(pl, group, sub)
+		if isfunction(TF_CanPlayerBuildObject) then
+			return TF_CanPlayerBuildObject(pl, group, sub, false)
+		end
+
 		local cv = GetConVar("tf_unlimited_buildings")
 		if cv and cv:GetBool() then return true end
 
@@ -3077,7 +3096,7 @@ end
 EnsureEngineerCommandBindings()
 
 local PlayerGiveAmmoTypes = {TF_PRIMARY, TF_SECONDARY, TF_METAL}
-function GM:GiveAmmoPercent(pl, pc, nometal)
+function GM:GiveAmmoPercent(pl, pc, nometal, fromItems)
 	--Msg("Giving "..pc.."% ammo to "..pl:GetName().." : ")
 	local ammo_given = false 
 	
@@ -3102,13 +3121,18 @@ function GM:GiveAmmoPercent(pl, pc, nometal)
 	end
 	
 	--Msg("\n")
+	local cloakAdded = 0
+	if isfunction(TF_AddSpyCloakPercent) then
+		cloakAdded = TF_AddSpyCloakPercent(pl, pc, fromItems == true)
+	end
+
 	if ammo_given then
 		if pl:GetActiveWeapon().CheckAutoReload then
 			pl:GetActiveWeapon():CheckAutoReload()
 		end
 	end
 	
-	return ammo_given
+	return ammo_given or cloakAdded > 0
 end
 
 function GM:GiveAmmoPercentNoMetal(pl, pc)

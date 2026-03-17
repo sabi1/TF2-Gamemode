@@ -3388,7 +3388,10 @@ hook.Add("SetupMove", "LeadBot_Control", function(bot, mv, cmd)
 					-- our enemy doesn't exist anymore, find a random spot every 10 seconds
 					local reachedPos = isvector(bot.botPos) and bot:GetPos():DistToSqr(bot.botPos) < (bot:GetModelRadius() * 1.15) ^ 2
 					if (CurTime() > controller.LastSegmented || reachedPos) then
-						local roamPos = controller:FindSpot("random", {radius = 4500, pos = bot:GetPos(), type = "exposed"})
+						local roamPos = isfunction(TFBot_PickNavLandmarkPosition) and TFBot_PickNavLandmarkPosition(bot, "frontline") or nil
+						if not roamPos then
+							roamPos = controller:FindSpot("random", {radius = 4500, pos = bot:GetPos(), type = "exposed"})
+						end
 						if not roamPos then
 							local navArea = navmesh.GetNearestNavArea(bot:GetPos(), false, 4000, false, false, TEAM_ANY)
 							if navArea then
@@ -3688,6 +3691,8 @@ hook.Add("Think", "TFBot_MovementWatchdog", function()
 			if IsMvMMap() then
 				local deploy = GetMvMBombDeployZone()
 				bot.botPos = GetObjectivePos(deploy) or bot.botPos
+			elseif isfunction(TFBot_PickNavLandmarkPosition) then
+				bot.botPos = TFBot_PickNavLandmarkPosition(bot, "frontline") or bot.botPos
 			elseif IsValid(bot.ControllerBot) then
 				bot.botPos = bot.ControllerBot:FindSpot("random", {radius = 2500}) or bot.botPos
 			end
@@ -3752,15 +3757,10 @@ local function GetTeamRespawnPoint(ply)
 	local teamSpawns = {}
 	for _, spawn in ipairs(ents.FindByClass("info_player_teamspawn")) do
 		if not IsValid(spawn) then continue end
-		local kv = spawn:GetKeyValues()
-		local startDisabled = kv and tonumber(kv.StartDisabled or 0) or 0
-		local spawnTeam = kv and tonumber(kv.TeamNum or -1) or -1
-		if kv and startDisabled == 0 then
-			if teamID == TEAM_RED and spawnTeam == 2 then
-				table.insert(teamSpawns, spawn)
-			elseif (teamID == TEAM_BLU or teamID == TEAM_GREEN or teamID == TF_TEAM_PVE_INVADERS) and spawnTeam == 3 then
-				table.insert(teamSpawns, spawn)
-			end
+		if teamID == TEAM_RED and spawn.IsAvailableForTeam and spawn:IsAvailableForTeam(TEAM_RED, false) then
+			table.insert(teamSpawns, spawn)
+		elseif (teamID == TEAM_BLU or teamID == TEAM_GREEN or teamID == TF_TEAM_PVE_INVADERS) and spawn.IsAvailableForTeam and spawn:IsAvailableForTeam(TEAM_BLU, false) then
+			table.insert(teamSpawns, spawn)
 		end
 	end
 
@@ -4487,6 +4487,9 @@ hook.Add( "StartCommand", "TFBot_Movement", function( ply, cmd )
 				if IsValid(goalArea) then
 					recoverPos = goalArea:GetCenter()
 				end
+			end
+			if not recoverPos and isfunction(TFBot_PickNavLandmarkPosition) then
+				recoverPos = TFBot_PickNavLandmarkPosition(ply, "recovery")
 			end
 			if not recoverPos and IsMvMMap() then
 				local anchor = GetMvMNavObjectiveAnchor(ply)

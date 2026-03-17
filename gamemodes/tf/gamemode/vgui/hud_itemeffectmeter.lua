@@ -71,10 +71,20 @@ local function loadMeterRes(path)
 		bgH = 50,
 		labelX = 62.5,
 		labelY = 37.5,
+		labelColor = Color(255, 255, 255, 255),
+		iconX = 0,
+		iconY = 0,
+		iconW = 0,
+		iconH = 0,
+		iconTexture = nil,
 		barX = 47,
 		barY = 28,
 		barW = 30,
 		barH = 5,
+		bar2X = 0,
+		bar2Y = 0,
+		bar2W = 0,
+		bar2H = 0,
 		xOffset = 40,
 		teamBG = {
 			DEFAULT_METER_BG[1],
@@ -87,7 +97,9 @@ local function loadMeterRes(path)
 	local root = tree and TF2Res.FindByFieldName and TF2Res.FindByFieldName(tree, "HudItemEffectMeter")
 	local bg = tree and TF2Res.FindByFieldName and TF2Res.FindByFieldName(tree, "ItemEffectMeterBG")
 	local label = tree and TF2Res.FindByFieldName and TF2Res.FindByFieldName(tree, "ItemEffectMeterLabel")
+	local icon = tree and TF2Res.FindByFieldName and TF2Res.FindByFieldName(tree, "ItemEffectIcon")
 	local meter = tree and TF2Res.FindByFieldName and TF2Res.FindByFieldName(tree, "ItemEffectMeter")
+	local meter2 = tree and TF2Res.FindByFieldName and TF2Res.FindByFieldName(tree, "ItemEffectMeter2")
 
 	if root and TF2Res.GetString and TF2Res.GetNumber then
 		parsed.panelX = TF2Res.GetString(root, "xpos", parsed.panelX)
@@ -108,12 +120,28 @@ local function loadMeterRes(path)
 	if label and TF2Res.GetNumber then
 		parsed.labelX = TF2Res.GetNumber(label, "xpos", 42) + TF2Res.GetNumber(label, "wide", 41) * 0.5
 		parsed.labelY = TF2Res.GetNumber(label, "ypos", 30) + TF2Res.GetNumber(label, "tall", 15) * 0.5
+		if TF2Res.GetColor then
+			parsed.labelColor = TF2Res.GetColor(label, "fgcolor", parsed.labelColor)
+		end
+	end
+	if icon and TF2Res.GetNumber then
+		parsed.iconX = TF2Res.GetNumber(icon, "xpos", 0)
+		parsed.iconY = TF2Res.GetNumber(icon, "ypos", 0)
+		parsed.iconW = TF2Res.GetNumber(icon, "wide", 0)
+		parsed.iconH = TF2Res.GetNumber(icon, "tall", 0)
+		parsed.iconTexture = TF2Res.GetTextureID(icon, "image", "")
 	end
 	if meter and TF2Res.GetNumber then
 		parsed.barX = TF2Res.GetNumber(meter, "xpos", parsed.barX)
 		parsed.barY = TF2Res.GetNumber(meter, "ypos", parsed.barY)
 		parsed.barW = TF2Res.GetNumber(meter, "wide", parsed.barW)
 		parsed.barH = TF2Res.GetNumber(meter, "tall", parsed.barH)
+	end
+	if meter2 and TF2Res.GetNumber then
+		parsed.bar2X = TF2Res.GetNumber(meter2, "xpos", parsed.bar2X)
+		parsed.bar2Y = TF2Res.GetNumber(meter2, "ypos", parsed.bar2Y)
+		parsed.bar2W = TF2Res.GetNumber(meter2, "wide", parsed.bar2W)
+		parsed.bar2H = TF2Res.GetNumber(meter2, "tall", parsed.bar2H)
 	end
 
 	return parsed
@@ -204,6 +232,7 @@ function METER:Init()
 	self.ResPath = DEFAULT_METER_RES
 	self.Res = getMeterRes(DEFAULT_METER_RES)
 	self.Progress = 0
+	self.ProgressBars = 1
 	self.Team = TEAM_BLUE or 3
 	self:SetVisible(false)
 end
@@ -271,6 +300,42 @@ function METER:Think()
 		return
 	end
 	self.Progress = math.Clamp(tonumber(self.Item:GetHUDMeterValue()) or 0, 0, 1)
+	self.ProgressBars = math.max(1, math.floor(tonumber(self.Item.GetHUDMeterProgressBars and self.Item:GetHUDMeterProgressBars()) or 1))
+end
+
+local function getMeterBarColor(item)
+	if IsValid(item) and isfunction(item.GetHUDMeterBarColor) then
+		return item:GetHUDMeterBarColor() or Colors.Yellow
+	end
+	return Colors.Yellow
+end
+
+local function getMeterLabelColor(item, res)
+	if IsValid(item) and isfunction(item.GetHUDMeterLabelColor) then
+		return item:GetHUDMeterLabelColor() or (res and res.labelColor) or color_white
+	end
+	return (res and res.labelColor) or color_white
+end
+
+local function getMeterIconTexture(item, res)
+	if IsValid(item) and isfunction(item.GetHUDMeterIcon) then
+		local path = item:GetHUDMeterIcon()
+		if isstring(path) and path ~= "" then
+			local normalized = TF2Res and TF2Res.NormalizeImagePath and TF2Res.NormalizeImagePath(path) or path
+			return surface.GetTextureID(normalized)
+		end
+	end
+	return res and res.iconTexture or nil
+end
+
+local function drawMeterBar(x, y, w, h, color, fill)
+	surface.SetDrawColor(Colors.TransparentYellow)
+	surface.DrawRect(x, y, w, h)
+
+	if fill <= 0 then return end
+
+	surface.SetDrawColor(color)
+	surface.DrawRect(x, y, w * math.Clamp(fill, 0, 1), h)
 end
 
 function METER:Paint(w, h)
@@ -290,32 +355,40 @@ function METER:Paint(w, h)
 		res.bgH * scale
 	)
 
+	local iconTexture = getMeterIconTexture(self.Item, res)
+	if iconTexture and iconTexture > 0 and res.iconW > 0 and res.iconH > 0 then
+		surface.SetDrawColor(255, 255, 255, 255)
+		surface.SetTexture(iconTexture)
+		surface.DrawTexturedRect(
+			res.iconX * scale,
+			res.iconY * scale,
+			res.iconW * scale,
+			res.iconH * scale
+		)
+	end
+
 	MeterLabel.text = getMeterLabelText(self.Item)
 	MeterLabel.pos = {
 		res.labelX * scale,
 		res.labelY * scale,
 	}
+	MeterLabel.color = getMeterLabelColor(self.Item, res)
 	draw.Text(MeterLabel)
 
-	surface.SetDrawColor(Colors.TransparentYellow)
-	surface.DrawRect(
-		res.barX * scale,
-		res.barY * scale,
-		res.barW * scale,
-		res.barH * scale
-	)
+	local barColor = shouldFlashMeter(self.Item, self.Progress) and getMeterFlashColor() or getMeterBarColor(self.Item)
+	local bars = self.ProgressBars or 1
+	local barProgress = self.Progress
 
-	if self.Progress > 0 then
-		if shouldFlashMeter(self.Item, self.Progress) then
-			surface.SetDrawColor(getMeterFlashColor())
-		else
-			surface.SetDrawColor(Colors.Yellow)
-		end
-		surface.DrawRect(
-			res.barX * scale,
-			res.barY * scale,
-			res.barW * scale * self.Progress,
-			res.barH * scale
+	drawMeterBar(res.barX * scale, res.barY * scale, res.barW * scale, res.barH * scale, barColor, math.min(1, barProgress * bars))
+
+	if bars > 1 and res.bar2W > 0 and res.bar2H > 0 then
+		drawMeterBar(
+			res.bar2X * scale,
+			res.bar2Y * scale,
+			res.bar2W * scale,
+			res.bar2H * scale,
+			barColor,
+			math.Clamp(barProgress * bars - 1, 0, 1)
 		)
 	end
 end

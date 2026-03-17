@@ -401,7 +401,10 @@ do
 		-- Prepared entries for modes still being implemented.
 		passtime = {
 			objective = "resource/ui/hudpasstime.res",
+			teamScore = "resource/ui/hudpasstimeteamscore.res",
 			ballStatus = "resource/ui/hudpasstimeballstatus.res",
+			passNotify = "resource/ui/hudpasstimepassnotify.res",
+			offscreenArrow = "resource/ui/hudpasstimeoffscreenarrow.res",
 		},
 		pd = {
 			objective = "resource/ui/hudobjectiveplayerdestruction.res",
@@ -1872,6 +1875,7 @@ include("shd_spec.lua")
 --include("shd_items_temp.lua")
 
 include("shd_maptypes.lua")
+include("shd_weaponselection.lua")
 include("shd_playeranim.lua")
 
 include("shd_criticals.lua")
@@ -2318,6 +2322,10 @@ local function tf_spy_team_from_index(teamIndex)
 	return teamIndex == 1 and TEAM_BLU or TEAM_RED
 end
 
+local function tf_spy_team_index_from_team_number(teamNum)
+	return (teamNum == TEAM_BLU or teamNum == TF_TEAM_PVE_INVADERS) and 1 or 0
+end
+
 local function tf_spy_get_class_display(className)
 	for _, classData in ipairs(TF_SPY_DISGUISE_CLASSES) do
 		if classData.name == className then
@@ -2389,6 +2397,111 @@ local function tf_spy_clear_disguise_nw(ply)
 	ply:SetNWInt("TFSpyDisguiseMaxHealth", 0)
 	ply:SetNWString("TFSpyDisguiseFallbackWeaponModel", "")
 	ply:SetNWString("TFSpyDisguiseFallbackCosmeticModels", "")
+	ply:SetNWInt("TFSpyDisguiseWeaponSlotOverride", -1)
+end
+
+function TF_GetSpyInvisWeapon(ply)
+	if not IsValid(ply) or not ply:IsPlayer() then return nil end
+	local wep = ply:GetWeapon("tf_weapon_invis")
+	if IsValid(wep) then
+		return wep
+	end
+	local dringer = ply:GetWeapon("tf_weapon_invis_dringer")
+	if IsValid(dringer) then
+		return dringer
+	end
+	return nil
+end
+
+function TF_GetSpyCloakMeter(ply)
+	local invis = TF_GetSpyInvisWeapon(ply)
+	if not IsValid(invis) or not invis.GetCloakMeter then
+		return nil
+	end
+	return math.Clamp(tonumber(invis:GetCloakMeter()) or 0, 0, 100)
+end
+
+function TF_CanSpyGainCloakFromItems(ply, invis)
+	if not IsValid(ply) or not ply:IsPlayer() then return false end
+	if ply:GetPlayerClass() ~= "spy" then return false end
+	invis = invis or TF_GetSpyInvisWeapon(ply)
+	if not IsValid(invis) then return false end
+
+	if ply.TempAttributes and ply.TempAttributes.NoCloakFromItems then
+		return false
+	end
+	if invis.GetAttributeValue then
+		local noRegen = tonumber(invis:GetAttributeValue("mod_cloak_no_regen_from_items", 0)) or 0
+		if noRegen > 0 then
+			return false
+		end
+	end
+	return true
+end
+
+function TF_AddSpyCloakMeter(ply, delta, fromItems)
+	if not IsValid(ply) or not ply:IsPlayer() then return 0 end
+	local invis = TF_GetSpyInvisWeapon(ply)
+	if not IsValid(invis) or not invis.GetCloakMeter or not invis.SetCloakMeter then
+		return 0
+	end
+	if fromItems and not TF_CanSpyGainCloakFromItems(ply, invis) then
+		return 0
+	end
+
+	local amount = tonumber(delta) or 0
+	if fromItems and amount > 0 and invis.GetAttributeValue then
+		local noCloakWhenCloaked = tonumber(invis:GetAttributeValue("NoCloakWhenCloaked", 0)) or 0
+		if noCloakWhenCloaked > 0 and ply.InCond and ply:InCond(TF_COND_STEALTHED) then
+			return 0
+		end
+
+		local reduced = tonumber(invis:GetAttributeValue("ReducedCloakFromAmmo", 1)) or 1
+		if reduced < 0 then reduced = 0 end
+		amount = amount * reduced
+	end
+
+	local oldMeter = math.Clamp(tonumber(invis:GetCloakMeter()) or 0, 0, 100)
+	local newMeter = math.Clamp(oldMeter + amount, 0, 100)
+	invis:SetCloakMeter(newMeter)
+	return newMeter - oldMeter
+end
+
+function TF_AddSpyCloakPercent(ply, percent, fromItems)
+	local p = tonumber(percent) or 0
+	if p == 0 then return 0 end
+	return TF_AddSpyCloakMeter(ply, p, fromItems)
+end
+
+local function tf_spy_can_disguise(ply)
+	if not IsValid(ply) or not ply:IsPlayer() then return false end
+	if ply:GetPlayerClass() ~= "spy" then return false end
+	if ply.HasTheFlag and ply:HasTheFlag() then return false end
+	if ply.TempAttributes and ply.TempAttributes.CannotDisguise then return false end
+	local cannotDisguise = 0
+	if ply.GetAttributeValue then
+		cannotDisguise = tonumber(ply:GetAttributeValue("set_cannot_disguise", 0)) or 0
+	end
+	return cannotDisguise <= 0
+end
+
+local function tf_spy_pick_default_lastdisguise_class()
+	local pool = {}
+	for _, classData in ipairs(TF_SPY_DISGUISE_CLASSES) do
+		local name = string.lower(string.Trim(tostring(classData and classData.name or "")))
+		if name ~= "scout" and name ~= "spy" then
+			pool[#pool + 1] = classData
+		end
+	end
+	return table.Random(pool) or table.Random(TF_SPY_DISGUISE_CLASSES)
+end
+
+local function tf_spy_next_weapon_override_slot(currentSlot)
+	local slot = tonumber(currentSlot) or -1
+	if slot < 0 then return 0 end
+	if slot == 0 then return 1 end
+	if slot == 1 then return 2 end
+	return 0
 end
 
 if SERVER and not GetConVar("tf_debug_spy_disguise") then
@@ -2466,7 +2579,7 @@ function TF_DisguiseSpyPlayer(ply, classArg, teamArg)
 		tf_spy_disguise_debug(ply, "TF_DisguiseSpyPlayer aborted: invalid/dead player", false)
 		return false
 	end
-	if ply:GetPlayerClass() ~= "spy" then
+	if not tf_spy_can_disguise(ply) then
 		tf_spy_disguise_debug(ply, string.format("TF_DisguiseSpyPlayer aborted: class=%s", tostring(ply:GetPlayerClass())), false)
 		return false
 	end
@@ -2477,14 +2590,32 @@ function TF_DisguiseSpyPlayer(ply, classArg, teamArg)
 		return false
 	end
 
+	local invis = TF_GetSpyInvisWeapon(ply)
+	if IsValid(invis) and invis.GetAttributeValue then
+		local disguiseConsumesCloak = tonumber(invis:GetAttributeValue("mod_disguise_consumes_cloak", 0)) or 0
+		if disguiseConsumesCloak > 0 then
+			local cloakMeter = TF_GetSpyCloakMeter(ply) or 0
+			if cloakMeter < 100 then
+				ply:EmitSound("Player.DenyWeaponSelection")
+				tf_spy_disguise_debug(ply, string.format("TF_DisguiseSpyPlayer denied: cloak meter %.2f < 100 with mod_disguise_consumes_cloak", cloakMeter), false)
+				return false
+			end
+			TF_AddSpyCloakMeter(ply, -100, false)
+		end
+	end
+
 	local teamIndex = tf_spy_parse_team_index(ply, teamArg)
 	local disguiseTeam = tf_spy_team_from_index(teamIndex)
+	ply.TFSpyDesiredDisguiseClass = classData.id
+	ply.TFSpyDesiredDisguiseTeamIndex = teamIndex
+	ply.TFSpyLastDisguiseWasOwnTeam = (disguiseTeam == ply:Team())
 
 	ply.TFSpyDisguiseSequence = (ply.TFSpyDisguiseSequence or 0) + 1
 	local seq = ply.TFSpyDisguiseSequence
 
 	ply:AddCond(TF_COND_DISGUISING)
 	ply:RemoveCond(TF_COND_DISGUISED)
+	ply:SetNWInt("TFSpyDisguiseWeaponSlotOverride", -1)
 
 	tf_spy_disguise_debug(
 		ply,
@@ -2577,6 +2708,67 @@ end
 concommand.Add("tf_spydisguise", function(ply, _, args)
 	if not SERVER then return end
 	TF_DisguiseSpyPlayer(ply, args and args[1] or nil, args and args[2] or nil)
+end)
+
+local function tf_spy_handle_lastdisguise(ply, forceRandomClass)
+	if not SERVER then return false end
+	if not IsValid(ply) or not ply:IsPlayer() or not ply:Alive() then return false end
+	if not tf_spy_can_disguise(ply) then return false end
+
+	local undefinedClass = tonumber(TF_CLASS_UNDEFINED) or -1
+	local desiredClassId = tonumber(ply.TFSpyDesiredDisguiseClass) or undefinedClass
+	local desiredTeamIndex = tonumber(ply.TFSpyDesiredDisguiseTeamIndex)
+	if desiredTeamIndex ~= 0 and desiredTeamIndex ~= 1 then
+		local ownTeam = ply:Team()
+		local enemyTeam = (ownTeam == TEAM_BLU or ownTeam == TF_TEAM_PVE_INVADERS) and TEAM_RED or TEAM_BLU
+		local useOwn = ply.TFSpyLastDisguiseWasOwnTeam == true
+		local desiredTeam = useOwn and ownTeam or enemyTeam
+		desiredTeamIndex = tf_spy_team_index_from_team_number(desiredTeam)
+	end
+
+	if forceRandomClass or desiredClassId == undefinedClass then
+		local randomClass = tf_spy_pick_default_lastdisguise_class()
+		if randomClass then
+			desiredClassId = randomClass.id
+		end
+		desiredTeamIndex = tf_spy_team_index_from_team_number((ply:Team() == TEAM_RED) and TEAM_BLU or TEAM_RED)
+	end
+
+	local desiredData = tf_spy_get_class_data(desiredClassId)
+	if not desiredData then return false end
+	local desiredTeamNum = tf_spy_team_from_index(desiredTeamIndex)
+
+	local curClass = string.lower(string.Trim(tostring(ply:GetNWString("TFSpyDisguiseClass", ""))))
+	local curTeamNum = tonumber(ply:GetNWInt("TFSpyDisguiseTeam", -1)) or -1
+	if ply:InCond(TF_COND_DISGUISED) and curClass == desiredData.name and curTeamNum == desiredTeamNum then
+		local nextSlot = tf_spy_next_weapon_override_slot(ply:GetNWInt("TFSpyDisguiseWeaponSlotOverride", -1))
+		ply:SetNWInt("TFSpyDisguiseWeaponSlotOverride", nextSlot)
+		tf_spy_disguise_debug(ply, string.format("lastdisguise switched disguise weapon slot override to %d", nextSlot), false)
+		return true
+	end
+
+	return TF_DisguiseSpyPlayer(ply, desiredClassId, desiredTeamIndex)
+end
+
+concommand.Add("lastdisguise", function(ply, _, args)
+	if not SERVER then return end
+	local randomize = istable(args) and args[1] ~= nil
+	tf_spy_handle_lastdisguise(ply, randomize)
+end)
+
+concommand.Add("disguise", function(ply, _, args)
+	if not SERVER then return end
+	if not IsValid(ply) or not ply:IsPlayer() then return end
+	if not istable(args) or not args[1] then return end
+
+	local classArg = args[1]
+	local teamArg = args[2]
+	if tonumber(teamArg) == -1 then
+		teamArg = tf_spy_team_index_from_team_number((ply:Team() == TEAM_RED) and TEAM_BLU or TEAM_RED)
+	elseif tonumber(teamArg) == -2 then
+		teamArg = tf_spy_team_index_from_team_number(ply:Team())
+	end
+	TF_DisguiseSpyPlayer(ply, classArg, teamArg)
 end)
 
 hook.Add("PlayerDeath", "TFSpyDisguiseClearOnDeath", function(victim)
@@ -3487,6 +3679,7 @@ function GM:RoundWin(teamnum)
 	GAMEMODE.RoundHasWinner = true
 	GAMEMODE.WinningTeam = teamnum
 	team.SetScore(teamnum,team.GetScore() + 1)
+	hook.Run("TF_GameRules_RoundWinOutputs", teamnum)
 	timer.Simple(15, function() 
 		GAMEMODE.RoundHasWinner = false
 		GAMEMODE.WinningTeam = nil

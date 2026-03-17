@@ -1,5 +1,7 @@
 
 local BASESPEED = 3
+local TF2_JUMP_POWER = 289
+local TF2_MAX_SPEED_CAP = 520
 
 GM.PlayerClasses = {}
 GM.PlayerClassesAutoComplete = {}
@@ -357,11 +359,9 @@ function meta:SetPlayerClass(class)
 	self:SetHealth(c.Health)
 	
 	if c.IsHL2 then -- ...however, only gmodplayers use the default view offset, TF2 players keep their own view height even when playing a HL2 map
-
 		self.PlayerJumpPower = 200
 	else
-
-		self.PlayerJumpPower = 200
+		self.PlayerJumpPower = TF2_JUMP_POWER
 	end
 	self:SetJumpPower(self.PlayerJumpPower)
 	self.NextCritBoostExpire = 0
@@ -695,20 +695,21 @@ end
 
 function meta:SetClassSpeed(sp)  
 	if !self:IsHL2() then
+		local jumpPower = tonumber(self.PlayerJumpPower) or TF2_JUMP_POWER
 		if (self:GetInfoNum("tf_giant_robot",0) == 1 and self:GetPlayerClass() != "scout") then
 			self:SetWalkSpeed(sp * 0.5) 
 			self:SetRunSpeed(sp * 0.5) 
-			self:SetJumpPower(220)
+			self:SetJumpPower(jumpPower)
 			self:SetCrouchedWalkSpeed(0.33)
-			self:SetMaxSpeed(450) 
+			self:SetMaxSpeed(TF2_MAX_SPEED_CAP) 
 			self:SetNWFloat("ClassSpeed", sp * 0.5) 
 		else
 			self:SetWalkSpeed(sp) 
 			self:SetRunSpeed(sp) 
 			self:SetSlowWalkSpeed(sp * 0.5) 
-			self:SetJumpPower(220)
+			self:SetJumpPower(jumpPower)
 			self:SetCrouchedWalkSpeed(0.33)
-			self:SetMaxSpeed(450) 
+			self:SetMaxSpeed(TF2_MAX_SPEED_CAP) 
 			self:SetNWFloat("ClassSpeed", sp) 
 		end
 	else

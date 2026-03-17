@@ -22,6 +22,14 @@ local function CarrierTimerName(flag, suffix)
 	return "MVMFlag_" .. tostring(flag:EntIndex()) .. "_" .. tostring(suffix)
 end
 
+local function OutputTeamNum(ent)
+	if not IsValid(ent) then return nil end
+	if ent.Team then
+		return ent:Team()
+	end
+	return GAMEMODE and GAMEMODE.EntityTeam and GAMEMODE:EntityTeam(ent) or nil
+end
+
 local function RoomTeamMatchesCarrier(room, ply)
 	if not IsValid(room) or not IsValid(ply) then return false end
 	if not room.GetKeyValues then return true end
@@ -312,6 +320,12 @@ function ENT:Initialize()
 	self.Trail:SetParent(self)
 	
 	self.PickupLock = {}
+	self.Disabled = tonumber((self.Properties or {}).startdisabled or 0) == 1
+	self.ReturnTime = FlagReturnTime
+	self.ShowingTimerUntil = nil
+	self:SetNWFloat("ReturnTimeLength", self.ReturnTime)
+	self:SetNWBool("FlagGlowDisabled", false)
+	self:SetNWInt("FlagTeamNum", self.TeamNum or TEAM_RED)
 	self:ResetBombUpgradeState()
 	--[[
 	0 : home
@@ -340,10 +354,24 @@ function ENT:KeyValue(key, value)
 		elseif t==3 then
 			self.TeamNum = TEAM_BLU
 		end
+		self:SetNWInt("FlagTeamNum", self.TeamNum)
+	elseif key=="startdisabled" then
+		self.Disabled = tonumber(value) == 1
 	end
 end
 
 function ENT:Think()
+	if self.ShowingTimerUntil and not self.NextReturn then
+		local remaining = self.ShowingTimerUntil - CurTime()
+		if remaining > 0 then
+			self:SetNWBool("TimerActive", true)
+			self:SetNWFloat("TimeRemaining", remaining)
+		else
+			self.ShowingTimerUntil = nil
+			self:SetNWBool("TimerActive", false)
+		end
+	end
+
 	self:SetNWEntity("carrier", self.Carrier)
 
 	for k, v in pairs(player.GetAll()) do
@@ -384,12 +412,18 @@ function ENT:Think()
 end
 
 function ENT:CanPickup(ply)
+	if self.Disabled then
+		return false
+	end
 	return ply:Team()~=self.TeamNum and not self.PickupLock[ply]
 end
 
 function ENT:StartTouch(ent)
+	if self.Disabled then return end
 	if ent:IsPlayer() and self:CanPickup(ent) and not self.PickupLock[ent] then
 		self:PlayerTouched(ent)
+	elseif ent:IsPlayer() and OutputTeamNum(ent) == self.TeamNum then
+		self:TriggerOutput("OnTouchSameTeam", ent)
 	end
 end
 
@@ -413,14 +447,16 @@ function ENT:Capture(activator, captureZone)
 	end
 
 	self:TriggerOutput("OnCapture", outputActivator)
-	if IsValid(outputActivator) and outputActivator.Team then
-		local teamNum = outputActivator:Team()
+	self:TriggerOutput("OnCapture1", outputActivator)
+	if IsValid(outputActivator) then
+		local teamNum = OutputTeamNum(outputActivator)
 		if teamNum == TEAM_RED then
 			self:TriggerOutput("OnCapTeam1", outputActivator)
 		elseif teamNum == TEAM_BLU then
 			self:TriggerOutput("OnCapTeam2", outputActivator)
 		end
 	end
+	hook.Run("TF_MapFlagCaptured", self, outputActivator)
 
 	self:Return(true)
 	self.Prop2:SetNoDraw(false)
@@ -445,6 +481,7 @@ function ENT:Return(nosound)
 		self:SetAngles(self.HomeAngles)
 		--print(self.HomePosition)
 		self:TriggerOutput("OnReturn")
+		hook.Run("TF_MapFlagReturned", self)
 
 		--ParticleEffectAttach( "cart_flashinglight", PATTACH_POINT_FOLLOW, self.Prop2, self.Prop2:LookupAttachment("siren") )
 		if nosound then
@@ -485,6 +522,7 @@ function ENT:Pickup(ply)
 		
 		self:SetNWBool("TimerActive", false)
 		self.NextReturn = nil
+		self.ShowingTimerUntil = nil
 	
 		local cap = PickPreferredMvMCaptureZone(self:GetPos())
 		if IsValid(cap) then
@@ -504,6 +542,13 @@ function ENT:Pickup(ply)
 			self:Fire("SetParentAttachment", "chest", 0)
 		end
 		self:TriggerOutput("OnPickup", ply)
+		self:TriggerOutput("OnPickup1", ply)
+		if OutputTeamNum(ply) == TEAM_RED then
+			self:TriggerOutput("OnPickupTeam1", ply)
+		elseif OutputTeamNum(ply) == TEAM_BLU then
+			self:TriggerOutput("OnPickupTeam2", ply)
+		end
+		hook.Run("TF_MapFlagPickedUp", self, ply)
 		hook.Run("TF_MVM_BombPickedUp", ply, self)
 
 		for _, ply in pairs(player.GetAll()) do
@@ -574,8 +619,10 @@ function ENT:Drop(nosound)
 		timer.Remove(CarrierTimerName(self, "CarrierGetsResistance"))
 		timer.Remove(CarrierTimerName(self, "UpgradeGate"))
 		self:SetNWBool("TimerActive", true)
-		self:SetNWFloat("TimeRemaining", FlagReturnTime)
-		self.NextReturn = CurTime() + FlagReturnTime
+		self:SetNWFloat("TimeRemaining", self.ReturnTime)
+		self:SetNWFloat("ReturnTimeLength", self.ReturnTime)
+		self.NextReturn = CurTime() + self.ReturnTime
+		self.ShowingTimerUntil = nil
 		
 		local ply = self.Carrier
 		self.PickupLock[ply] = 1 -- Prevent the player who dropped it to pick it up immediately again
@@ -593,6 +640,8 @@ function ENT:Drop(nosound)
 		self:SetAngles(Angle(0, self:GetAngles().y, 0))
 		self:DropToFloor()
 		self:TriggerOutput("OnDrop", ply)
+		self:TriggerOutput("OnDrop1", ply)
+		hook.Run("TF_MapFlagDropped", self, ply)
 
 		self:SetMoveType(MOVETYPE_FLYGRAVITY)
 		self:SetMoveCollide(MOVECOLLIDE_FLY_BOUNCE)
@@ -614,6 +663,37 @@ function ENT:AcceptInput(name, activator, caller, value)
 	name = string.lower(name)
 	if name=="skin" then
 		self:SetSkin(tonumber(value) or 0)
+	elseif name=="enable" then
+		self.Disabled = false
+	elseif name=="disable" then
+		self.Disabled = true
+	elseif name=="forcedrop" then
+		self:Drop()
+	elseif name=="forcereset" then
+		self:Return(false)
+	elseif name=="forceresetsilent" then
+		self:Return(true)
+	elseif name=="forceresetanddisablesilent" then
+		self.Disabled = true
+		self:Return(true)
+	elseif name=="setreturntime" then
+		self.ReturnTime = math.max(tonumber(value) or FlagReturnTime, 0)
+		self:SetNWFloat("ReturnTimeLength", self.ReturnTime)
+	elseif name=="showtimer" then
+		local duration = math.max(tonumber(value) or 0, 0)
+		if duration > 0 then
+			self.ShowingTimerUntil = CurTime() + duration
+			self:SetNWBool("TimerActive", true)
+			self:SetNWFloat("TimeRemaining", duration)
+			self:SetNWFloat("ReturnTimeLength", duration)
+		else
+			self.ShowingTimerUntil = nil
+			if not self.NextReturn then
+				self:SetNWBool("TimerActive", false)
+			end
+		end
+	elseif name=="forceglowdisabled" then
+		self:SetNWBool("FlagGlowDisabled", (tonumber(value) or 0) ~= 0)
 	elseif name=="setteam" then
 		local t = tonumber(value)
 		
@@ -630,6 +710,7 @@ function ENT:AcceptInput(name, activator, caller, value)
 			self:SetSkin(1)
 			self.Prop:SetSkin(1)
 		end
+		self:SetNWInt("FlagTeamNum", self.TeamNum)
 	end
 end
 
@@ -705,7 +786,11 @@ function ENT:Think()
 	end
 	
 	if self.NextReturn then
-		self.Progress:SetProgress((self.NextReturn - CurTime())/FlagReturnTime)
+		local total = self:GetNWFloat("ReturnTimeLength", FlagReturnTime)
+		if total <= 0 then
+			total = FlagReturnTime
+		end
+		self.Progress:SetProgress((self.NextReturn - CurTime()) / total)
 	end
 	if (self.Carrier and self.Carrier.TFBot) then
 

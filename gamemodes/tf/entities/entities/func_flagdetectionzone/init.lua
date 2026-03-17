@@ -92,7 +92,7 @@ function ENT:StartTouch(ent)
 		self.Players[ent] = -1
 		for k,v in pairs(ents.FindByClass("item_teamflag")) do
 			if v.Carrier == ent then
-				if game.GetMap() == "sd_doomsday" then
+				if TF_IsSpecialDeliveryMap and TF_IsSpecialDeliveryMap() then
 					for _,relay in pairs(ents.FindByName("touch_relay")) do
 						relay:Fire( "Trigger" )
 					end
@@ -115,7 +115,7 @@ function ENT:EndTouch(ent)
 		self.Players[ent] = nil
 		for k,v in pairs(ents.FindByClass("item_teamflag")) do
 			if v.Carrier == ent then
-				if game.GetMap() == "sd_doomsday" then
+				if TF_IsSpecialDeliveryMap and TF_IsSpecialDeliveryMap() then
 					for _,relay in pairs(ents.FindByName("drop_relay")) do
 						relay:Fire( "Trigger" )
 					end

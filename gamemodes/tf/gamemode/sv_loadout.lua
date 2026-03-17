@@ -155,7 +155,7 @@ function meta:GiveLoadout()
         self.ItemProperties = {}
     end
 
-    for slotIndex, id in ipairs(split) do
+	for slotIndex, id in ipairs(split) do
         id = tonumber(id)
         local itemname = nil
         local itemDef = id and tf_items.ItemsByID and tf_items.ItemsByID[id] or nil
@@ -201,11 +201,19 @@ function meta:GiveLoadout()
             --tf_items.CC_GiveItem(self, _, {itemname})
             --self:ConCommand("__svgiveitem", itemname) --id)
         end
-    end
+	end
 
-    if self:Alive() then
-        self:SetPlayerClass(playerClass)
-    end
+	if playerClass == "spy" then
+		self:SetNWFloat("SpyCloakMeter", 100)
+		local invis = self:GetWeapon("tf_weapon_invis")
+		if IsValid(invis) and invis.SetCloakMeter then
+			invis:SetCloakMeter(100)
+		end
+	end
+
+	if self:Alive() then
+		self:SetPlayerClass(playerClass)
+	end
 
     timer.Simple(0.3, function()
 		if not IsValid(self) then return end

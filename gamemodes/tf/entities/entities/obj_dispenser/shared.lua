@@ -18,35 +18,41 @@ ENT.Sound_Heal = Sound("Building_Dispenser.Heal")
 ENT.ObjectName = "#TF_Object_Dispenser"
 
 function ENT:GetTargetIDSubText()
-	local level = tonumber(self:GetLevel() or 1) or 1
-	local metal = tonumber(self:GetMetalAmount() or self:GetMetal() or 0) or 0
-	local maxMetal = tonumber(self.MaxMetal) or 400
-	return string.format("Level %d, Metal: %d / %d", level, metal, maxMetal)
+	-- Match base-object nametag behavior: show level/upgrade progress, not dispenser stored metal.
+	return self.BaseClass.GetTargetIDSubText(self)
 end
 
 function ENT:SetAutomaticFrameAdvance(bUsingAnim)
 	self.AutomaticFrameAdvance = bUsingAnim
 end
 
+function ENT:SetReplicatedDispenserMetal(m)
+	local v = self.dt.BuildingInfoFloat
+	v.z = math.max(0, tonumber(m) or 0)
+	self.dt.BuildingInfoFloat = v
+end
+
+function ENT:GetReplicatedDispenserMetal()
+	local v = self.dt.BuildingInfoFloat
+	return math.max(0, math.floor((tonumber(v.z) or 0) + 0.5))
+end
+
 function ENT:SetMetalAmount(m)
 	local maxMetal = tonumber(self.MaxMetal) or 400
 	m = math.Clamp(math.floor(tonumber(m) or 0), 0, maxMetal)
 	self.MetalAmount = m
-	-- Replicate to clients through obj_base datatable channel used by building HUD.
-	if self.SetMetal then
-		self:SetMetal(m)
-	end
+	self:SetReplicatedDispenserMetal(m)
 	self:SetAmmoPercentage(m / maxMetal)
 end
 
 function ENT:GetMetalAmount()
-	if self.MetalAmount ~= nil then
-		return tonumber(self.MetalAmount) or 0
+	if SERVER then
+		if self.MetalAmount ~= nil then
+			return tonumber(self.MetalAmount) or 0
+		end
+		return 0
 	end
-	if self.GetMetal then
-		return tonumber(self:GetMetal()) or 0
-	end
-	return 0
+	return self:GetReplicatedDispenserMetal()
 end
 
 function ENT:AddMetalAmount(m)

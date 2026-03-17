@@ -1538,6 +1538,7 @@ function ENT:Think()
                     self.NextAttack = now + math.max(0.05, tonumber(volleyDelay) or 0.5)
                     self.LaunchAnimNames = volleyAnimNames
                     self.LaunchSpeedScale = math.max(0.05, tonumber(volleySpeedScale) or 1)
+                    self.LastLaunchTargetPos = target:WorldSpaceCenter()
                     self:SetBossState("launch", 0)
                 else
                     self:ApproachXY(target:WorldSpaceCenter(), cfg)
@@ -1546,21 +1547,37 @@ function ENT:Think()
         end
     elseif self.StateName == "launch" then
         self:SetDesiredAltitude(tonumber(cfg.hover_height) or DEFAULT_CONFIG.hover_height)
-        if not target then
-            self:SetBossState("idle", 0)
-        else
-            self:ApproachXY(target:WorldSpaceCenter(), cfg)
+        local launchTargetPos = self.LastLaunchTargetPos
+        if target and target:Alive() then
+            launchTargetPos = target:WorldSpaceCenter()
+            self.LastLaunchTargetPos = launchTargetPos
 
-            if now >= (self.NextAttack or 0) then
-                self:SpawnBossProjectile(target:WorldSpaceCenter())
-                self.RemainingVolley = math.max(0, (self.RemainingVolley or 0) - 1)
-                self.NextAttack = now + math.max(0.05, tonumber(cfg.volley_interval) or DEFAULT_CONFIG.volley_interval)
-                if self.RemainingVolley <= 0 then
-                    self.LaunchAnimNames = nil
-                    self.LaunchSpeedScale = nil
-                    self:SetBossState("idle", 0)
-                end
+            -- Mirror TF2 behavior: strafe around the victim while launching.
+            local right = self:GetRight()
+            local strafe = tonumber(cfg.strafe_distance) or DEFAULT_CONFIG.strafe_distance
+            if target:EntIndex() % 2 == 1 then
+                self:ApproachXY(self:WorldSpaceCenter() + right * strafe, cfg)
+            else
+                self:ApproachXY(self:WorldSpaceCenter() - right * strafe, cfg)
             end
+        end
+
+        if now >= (self.NextAttack or 0) and isvector(launchTargetPos) then
+            self:SpawnBossProjectile(launchTargetPos)
+            self.RemainingVolley = math.max(0, (self.RemainingVolley or 0) - 1)
+            self.NextAttack = now + math.max(0.05, tonumber(cfg.volley_interval) or DEFAULT_CONFIG.volley_interval)
+            if self.RemainingVolley <= 0 then
+                self.LaunchAnimNames = nil
+                self.LaunchSpeedScale = nil
+                self.LastLaunchTargetPos = nil
+                self:SetBossState("idle", 0)
+            end
+        elseif not isvector(launchTargetPos) then
+            -- No valid remembered aim point; abort this volley safely.
+            self.LaunchAnimNames = nil
+            self.LaunchSpeedScale = nil
+            self.LastLaunchTargetPos = nil
+            self:SetBossState("idle", 0)
         end
     elseif self.StateName == "teleport" then
         self:EmitSound("Halloween.MonoculusBossTeleport", 95, 100)

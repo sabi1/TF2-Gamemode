@@ -114,6 +114,48 @@ function GM:PostScaleDamage(ent, hitgroup, dmginfo)
 		GAMEMODE:HealPlayer(nil, att, dmginfo:GetDamage() * 0.75, true, false)
 	end
 end
+
+local function TF_TryTriggerFeignDeath(victim, dmginfo)
+	if not IsValid(victim) or not victim:IsTFPlayer() or not victim:Alive() then return false end
+	if victim:GetPlayerClass() ~= "spy" then return false end
+	if not (victim.GetWeapon and victim.AddCond and victim.InCond) then return false end
+	if victim:InCond(TF_COND_FEIGN_DEATH) then return false end
+	if dmginfo:GetDamage() <= 0 then return false end
+
+	local attacker = dmginfo:GetAttacker()
+	if not IsValid(attacker) or attacker == victim then return false end
+	if attacker.IsFriendly and attacker:IsFriendly(victim) and not GetConVar("mp_friendlyfire"):GetBool() then
+		return false
+	end
+
+	local invis = victim:GetWeapon("tf_weapon_invis")
+	if not IsValid(invis) or not invis.HasFeignDeath or not invis:HasFeignDeath() then return false end
+	if not invis.IsFeignDeathReady or not invis:IsFeignDeathReady() then return false end
+
+	-- Consume cloak on feign activation (attribute is schema-authored as either fraction or percent).
+	local consume = tonumber(invis.GetAttributeValue and invis:GetAttributeValue("cloak_consume_on_feign_death_activate", 100) or 100) or 100
+	if consume <= 1 then
+		consume = consume * 100
+	end
+	consume = math.Clamp(consume, 0, 100)
+	if isfunction(TF_AddSpyCloakMeter) then
+		TF_AddSpyCloakMeter(victim, -consume, false)
+	end
+
+	local duration = 3.0
+	if invis.GetFeignDeathSpeedDuration then
+		duration = tonumber(invis:GetFeignDeathSpeedDuration()) or duration
+	end
+	victim:AddCond(TF_COND_FEIGN_DEATH, duration, victim)
+	invis:SetFeignDeathState(false)
+
+	-- Core Dead Ringer behavior: do not die from the trigger hit.
+	local hp = math.max(tonumber(victim:Health()) or 1, 1)
+	local cap = math.max(hp - 1, 0)
+	dmginfo:SetDamage(math.min(dmginfo:GetDamage() * 0.1, cap))
+	return true
+end
+
 local function SimpleSpline( value )
 	local valueSquared = value * value;
 
@@ -193,6 +235,10 @@ function GM:CommonScaleDamage(ent, hitgroup, dmginfo)
 			dmginfo:SetDamageType(DMG_GENERIC)
 			return
 		end
+	end
+
+	if TF_TryTriggerFeignDeath(ent, dmginfo) then
+		-- Continue through regular pipeline so other scaling/conditions still apply.
 	end
 
 	-- TF2 condition-based immunity/resistance (CTFPlayerShared-style core effects)

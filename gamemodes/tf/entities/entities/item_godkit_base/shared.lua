@@ -32,7 +32,7 @@ function ENT:PlayerTouched(pl)
 	
 	pl:SendLua([[EmitSound("AmmoPack.Touch", Vector(]]..pl:GetPos().x..[[,]]..pl:GetPos().y..[[,]]..pl:GetPos().z..[[))]])
 	self:Hide()
-	GAMEMODE:GiveAmmoPercent(pl, a)
+	GAMEMODE:GiveAmmoPercent(pl, a, nil, true)
 	self:Remove()
 end
 

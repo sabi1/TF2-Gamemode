@@ -9,8 +9,10 @@ PrecacheParticleSystem("critical_grenade_blue")
 PrecacheParticleSystem("peejar_impact")
 PrecacheParticleSystem("peejar_impact_milk")
 PrecacheParticleSystem("peejar_impact_small")
+PrecacheParticleSystem("gas_can_red")
+PrecacheParticleSystem("gas_can_blue")
 PrecacheParticleSystem("gas_can_impact_red")
-PrecacheParticleSystem("gas_can_impact_blu")
+PrecacheParticleSystem("gas_can_impact_blue")
 
 if CLIENT then
 
@@ -36,7 +38,7 @@ ENT.ZeroDamageCrits = true
 ENT.ExplosionSound = Sound("weapons/gas_can_explode.wav")
 ENT.OwnerDamage = 0
 
-ENT.Trail = {"gas_can_red", "gas_can_blu"}
+ENT.Trail = {"gas_can_red", "gas_can_blue"}
 
 ENT.Mass = 10
 
@@ -51,27 +53,7 @@ function ENT:DoSpecialDamage(ent, dmginfo)
 	dmginfo:SetDamage(0)
 	dmginfo:SetDamageType(DMG_GENERIC)
 	
-	if ent:IsTFPlayer() and ent~=att and ent:CanReceiveCrits() and att:IsValidEnemy(ent) then
-		if self.JarType == 2 then
-			ent:AddCond(TF_COND_MAD_MILK, 10, att)
-			ent.NextEndMilk = CurTime() + 10
-		else
-			ent:AddCond(TF_COND_URINE, 10, att)
-			ent.NextEndJarate = CurTime() + 10
-		end
-		
-		if ent:IsPlayer() then
-			-- Jarate? NOOOOOOOOOOOOOOOOOOOOOO!!!!
-			ent:Speak("TLK_JARATE_HIT")
-		elseif ent:GetClass()=="npc_combine_s" then
-			ent:Fire("HitByBugbait", "", math.Rand(0, 0.5))
-		end
-		
-		-- Since this doesn't actually cause damage, we are adding a cooperation here
-		-- TODO: code high priority cooperations that remain as long as the effect doesn't wear off
-		GAMEMODE:AddDamageCooperation(ent, att, 1, ASSIST_JARATE, 10)
-	elseif ent:GetClass()=="tf_entityflame" and (ent.Target==att or att:IsFriendly(ent.Target)) then
-		-- Extinguish teammates
+	if ent:GetClass()=="tf_entityflame" and (ent.Target==att or att:IsFriendly(ent.Target)) then
 		GAMEMODE:ExtinguishEntity(ent.Target)
 		ent:EmitSound("TFPlayer.FlameOut")
 	end
@@ -191,31 +173,36 @@ function ENT:DoExplosion()
 	explosion:Activate() 
 	explosion:Fire("Kill", "", 0.1)]]
 	
-	local flags
-	if self.JarType == 2 then
-		flags = 16
-	else
-		flags = 4
-	end
-	
 	local effectdata = EffectData()
-		effectdata:SetOrigin(self:GetPos())
-		effectdata:SetAngles(self:GetAngles())
-		effectdata:SetAttachment(flags)
+	effectdata:SetOrigin(self:GetPos())
+	effectdata:SetAngles(self:GetAngles())
+	effectdata:SetAttachment(4)
 	util.Effect("tf_explosion", effectdata, true, true)
 	
 	local owner = self:GetOwner()
 	if not owner or not owner:IsValid(self.WModel2) then owner = self end
-	local range, damage
-	range = 180
-	self.BaseDamage = 1
-	self.OwnerDamage = 0
-	self.ResultDamage = self.BaseDamage
-	
-	self.CalculatedDamage = 0
-	-- Yes, I'm using blast damage because it has a complex algorithm that allows explosive damage to get around walls with a certain limit
-	-- A simple FindInSphere wouldn't be enough since players would be able to get jarated through a wall
-	util.BlastDamage(self, owner, self:GetPos(), range, 0.00001)
+
+	if IsValid(owner) and owner:IsPlayer() then
+		local managerPos = self:GetPos() + Vector(0, 0, 30)
+		local tr = util.TraceLine({
+			start = self:GetPos(),
+			endpos = managerPos,
+			mask = MASK_SOLID_BRUSHONLY,
+			filter = self,
+		})
+		if tr.Hit then
+			managerPos = self:GetPos()
+		end
+
+		local gasManager = ents.Create("tf_gas_manager")
+		if IsValid(gasManager) then
+			gasManager:SetPos(managerPos)
+			gasManager:SetOwner(owner)
+			gasManager:Spawn()
+			gasManager:Activate()
+		end
+	end
+
 	self:BugbaitTouch(owner)
 	self:Fire("kill", "", 0.01)
 end
@@ -224,7 +211,7 @@ function ENT:PhysicsCollide(data, physobj)
 	local impact = "gas_can_impact_red"
 	local owner = self:GetOwner()
 	if IsValid(owner) and (owner:EntityTeam() == TEAM_BLU or owner:EntityTeam() == TF_TEAM_PVE_INVADERS) then
-		impact = "gas_can_impact_blu"
+		impact = "gas_can_impact_blue"
 	end
 	ParticleEffect(impact, self:GetPos(), self:GetAngles(), self)
 	self:DoExplosion()

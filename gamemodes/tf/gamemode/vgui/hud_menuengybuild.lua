@@ -2,7 +2,13 @@ local PANEL = {}
 
 local TFUI_BASE_W = 640
 local TFUI_BASE_H = 480
-local MENU_RES = "resource/ui/build_menu/hudmenuengybuild.res"
+local MENU_DIR_DEFAULT = "resource/ui/build_menu"
+local MENU_DIR_PIPBOY = "resource/ui/build_menu/pipboy"
+local MENU_DIR_360 = "resource/ui/build_menu_360"
+local MENU_DIR_SC = "resource/ui/build_menu_sc"
+local MENU_FILE = "hudmenuengybuild.res"
+local CUSTOM_BUILDMENU_DEFAULT = 0
+local CUSTOM_BUILDMENU_PIPBOY = 1
 
 local hud_menu_bg = surface.GetTextureID("hud/eng_build_bg")
 local hud_menu_item_bg = surface.GetTextureID("hud/eng_build_item")
@@ -19,22 +25,50 @@ local BUILDINGS = {
 	{
 		name = "#TF_Object_Sentry",
 		texture = hud_menu_sentry_build,
-		res = "resource/ui/build_menu/sentry_selectable.res",
+		group = 2,
+		mode = 0,
+		activeRes = "sentry_active.res",
+		selectableFallbackRes = "sentry_selectable.res",
+		alreadyBuiltRes = "sentry_already_built.res",
+		cantAffordRes = "sentry_cant_afford.res",
+		unavailableRes = "sentry_unavailable.res",
+		fallbackCost = 130,
 	},
 	{
 		name = "#TF_Object_Dispenser",
 		texture = hud_menu_dispenser_build,
-		res = "resource/ui/build_menu/dispenser_selectable.res",
+		group = 0,
+		mode = 0,
+		activeRes = "dispenser_active.res",
+		selectableFallbackRes = "dispenser_selectable.res",
+		alreadyBuiltRes = "dispenser_already_built.res",
+		cantAffordRes = "dispenser_cant_afford.res",
+		unavailableRes = "dispenser_unavailable.res",
+		fallbackCost = 100,
 	},
 	{
 		name = "#TF_Object_Tele_Entrance_360",
 		texture = hud_menu_tele_entrance_build,
-		res = "resource/ui/build_menu/tele_selectable.res",
+		group = 1,
+		mode = 0,
+		activeRes = "tele_entrance_active.res",
+		selectableFallbackRes = "tele_selectable.res",
+		alreadyBuiltRes = "tele_entrance_already_built.res",
+		cantAffordRes = "tele_entrance_cant_afford.res",
+		unavailableRes = "tele_entrance_unavailable.res",
+		fallbackCost = 75,
 	},
 	{
 		name = "#TF_Object_Tele_Exit_360",
 		texture = hud_menu_tele_exit_build,
-		res = "resource/ui/build_menu/tele_selectable.res",
+		group = 1,
+		mode = 1,
+		activeRes = "tele_exit_active.res",
+		selectableFallbackRes = "tele_selectable.res",
+		alreadyBuiltRes = "tele_exit_already_built.res",
+		cantAffordRes = "tele_exit_cant_afford.res",
+		unavailableRes = "tele_exit_unavailable.res",
+		fallbackCost = 75,
 	},
 }
 
@@ -66,6 +100,12 @@ local DefaultItemLayout = {
 
 local MenuLayoutCache
 local ItemLayoutCache = {}
+local CurrentMenuVariant = nil
+local SLOT_STATE_SELECTABLE = 1
+local SLOT_STATE_ALREADY_BUILT = 2
+local SLOT_STATE_CANT_AFFORD = 3
+local SLOT_STATE_UNAVAILABLE = 4
+local cvarBuildMenuControllerMode = GetConVar("tf_build_menu_controller_mode") or CreateClientConVar("tf_build_menu_controller_mode", "0", true, false, "Use console controller build menus.")
 
 local function scaleX(value)
 	return value * (ScrW() / TFUI_BASE_W)
@@ -80,6 +120,103 @@ local function resolveLabel(text, fallback)
 		return tf_lang.GetRaw(text) or fallback or text
 	end
 	return fallback or text or ""
+end
+
+local function pathJoin(a, b)
+	if not isstring(a) or not isstring(b) then return nil end
+	return string.Trim(a, "/\\") .. "/" .. string.Trim(b, "/\\")
+end
+
+local function fileExists(path)
+	return isstring(path) and file.Exists(path, "GAME")
+end
+
+local function readCustomBuildMenuAttr(ply)
+	if not IsValid(ply) then return CUSTOM_BUILDMENU_DEFAULT end
+
+	if isfunction(ply.GetAttributeValue) then
+		local v = tonumber(ply:GetAttributeValue("set_custom_buildmenu", CUSTOM_BUILDMENU_DEFAULT)) or CUSTOM_BUILDMENU_DEFAULT
+		if v ~= CUSTOM_BUILDMENU_DEFAULT then
+			return math.floor(v)
+		end
+	end
+
+	for _, wep in ipairs(ply.GetWeapons and ply:GetWeapons() or {}) do
+		if IsValid(wep) and isfunction(wep.GetAttributeValue) then
+			local v = tonumber(wep:GetAttributeValue("set_custom_buildmenu", CUSTOM_BUILDMENU_DEFAULT)) or CUSTOM_BUILDMENU_DEFAULT
+			if v ~= CUSTOM_BUILDMENU_DEFAULT then
+				return math.floor(v)
+			end
+		end
+	end
+
+	return CUSTOM_BUILDMENU_DEFAULT
+end
+
+local function isSteamControllerActive()
+	return input and isfunction(input.IsSteamControllerActive) and input.IsSteamControllerActive() or false
+end
+
+local function getMenuVariant()
+	local steamController = isSteamControllerActive()
+	local controllerMode = cvarBuildMenuControllerMode and cvarBuildMenuControllerMode:GetBool() or false
+	if steamController then
+		return "sc"
+	end
+	if controllerMode then
+		return "x360"
+	end
+
+	local ply = LocalPlayer()
+	local customBuildmenu = readCustomBuildMenuAttr(ply)
+	if customBuildmenu == CUSTOM_BUILDMENU_PIPBOY then
+		return "pipboy"
+	end
+
+	return "default"
+end
+
+local function getMenuDir(variant)
+	variant = variant or getMenuVariant()
+	if variant == "sc" then return MENU_DIR_SC end
+	if variant == "x360" then return MENU_DIR_360 end
+	if variant == "pipboy" then return MENU_DIR_PIPBOY end
+	return MENU_DIR_DEFAULT
+end
+
+local function clearLayoutCaches()
+	MenuLayoutCache = nil
+	ItemLayoutCache = {}
+end
+
+local function ensureLayoutVariant()
+	local variant = getMenuVariant()
+	if variant ~= CurrentMenuVariant then
+		CurrentMenuVariant = variant
+		clearLayoutCaches()
+	end
+	return variant
+end
+
+local function resolveResPath(filename, forceDefaultDir)
+	if not isstring(filename) or filename == "" then return nil end
+
+	local variant = ensureLayoutVariant()
+	local dirs = {}
+	if forceDefaultDir then
+		dirs[#dirs + 1] = MENU_DIR_DEFAULT
+	else
+		dirs[#dirs + 1] = getMenuDir(variant)
+		dirs[#dirs + 1] = MENU_DIR_DEFAULT
+	end
+
+	for _, dir in ipairs(dirs) do
+		local candidate = pathJoin(dir, filename)
+		if fileExists(candidate) then
+			return candidate
+		end
+	end
+	return nil
 end
 
 local function readRect(tree, fieldName, defaults)
@@ -100,13 +237,17 @@ local function readLabel(tree, fieldName, defaults)
 	out.w = TF2Res.ParseCoord(TF2Res.GetString(node, "wide", nil), TFUI_BASE_W, out.w)
 	out.h = TF2Res.ParseCoord(TF2Res.GetString(node, "tall", nil), TFUI_BASE_H, out.h)
 	out.font = TF2Res.GetString(node, "font", out.font)
+	if out.font == "HudMenuNumberFont" then
+		out.font = defaults.font or "TFDefault"
+	end
 	out.text = TF2Res.GetString(node, "labelText", out.text)
 	return out
 end
 
 local function loadMenuLayout()
 	local layout = table.Copy(DefaultMenuLayout)
-	local tree = TF2Res and TF2Res.Load and TF2Res.Load(MENU_RES)
+	local menuPath = resolveResPath(MENU_FILE, false)
+	local tree = menuPath and TF2Res and TF2Res.Load and TF2Res.Load(menuPath)
 	if not tree then return layout end
 
 	layout.background = readRect(tree, "MainBackground", layout.background)
@@ -124,16 +265,148 @@ local function loadMenuLayout()
 end
 
 local function getMenuLayout()
+	ensureLayoutVariant()
 	if not MenuLayoutCache then
 		MenuLayoutCache = loadMenuLayout()
 	end
 	return MenuLayoutCache
 end
 
-local function loadItemLayout(slot)
+local function getPlayerBuildablesTable()
+	local ply = LocalPlayer()
+	if not IsValid(ply) then return nil end
+	if istable(ply.Buildings) then return ply.Buildings end
+	local builder = ply.GetWeapon and ply:GetWeapon("tf_weapon_builder")
+	if IsValid(builder) and IsValid(builder.Owner) and istable(builder.Owner.Buildings) then
+		return builder.Owner.Buildings
+	end
+	return nil
+end
+
+local function getSlotBuildDef(slot)
+	local data = BUILDINGS[slot]
+	if not data then return nil end
+	local buildables = getPlayerBuildablesTable()
+	if buildables and buildables[data.group] and buildables[data.group][data.mode] then
+		return buildables[data.group][data.mode]
+	end
+	return nil
+end
+
+local function countOwnedSentries(ply)
+	local regular = 0
+	local disposable = 0
+	for _, ent in ipairs(ents.FindByClass("obj_sentrygun")) do
+		if not IsValid(ent) then continue end
+		if ent:GetOwner() ~= ply and ent:GetBuilder() ~= ply and ent.Player ~= ply then continue end
+		if ent.TF_MVM_DisposableSentry then
+			disposable = disposable + 1
+		else
+			regular = regular + 1
+		end
+	end
+	return regular, disposable
+end
+
+local function getSlotState(slot)
+	local data = BUILDINGS[slot]
+	if not data then return SLOT_STATE_UNAVAILABLE, 0 end
+
+	local ply = LocalPlayer()
+	if not IsValid(ply) then return SLOT_STATE_UNAVAILABLE, data.fallbackCost or 0 end
+
+	local def = getSlotBuildDef(slot)
+	local cost = math.max(0, math.floor(tonumber((def and def.cost) or data.fallbackCost or 0) or 0))
+	local metal = tonumber(ply:GetAmmoCount(TF_METAL) or 0) or 0
+
+	if not def then
+		return SLOT_STATE_UNAVAILABLE, cost
+	end
+	if def.enabled == false or def.disabled == true then
+		return SLOT_STATE_UNAVAILABLE, cost
+	end
+
+	local alreadyBuilt = false
+	if data.group == 2 then
+		local regularCount, disposableCount = countOwnedSentries(ply)
+		local disposableLimit = 0
+		if ply.TF_MVM_Dynamic then
+			disposableLimit = math.max(0, math.floor(tonumber(ply.TF_MVM_Dynamic.DisposableSentryCount) or 0))
+		end
+		local allowDisposable = disposableLimit > 0 and regularCount >= 1 and disposableCount < disposableLimit
+		alreadyBuilt = regularCount >= 1 and not allowDisposable
+	elseif data.group == 0 then
+		for _, ent in ipairs(ents.FindByClass("obj_dispenser")) do
+			if IsValid(ent) and (ent:GetOwner() == ply or ent:GetBuilder() == ply or ent.Player == ply) then
+				alreadyBuilt = true
+				break
+			end
+		end
+	elseif data.group == 1 then
+		for _, ent in ipairs(ents.FindByClass("obj_teleporter")) do
+			if not IsValid(ent) then continue end
+			if ent:GetOwner() ~= ply and ent:GetBuilder() ~= ply and ent.Player ~= ply then continue end
+			if data.mode == 0 and ent.IsEntrance and ent:IsEntrance() then
+				alreadyBuilt = true
+				break
+			elseif data.mode == 1 and ent.IsExit and ent:IsExit() then
+				alreadyBuilt = true
+				break
+			end
+		end
+	end
+
+	local canBuildByRules = true
+	if isfunction(TF_CanPlayerBuildObject) then
+		canBuildByRules = TF_CanPlayerBuildObject(ply, data.group, data.mode, false)
+	end
+
+	if alreadyBuilt then
+		return SLOT_STATE_ALREADY_BUILT, cost
+	end
+	if not canBuildByRules then
+		return SLOT_STATE_UNAVAILABLE, cost
+	end
+	if metal < cost then
+		return SLOT_STATE_CANT_AFFORD, cost
+	end
+	return SLOT_STATE_SELECTABLE, cost
+end
+
+local function getSlotResPath(slot, state)
+	local data = BUILDINGS[slot]
+	if not data then return nil end
+	local fileName
+	local forceDefaultDir = false
+
+	if state == SLOT_STATE_ALREADY_BUILT then
+		fileName = data.alreadyBuiltRes
+	elseif state == SLOT_STATE_CANT_AFFORD then
+		fileName = data.cantAffordRes
+	elseif state == SLOT_STATE_UNAVAILABLE then
+		fileName = data.unavailableRes
+		forceDefaultDir = true
+	else
+		fileName = data.activeRes
+	end
+
+	local resolved = resolveResPath(fileName, forceDefaultDir)
+	if resolved then
+		return resolved
+	end
+
+	if state == SLOT_STATE_SELECTABLE and isstring(data.selectableFallbackRes) then
+		return resolveResPath(data.selectableFallbackRes, false)
+	end
+
+	return nil
+end
+
+local function loadItemLayout(slot, state)
 	local data = BUILDINGS[slot]
 	local layout = table.Copy(DefaultItemLayout)
-	local tree = data and TF2Res and TF2Res.Load and TF2Res.Load(data.res)
+	local resPath = getSlotResPath(slot, state)
+	local tree = resPath and TF2Res and TF2Res.Load and TF2Res.Load(resPath)
 	if not tree then return layout end
 
 	layout.name = readLabel(tree, "ItemNameLabel", layout.name)
@@ -141,14 +414,25 @@ local function loadItemLayout(slot)
 	layout.icon = readRect(tree, "BuildingIcon", layout.icon)
 	layout.metal = readRect(tree, "MetalIcon", layout.metal)
 	layout.cost = readLabel(tree, "CostLabel", layout.cost)
+	local numberBgNode = TF2Res and TF2Res.FindByFieldName and TF2Res.FindByFieldName(tree, "NumberBg")
+	local numberLabelNode = TF2Res and TF2Res.FindByFieldName and TF2Res.FindByFieldName(tree, "NumberLabel")
+	if numberBgNode and numberLabelNode then
+		layout.numberBg = readRect(tree, "NumberBg", layout.numberBg)
+		layout.number = readLabel(tree, "NumberLabel", layout.number)
+		layout.showNumber = true
+	else
+		layout.showNumber = false
+	end
 	return layout
 end
 
-local function getItemLayout(slot)
-	if not ItemLayoutCache[slot] then
-		ItemLayoutCache[slot] = loadItemLayout(slot)
+local function getItemLayout(slot, state)
+	ensureLayoutVariant()
+	ItemLayoutCache[slot] = ItemLayoutCache[slot] or {}
+	if not ItemLayoutCache[slot][state] then
+		ItemLayoutCache[slot][state] = loadItemLayout(slot, state)
 	end
-	return ItemLayoutCache[slot]
+	return ItemLayoutCache[slot][state]
 end
 
 function PANEL:Init()
@@ -170,7 +454,9 @@ function PANEL:Paint()
 
 	local slot = self.slot or 1
 	local building = BUILDINGS[slot]
-	local layout = getItemLayout(slot)
+	if not building then return end
+	local state, cost = getSlotState(slot)
+	local layout = getItemLayout(slot, state)
 
 	draw.Text{
 		text = resolveLabel(building.name, building.name),
@@ -203,7 +489,7 @@ function PANEL:Paint()
 	surface.DrawTexturedRect(scaleX(layout.metal.x), scaleY(layout.metal.y), scaleX(layout.metal.w), scaleY(layout.metal.h))
 
 	draw.Text{
-		text = 150,
+		text = cost,
 		font = layout.cost.font,
 		pos = { scaleX(layout.cost.x), scaleY(layout.cost.y + layout.cost.h * 0.5) },
 		color = Colors.TanDarker,
@@ -211,23 +497,25 @@ function PANEL:Paint()
 		yalign = TEXT_ALIGN_CENTER,
 	}
 
-	surface.SetDrawColor(255, 255, 255, 255)
-	surface.SetTexture(DefaultItemLayout.numberBg.texture)
-	surface.DrawTexturedRect(
-		scaleX(DefaultItemLayout.numberBg.x),
-		scaleY(DefaultItemLayout.numberBg.y),
-		scaleX(DefaultItemLayout.numberBg.w),
-		scaleY(DefaultItemLayout.numberBg.h)
-	)
+	if layout.showNumber ~= false then
+		surface.SetDrawColor(255, 255, 255, 255)
+		surface.SetTexture(layout.numberBg.texture)
+		surface.DrawTexturedRect(
+			scaleX(layout.numberBg.x),
+			scaleY(layout.numberBg.y),
+			scaleX(layout.numberBg.w),
+			scaleY(layout.numberBg.h)
+		)
 
-	draw.Text{
-		text = slot,
-		font = DefaultItemLayout.number.font,
-		pos = { scaleX(DefaultItemLayout.number.x + DefaultItemLayout.number.w * 0.5), scaleY(DefaultItemLayout.number.y + DefaultItemLayout.number.h * 0.5) },
-		color = Colors.Black,
-		xalign = TEXT_ALIGN_CENTER,
-		yalign = TEXT_ALIGN_CENTER,
-	}
+		draw.Text{
+			text = slot,
+			font = layout.number.font,
+			pos = { scaleX(layout.number.x + layout.number.w * 0.5), scaleY(layout.number.y + layout.number.h * 0.5) },
+			color = Colors.Black,
+			xalign = TEXT_ALIGN_CENTER,
+			yalign = TEXT_ALIGN_CENTER,
+		}
+	end
 end
 
 vgui.Register("HudEngyMenuBuildItem", PANEL)

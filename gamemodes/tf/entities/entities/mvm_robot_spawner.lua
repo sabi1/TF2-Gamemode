@@ -143,8 +143,8 @@ function ENT:Initialize()
 			end
 		end
 		for k, v in pairs(ents.FindByClass("info_player_teamspawn")) do
-			if v:GetKeyValues()["StartDisabled"] == 0 then
-				if v:GetKeyValues()["TeamNum"] == 3 and !string.find(v:GetClass(),"sniper") and !string.find(v:GetClass(),"spy") and v:GetClass() != "spawnbot_invasion" and v:GetClass() != "spawnbot_left" then
+			if v.IsAvailableForTeam and v:IsAvailableForTeam(TEAM_BLU, false) then
+				if !string.find(v:GetClass(),"sniper") and !string.find(v:GetClass(),"spy") and v:GetClass() != "spawnbot_invasion" and v:GetClass() != "spawnbot_left" then
 					table.insert(self.spawnsblu, v)
 				end
 			end

@@ -50,8 +50,9 @@ end
 function SWEP:PrimaryAttack()
 	if (!self:CanPrimaryAttack()) then 
 		if (!self.Reloading and SERVER) then
-			self:SetNextPrimaryFire(CurTime())
-			self:SetNextSecondaryFire(CurTime())
+			-- Prevent blocked attacks from retriggering every frame.
+			self:SetNextPrimaryFire(CurTime() + 0.1)
+			self:SetNextSecondaryFire(CurTime() + 0.1)
 		end
 		return 
 	end

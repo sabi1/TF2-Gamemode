@@ -22,6 +22,22 @@ local function AttrValueForDebug(attList, className)
 	return nil
 end
 
+local function HasExplicitMaterialOverrideAttribute(attList)
+	if not istable(attList) then return false end
+	for _, a in ipairs(attList) do
+		if istable(a) then
+			local cls = tostring(a.attribute_class or "")
+			if cls == "material_override"
+				or cls == "material_override_team"
+				or cls == "material_override_skin"
+				or cls == "material_override_skin_team" then
+				return true
+			end
+		end
+	end
+	return false
+end
+
 local MissingParticleSystems = {
 	taunt_pyro_gasblast_match = true,
 	taunt_pyro_gasblast_fireblast = true,
@@ -810,6 +826,7 @@ function ITEM:InitVisuals(owner, visuals)
 		self.MaterialOverride = resolved
 		self.WeaponMaterial = resolved
 		self.CustomMaterialOverride2 = resolved
+		self._VisualMaterialOverrideFromPaintkit = true
 		if CLIENT and resolved and resolved ~= "" then
 			self.CustomMaterialOverride = Material(resolved)
 		end
@@ -821,8 +838,21 @@ function ITEM:InitVisuals(owner, visuals)
 			self.MaterialOverride = resolved
 			self.WeaponMaterial = resolved
 			self.CustomMaterialOverride2 = resolved
+			self._VisualMaterialOverrideFromPaintkit = true
 			self.CustomMaterialOverride = Material(resolved)
+		elseif self._VisualMaterialOverrideFromPaintkit and not HasExplicitMaterialOverrideAttribute(self:GetAttributes()) then
+			self.MaterialOverride = nil
+			self.WeaponMaterial = nil
+			self.CustomMaterialOverride = nil
+			self.CustomMaterialOverride2 = nil
+			self._VisualMaterialOverrideFromPaintkit = nil
 		end
+	elseif self._VisualMaterialOverrideFromPaintkit and not HasExplicitMaterialOverrideAttribute(self:GetAttributes()) then
+		self.MaterialOverride = nil
+		self.WeaponMaterial = nil
+		self.CustomMaterialOverride = nil
+		self.CustomMaterialOverride2 = nil
+		self._VisualMaterialOverrideFromPaintkit = nil
 	end
 
 	if (not self.RuntimeImageInventory or self.RuntimeImageInventory == "") and paintkitVisuals and isstring(paintkitVisuals.image_inventory) and paintkitVisuals.image_inventory ~= "" then
