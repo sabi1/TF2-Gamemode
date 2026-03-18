@@ -13,6 +13,57 @@ local META = FindMetaTable("Entity")
 function META:CopyVisualOverrides(source)
 	self.CustomColorOverride = source.CustomColorOverride
 	self.CustomMaterialOverride = source.CustomMaterialOverride
+	self.ProxyCosmeticTint = nil
+	self.ProxyentPaintColor = nil
+
+	if source.GetCosmeticTint then
+		local tint = source:GetCosmeticTint()
+		if isvector(tint) then
+			self.ProxyCosmeticTint = Vector(tint.x, tint.y, tint.z)
+			self.ProxyentPaintColor = self
+		end
+	end
+end
+
+function META:GetCosmeticTint()
+	if isvector(self.ProxyCosmeticTint) then
+		return self.ProxyCosmeticTint
+	end
+
+	local proxy = self.ProxyentPaintColor
+	if proxy ~= self and IsValid(proxy) and proxy.GetCosmeticTint then
+		return proxy:GetCosmeticTint()
+	end
+
+	return vector_origin
+end
+
+function META:SetPreviewCosmeticTint(tint)
+	if isvector(tint) then
+		self.ProxyCosmeticTint = Vector(tint.x, tint.y, tint.z)
+	elseif istable(tint) then
+		local r = tonumber(tint.r or tint[1] or 0) or 0
+		local g = tonumber(tint.g or tint[2] or 0) or 0
+		local b = tonumber(tint.b or tint[3] or 0) or 0
+
+		if r > 1 or g > 1 or b > 1 then
+			r = math.Clamp(r / 255, 0, 1)
+			g = math.Clamp(g / 255, 0, 1)
+			b = math.Clamp(b / 255, 0, 1)
+		else
+			r = math.Clamp(r, 0, 1)
+			g = math.Clamp(g, 0, 1)
+			b = math.Clamp(b, 0, 1)
+		end
+
+		self.ProxyCosmeticTint = Vector(r, g, b)
+	else
+		self.ProxyCosmeticTint = nil
+	end
+
+	self.ProxyentPaintColor = self.ProxyCosmeticTint and self or nil
+	self:SetRenderMode(RENDERMODE_NORMAL)
+	self:SetColor(Color(255, 255, 255, 255))
 end
 
 function META:StartVisualOverrides()

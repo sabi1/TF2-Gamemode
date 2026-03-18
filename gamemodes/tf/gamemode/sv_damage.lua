@@ -30,6 +30,46 @@ function GM:OnPlayerHitGround(pl, inWater, onFloater, speed)
 end]]
 
 local mp_falldamage = GetConVar("mp_falldamage")
+local tf_fall_damage_disablespread = CreateConVar(
+	"tf_fall_damage_disablespread",
+	"0",
+	{ FCVAR_ARCHIVE, FCVAR_NOTIFY },
+	"Disable TF2-style fall damage variance."
+)
+
+local TF_PLAYER_MAX_SAFE_FALL_SPEED = 650
+
+local function TF_ShouldIgnoreFallDamage(pl)
+	if not IsValid(pl) then return true end
+
+	if pl.InCond then
+		if pl:InCond(TF_COND_HALLOWEEN_KART) then
+			return true
+		end
+
+		if pl:InCond(TF_COND_RUNE_AGILITY) then
+			return true
+		end
+	end
+
+	if TF_IsMannpowerMode and TF_IsMannpowerMode() and pl.GetPlayerClass and pl:GetPlayerClass() == "scout" then
+		return true
+	end
+
+	local activeWeapon = pl:GetActiveWeapon()
+	if IsValid(activeWeapon) and activeWeapon:GetClass() == "tf_weapon_grapplinghook" then
+		if IsValid(activeWeapon.Beam) or ((tonumber(activeWeapon.grappleData) or 1) <= 0) then
+			return true
+		end
+	end
+
+	local cancelFallingDamage = tonumber(pl.GetAttributeValue and pl:GetAttributeValue("cancel_falling_damage", 0) or 0) or 0
+	if cancelFallingDamage > 0 then
+		return true
+	end
+
+	return false
+end
 
 -- No ear ringing sound when damaged by explosion
 function GM:OnDamagedByExplosion(pl, dmginfo)
@@ -45,9 +85,18 @@ end
 
 function GM:GetFallDamage(pl, sp)
 	if mp_falldamage:GetBool() then
-		if sp <= 550 then return 0 end
+		if TF_ShouldIgnoreFallDamage(pl) then return 0 end
+		if sp <= TF_PLAYER_MAX_SAFE_FALL_SPEED then return 0 end
 
-		return math.sqrt(sp-550)*3.47
+		local damage = 5 * (sp / 300)
+		local maxHealth = math.max(tonumber(pl:GetMaxHealth()) or 100, 1)
+		damage = damage * (maxHealth / 100)
+
+		if not tf_fall_damage_disablespread:GetBool() then
+			damage = damage * math.Rand(0.8, 1.2)
+		end
+
+		return damage
 	else
 		return 10
 	end

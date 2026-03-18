@@ -5,7 +5,9 @@ local M = TFBotValveAI.Pathing
 
 local cv_nav_budget_ms = CreateConVar("tf_bot_nav_budget_ms", "1.50", {FCVAR_ARCHIVE, FCVAR_NOTIFY})
 local cv_mvm_anchor_bias = CreateConVar("tf_bot_mvm_anchor_bias", "1", {FCVAR_ARCHIVE, FCVAR_NOTIFY})
-local cv_hard_recover = CreateConVar("tf_bot_hard_recover_enable", "1", {FCVAR_ARCHIVE, FCVAR_NOTIFY})
+local cv_hard_recover = CreateConVar("tf_bot_hard_recover_enable", "0", {FCVAR_ARCHIVE, FCVAR_NOTIFY}, "Deprecated. Teleport-based stuck recovery is disabled to avoid bots warping through walls.")
+local cv_stuck_backoff = CreateConVar("tf_bot_stuck_backoff_time", "0.45", {FCVAR_ARCHIVE, FCVAR_NOTIFY}, "How long bots use a gentle non-teleport unstuck shim after repeated wall/path stalls.")
+local cv_no_route_probe_speed = CreateConVar("tf_bot_no_route_probe_speed", "140", {FCVAR_ARCHIVE, FCVAR_NOTIFY}, "Forward speed used when a bot has no route and is probing for a valid path.")
 local navBudget = {
 	window = 0,
 	used = 0,
@@ -130,73 +132,41 @@ local function resetPathState(st)
 	st.path.stuckSince = nil
 end
 
-local function findHardRecoverPos(bot, targetPos)
-	if not IsValid(bot) or not isvector(targetPos) or not navmesh or not navmesh.GetAllNavAreas then return nil end
-	local origin = bot:GetPos()
-	local currentDist = origin:DistToSqr(targetPos)
-	local bestPos, bestScore
-	for _, area in ipairs(navmesh.GetAllNavAreas()) do
-		if not IsValid(area) then continue end
-		local center = area:GetCenter()
-		local dz = math.abs(center.z - origin.z)
-		if dz > 700 then continue end
-		local fromDist = origin:DistToSqr(center)
-		if fromDist < (120 * 120) or fromDist > (900 * 900) then continue end
-		local towardDist = center:DistToSqr(targetPos)
-		if towardDist >= (currentDist - (96 * 96)) then continue end
+local function startSoftStuckRecover(bot, st, now)
+	st.path.unstuckUntil = now + math.max(0.1, cv_stuck_backoff:GetFloat())
+	st.path.unstuckSide = (bot:EntIndex() % 2 == 0) and 1 or -1
+end
 
-		local probe = center + Vector(0, 0, 8)
-		local tr = util.TraceHull({
-			start = probe,
-			endpos = probe,
-			filter = bot,
-			mask = MASK_PLAYERSOLID,
-			mins = Vector(-16, -16, 0),
-			maxs = Vector(16, 16, 72),
-		})
-		if tr.StartSolid then continue end
-
-		local score = (towardDist * 0.70) + (fromDist * 0.40)
-		if not bestScore or score < bestScore then
-			bestScore = score
-			bestPos = probe
-		end
+local function applySoftStuckRecover(bot, cmd, st, now)
+	if now >= tonumber(st.path.unstuckUntil or 0) then
+		return false
 	end
-	return bestPos
+
+	local side = tonumber(st.path.unstuckSide or 1)
+	local b = cmd:GetButtons()
+	cmd:SetButtons(bit.bor(b, IN_JUMP))
+	cmd:SetForwardMove(-120)
+	cmd:SetSideMove(180 * side)
+	return true
 end
 
 local function tryHardRecover(bot, st, targetPos, now)
-	if not cv_hard_recover:GetBool() then return false end
 	st.path.nextHardRecoverAt = tonumber(st.path.nextHardRecoverAt or 0)
 	if now < st.path.nextHardRecoverAt then return false end
-	local recoverPos = findHardRecoverPos(bot, targetPos)
-	if not isvector(recoverPos) then
-		st.path.nextHardRecoverAt = now + 1.25
-		debugLog(bot, "path_hard_recover_fail", 0.75, string.format(
-			"hard_recover=no_candidate routeType=%s pos=%s target=%s",
-			tostring(bot.routeType),
-			fmtVec(bot:GetPos()),
-			fmtVec(targetPos)
-		))
-		return false
-	end
-	local fromPos = bot:GetPos()
-	bot:SetPos(recoverPos)
-	if bot.SetLocalVelocity then
-		bot:SetLocalVelocity(vector_origin)
-	end
+
 	st.path.route = nil
 	resetPathState(st)
 	st.path.nextRepath = 0
-	st.path.nextHardRecoverAt = now + 2.5
-	debugLog(bot, "path_hard_recover_ok", 0.35, string.format(
-		"hard_recover=teleport from=%s to=%s target=%s routeType=%s",
-		fmtVec(fromPos),
-		fmtVec(recoverPos),
+	st.path.nextHardRecoverAt = now + 1.25
+	startSoftStuckRecover(bot, st, now)
+	debugLog(bot, "path_hard_recover_disabled", 0.35, string.format(
+		"hard_recover=disabled repath_only pos=%s target=%s routeType=%s convar=%s",
+		fmtVec(bot:GetPos()),
 		fmtVec(targetPos),
-		tostring(bot.routeType)
+		tostring(bot.routeType),
+		tostring(cv_hard_recover:GetBool())
 	))
-	return true
+	return false
 end
 
 local function isMvMMap()
@@ -403,13 +373,16 @@ function M:BuildPath(bot, state, targetPos, now)
 	local route = AstarVector(bot, bot:GetPos(), targetPos)
 	navBudget.used = navBudget.used + ((SysTime() - t0) * 1000)
 	if not istable(route) or #route < 1 then
+		state.path.consecutiveBuildFails = tonumber(state.path.consecutiveBuildFails or 0) + 1
 		state.path.route = nil
 		resetPathState(state)
+		state.path.nextRepath = now + math.min(0.9 + (state.path.consecutiveBuildFails * 0.35), 2.5)
 		return false
 	end
 
 	table.remove(route) -- remove the current area just like legacy movement
 	state.path.route = route
+	state.path.consecutiveBuildFails = 0
 	state.path.lastRepath = now
 	state.path.lastRepathTry = now
 	resetPathState(state)
@@ -447,6 +420,7 @@ local function progressMonitor(bot, cmd, st, distToArea, targetPos)
 		end
 		st.path.stuckEvents = st.path.stuckEvents + 1
 		st.path.stuckEventWindowAt = now
+		startSoftStuckRecover(bot, st, now)
 		if st.path.stuckEvents >= 4 and tryHardRecover(bot, st, targetPos, now) then
 			debugLog(bot, "path_stuck_escalate", 0.45, string.format(
 				"stuck_escalate=hard_recover events=%d",
@@ -457,7 +431,7 @@ local function progressMonitor(bot, cmd, st, distToArea, targetPos)
 		end
 		local b = cmd:GetButtons()
 		cmd:SetButtons(bit.bor(b, IN_JUMP))
-		cmd:SetForwardMove(280)
+		cmd:SetForwardMove(120)
 		cmd:SetSideMove((bot:EntIndex() % 2 == 0) and 220 or -220)
 		return true
 	end
@@ -480,6 +454,7 @@ local function progressMonitor(bot, cmd, st, distToArea, targetPos)
 			end
 			st.path.stuckEvents = st.path.stuckEvents + 1
 			st.path.stuckEventWindowAt = now
+			startSoftStuckRecover(bot, st, now)
 			if st.path.stuckEvents >= 4 and tryHardRecover(bot, st, targetPos, now) then
 				debugLog(bot, "path_stuck_escalate", 0.45, string.format(
 					"stuck_escalate=hard_recover events=%d",
@@ -490,7 +465,7 @@ local function progressMonitor(bot, cmd, st, distToArea, targetPos)
 			end
 			local b = cmd:GetButtons()
 			cmd:SetButtons(bit.bor(b, IN_JUMP))
-			cmd:SetForwardMove(280)
+			cmd:SetForwardMove(120)
 			cmd:SetSideMove((bot:EntIndex() % 2 == 0) and 220 or -220)
 			return true
 		end
@@ -537,6 +512,10 @@ function M:Drive(bot, cmd, state)
 	state.path.lastRepathTry = state.path.lastRepathTry or 0
 	state.path.nextRepath = state.path.nextRepath or 0
 
+	if applySoftStuckRecover(bot, cmd, state, now) then
+		return
+	end
+
 	if self:NeedRepath(bot, state, now) then
 		self:RefreshRepathDeadline(state, now)
 		self:BuildPath(bot, state, targetPos, now)
@@ -550,7 +529,12 @@ function M:Drive(bot, cmd, state)
 		))
 		local dir = targetPos - bot:GetPos()
 		local ang = dir:GetNormalized():Angle()
-		cmd:SetForwardMove(320)
+		local failCount = tonumber(state.path.consecutiveBuildFails or 0)
+		local probeSpeed = math.max(60, cv_no_route_probe_speed:GetFloat())
+		cmd:SetForwardMove((failCount >= 2) and (probeSpeed * 0.5) or probeSpeed)
+		if failCount >= 2 then
+			cmd:SetSideMove((bot:EntIndex() % 2 == 0) and 120 or -120)
+		end
 		cmd:SetViewAngles(ang)
 		if shouldForceJumpAtObstacle(bot, ang) then
 			cmd:SetButtons(bit.bor(cmd:GetButtons(), IN_JUMP))

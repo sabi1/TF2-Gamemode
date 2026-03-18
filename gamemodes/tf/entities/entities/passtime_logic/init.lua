@@ -8,8 +8,92 @@ local PASSTIME_SCORE_LIMIT = CreateConVar(
 	{ FCVAR_NOTIFY, FCVAR_ARCHIVE, FCVAR_REPLICATED },
 	"Number of scores required to win a PASSTIME round."
 )
+local PASSTIME_BALL_RESET_TIME = CreateConVar(
+	"tf_passtime_ball_reset_time",
+	"15",
+	{ FCVAR_NOTIFY, FCVAR_ARCHIVE, FCVAR_REPLICATED },
+	"How long a loose PASSTIME ball may remain grounded/idle before it respawns."
+)
 
 local activeCarrier
+
+local function resolvePasstimeText(token, fallback)
+	if not token or token == "" then
+		return fallback
+	end
+
+	if tf_lang and tf_lang.GetRaw then
+		local text = tf_lang.GetRaw(token, true)
+		if isstring(text) and text ~= "" and text ~= token and text ~= string.Trim(token, "#") then
+			return text
+		end
+	end
+
+	return fallback or token
+end
+
+local function notifyPasstimeCarryDenied(ply, token)
+	if not IsValid(ply) or not ply:IsPlayer() then return end
+
+	local message = resolvePasstimeText(token, nil)
+	if isstring(message) and message ~= "" then
+		ply:PrintMessage(HUD_PRINTCENTER, message)
+	end
+	ply:EmitSound("Player.DenyWeaponSelection")
+end
+
+local function playAskForBallCue(requester, carrier)
+	if not (IsValid(requester) and IsValid(carrier)) then return end
+
+	local props = sound.GetProperties and sound.GetProperties("Passtime.AskForBall") or nil
+	if not props then return end
+
+	local rf = RecipientFilter()
+	rf:AddPlayer(requester)
+	if carrier ~= requester then
+		rf:AddPlayer(carrier)
+	end
+
+	EmitSound(
+		"Passtime.AskForBall",
+		requester:GetPos(),
+		requester:EntIndex(),
+		CHAN_AUTO,
+		1,
+		props.level or 75,
+		0,
+		100,
+		0,
+		rf
+	)
+end
+
+local function firePasstimeGameEvent(eventName, fields)
+	if not (SERVER and gameeventmanager and gameeventmanager.CreateEvent and isstring(eventName) and eventName ~= "") then
+		return
+	end
+
+	local event = gameeventmanager:CreateEvent(eventName)
+	if not event then
+		return
+	end
+
+	for key, value in pairs(fields or {}) do
+		if isnumber(value) then
+			if math.floor(value) == value then
+				event:SetInt(key, value)
+			else
+				event:SetFloat(key, value)
+			end
+		elseif isstring(value) then
+			event:SetString(key, value)
+		elseif isbool(value) then
+			event:SetBool(key, value)
+		end
+	end
+
+	gameeventmanager:FireEvent(event)
+end
 
 local function getActiveLogic()
 	for _, logic in ipairs(ents.FindByClass("passtime_logic")) do
@@ -42,6 +126,49 @@ end
 local function setCarrierState(ply, hasBall)
 	if not IsValid(ply) then return end
 	ply:SetNWBool("TFHasPasstimeBall", hasBall and true or false)
+end
+
+local function panicRespawnBall(logic, ballEntity, activator)
+	if not IsValid(logic) then
+		return false
+	end
+
+	if IsValid(ballEntity) and logic.BallEntity == ballEntity then
+		logic.BallEntity = nil
+	end
+
+	if IsValid(ballEntity) then
+		ballEntity.TFPasstimeSuppressRemovedRespawn = true
+		ballEntity:Remove()
+	end
+
+	logic.BallState = "removed"
+	logic:TriggerOutput("OnBallRemoved", activator or ballEntity or logic)
+	logic:ScheduleRespawnBall()
+	updateGlobals(logic)
+	return true
+end
+
+function TF_PasstimePanicRespawnBall(ballEntity, activator)
+	return panicRespawnBall(getActiveLogic(), ballEntity, activator)
+end
+
+function TF_PasstimeSetPassTarget(owner, target)
+	if not IsValid(owner) or not owner:IsPlayer() then
+		return
+	end
+
+	local previousTarget = owner:GetNWEntity("TFPasstimePassTarget")
+	if IsValid(previousTarget) and previousTarget:IsPlayer() and previousTarget ~= target then
+		previousTarget:SetNWBool("TFPasstimeIsTargeted", false)
+	end
+
+	if IsValid(target) and target:IsPlayer() and target ~= owner then
+		target:SetNWBool("TFPasstimeIsTargeted", true)
+		owner:SetNWEntity("TFPasstimePassTarget", target)
+	else
+		owner:SetNWEntity("TFPasstimePassTarget", NULL)
+	end
 end
 
 local function closestPointOnSegment(point, segStart, segEnd)
@@ -151,13 +278,26 @@ local function calcBallProgressFrac(logic)
 	return 0.5
 end
 
+local function getRespawnCountdownRemaining(logic)
+	if not IsValid(logic) then
+		return 0
+	end
+
+	local endTime = tonumber(logic.BallRespawnAt) or 0
+	if endTime <= CurTime() then
+		return 0
+	end
+
+	return math.max(0, math.ceil(endTime - CurTime()))
+end
+
 local function updateGlobals(logic)
 	SetGlobalBool("tf_passtime_map", IsValid(logic) and not logic.Disabled or false)
 	SetGlobalInt("tf_passtime_red_score", IsValid(logic) and (logic.RedScore or 0) or 0)
 	SetGlobalInt("tf_passtime_blue_score", IsValid(logic) and (logic.BlueScore or 0) or 0)
 	SetGlobalInt("tf_passtime_num_sections", IsValid(logic) and (logic.NumSections or 0) or 0)
 	SetGlobalInt("tf_passtime_current_section", IsValid(logic) and (logic.CurrentSection or 0) or 0)
-	SetGlobalInt("tf_passtime_ball_spawn_countdown", IsValid(logic) and (logic.BallSpawnCountdownSec or 0) or 0)
+	SetGlobalInt("tf_passtime_ball_spawn_countdown", IsValid(logic) and getRespawnCountdownRemaining(logic) or 0)
 	SetGlobalFloat("tf_passtime_max_pass_range", IsValid(logic) and (logic.MaxPassRange or 0) or 0)
 	SetGlobalFloat("tf_passtime_ball_progress_frac", IsValid(logic) and calcBallProgressFrac(logic) or 0.5)
 	SetGlobalInt("tf_passtime_ball_power", IsValid(logic) and (logic.BallPower or 0) or 0)
@@ -193,6 +333,13 @@ local function selectSpawner()
 	return all[1]
 end
 
+local function getPasstimeBallSkin(ent, fallback)
+	if IsValid(ent) and ent.GetSkin then
+		return math.max(0, math.floor(tonumber(ent:GetSkin()) or 0))
+	end
+	return math.max(0, math.floor(tonumber(fallback) or 0))
+end
+
 local function clearExistingBallEntity(logic)
 	if IsValid(logic.BallEntity) then
 		logic.BallEntity:Remove()
@@ -204,6 +351,7 @@ local function clearCarrier(logic, ply)
 	local carrier = ply or logic.BallCarrier or activeCarrier
 	if IsValid(carrier) then
 		setCarrierState(carrier, false)
+		TF_PasstimeSetPassTarget(carrier, nil)
 	end
 	if carrier == activeCarrier then
 		activeCarrier = nil
@@ -218,6 +366,10 @@ local function triggerBallGetOutputs(logic, carrier)
 	elseif carrier:Team() == TEAM_BLU then
 		logic:TriggerOutput("OnBallGetBlu", carrier)
 	end
+	firePasstimeGameEvent("pass_get", {
+		owner = carrier:EntIndex(),
+		team = carrier:Team(),
+	})
 end
 
 local function gameplayActive()
@@ -242,6 +394,13 @@ end
 function TF_PasstimeBallPickedUp(ply, weapon)
 	local logic = getActiveLogic()
 	if not IsValid(logic) or not IsValid(ply) then return end
+	if TF_PasstimeEntityInNoBallZone and (TF_PasstimeEntityInNoBallZone(ply) or TF_PasstimeEntityInNoBallZone(weapon)) then
+		if IsValid(weapon) then
+			weapon:Remove()
+		end
+		logic:ScheduleRespawnBall()
+		return
+	end
 	if not logic:CanPlayerCarryBall(ply) then
 		if IsValid(weapon) then
 			weapon:Remove()
@@ -261,6 +420,9 @@ function TF_PasstimeBallPickedUp(ply, weapon)
 	setCarrierState(ply, true)
 	if IsValid(weapon) then
 		weapon.StoredLastWeaponClass = getStoredWeaponClassForPasstime(ply)
+		if weapon.ApplyPasstimeSkin then
+			weapon:ApplyPasstimeSkin(weapon:GetSkin())
+		end
 	end
 	if SERVER then
 		ply:SelectWeapon("tf_weapon_passtime_gun")
@@ -289,17 +451,45 @@ function TF_PasstimeProjectileTouchedPlayer(projectile, ply)
 	if projectile:GetClass() ~= "tf_projectile_passtime_ball" then return false end
 	if not ply:IsPlayer() then return false end
 	if not logic:CanPlayerCarryBall(ply) then return false end
+	if TF_PasstimeEntityInNoBallZone and (TF_PasstimeEntityInNoBallZone(projectile) or TF_PasstimeEntityInNoBallZone(ply)) then
+		return false
+	end
 	if ply:HasWeapon("tf_weapon_passtime_gun") then return false end
 
 	projectile:Remove()
 	local previousWeaponClass = getStoredWeaponClassForPasstime(ply)
+	local projectileSkin = getPasstimeBallSkin(projectile, 0)
+	local previousCarrier = IsValid(projectile.Thrower) and projectile.Thrower or projectile:GetNWEntity("TFPasstimePrevCarrier")
+	if IsValid(previousCarrier) and previousCarrier:IsPlayer() and previousCarrier ~= ply then
+		if previousCarrier:Team() == ply:Team() then
+			firePasstimeGameEvent("pass_pass_caught", {
+				passer = previousCarrier:EntIndex(),
+				catcher = ply:EntIndex(),
+				dist = previousCarrier:GetPos():Distance(ply:GetPos()),
+				duration = math.max(CurTime() - (projectile.SpawnTime or CurTime()), 0),
+			})
+		else
+			firePasstimeGameEvent("pass_ball_stolen", {
+				victim = previousCarrier:EntIndex(),
+				attacker = ply:EntIndex(),
+			})
+		end
+	end
 	ply:Give("tf_weapon_passtime_gun")
-	ply:SelectWeapon("tf_weapon_passtime_gun")
 	timer.Simple(0, function()
 		if not IsValid(ply) then return end
 		local wep = ply:GetWeapon("tf_weapon_passtime_gun")
 		if not IsValid(wep) then return end
+		if logic.BallCarrier ~= ply and activeCarrier ~= ply then
+			TF_PasstimeBallPickedUp(ply, wep)
+		end
 		wep.StoredLastWeaponClass = previousWeaponClass
+		if wep.ApplyPasstimeSkin then
+			wep:ApplyPasstimeSkin(projectileSkin)
+		else
+			wep.WeaponSkin = projectileSkin
+			wep:SetSkin(projectileSkin)
+		end
 		if ply:GetActiveWeapon() ~= wep then
 			ply:SelectWeapon("tf_weapon_passtime_gun")
 		end
@@ -318,6 +508,10 @@ function TF_PasstimeBallThrown(ply, projectile)
 	logic.BallEntity = projectile
 	logic.BallState = "projectile"
 	logic:TriggerOutput("OnBallFree", IsValid(projectile) and projectile or ply)
+	firePasstimeGameEvent("pass_free", {
+		owner = IsValid(ply) and ply:EntIndex() or -1,
+		attacker = -1,
+	})
 	updateGlobals(logic)
 end
 
@@ -331,10 +525,26 @@ function TF_PasstimeBallDropped(ply, ballEntity)
 	if IsValid(ballEntity) then
 		logic:TriggerOutput("OnBallFree", ballEntity)
 	end
+	firePasstimeGameEvent("pass_free", {
+		owner = IsValid(ply) and ply:EntIndex() or -1,
+		attacker = -1,
+	})
 	if not IsValid(ballEntity) then
 		logic:ScheduleRespawnBall()
 	end
 	updateGlobals(logic)
+end
+
+function TF_PasstimeBallBlocked(projectile, blocker)
+	local owner = IsValid(projectile) and (IsValid(projectile.Thrower) and projectile.Thrower or projectile:GetNWEntity("TFPasstimePrevCarrier")) or nil
+	if not (IsValid(owner) and owner:IsPlayer() and IsValid(blocker) and blocker:IsPlayer()) then
+		return
+	end
+
+	firePasstimeGameEvent("pass_ball_blocked", {
+		owner = owner:EntIndex(),
+		blocker = blocker:EntIndex(),
+	})
 end
 
 function TF_IsPasstimeMap()
@@ -368,33 +578,33 @@ function ENT:Initialize()
 	end)
 end
 
-function ENT:CanPlayerCarryBall(ply)
+function ENT:CanPlayerCarryBall(ply, wantReason)
 	if not IsValid(ply) or not ply:IsPlayer() or not ply:Alive() then
-		return false
+		return false, nil
 	end
 	if not gameplayActive() then
-		return false
+		return false, nil
 	end
 	if ply.IsTaunting and ply:IsTaunting() then
-		return false
+		return false, wantReason and "#TF_Passtime_No_Taunt" or nil
 	end
 	if playerHasCond(ply, TF_COND_HALLOWEEN_GHOST_MODE) or playerHasCond(ply, TF_COND_PHASE) then
-		return false
+		return false, wantReason and "#TF_Passtime_No_Oob" or nil
 	end
 	if playerHasCond(ply, TF_COND_INVULNERABLE) or playerHasCond(ply, TF_COND_INVULNERABLE_WEARINGOFF) then
-		return false
+		return false, wantReason and "#TF_Passtime_No_Invuln" or nil
 	end
 	if playerHasCond(ply, TF_COND_DISGUISED) or playerHasCond(ply, TF_COND_DISGUISING) then
-		return false
+		return false, wantReason and "#TF_Passtime_No_Disguise" or nil
 	end
 	if playerHasCond(ply, TF_COND_STEALTHED) or playerHasCond(ply, TF_COND_STEALTHED_USER_BUFF) then
-		return false
+		return false, wantReason and "#TF_Passtime_No_Cloak" or nil
 	end
 	if ply.IsStealthed and ply:IsStealthed() then
-		return false
+		return false, wantReason and "#TF_Passtime_No_Cloak" or nil
 	end
 	if TF_PasstimeEntityInNoBallZone and TF_PasstimeEntityInNoBallZone(ply) then
-		return false
+		return false, wantReason and "#TF_Passtime_No_Oob" or nil
 	end
 
 	local wep = ply:GetActiveWeapon()
@@ -405,10 +615,10 @@ function ENT:CanPlayerCarryBall(ply)
 		and not wep:CanHolster()
 		and not ply:IsBot()
 	then
-		return false
+		return false, wantReason and "#TF_Passtime_No_Holster" or nil
 	end
 
-	return true
+	return true, nil
 end
 
 function ENT:ReloadProperties()
@@ -468,6 +678,11 @@ function ENT:AddScore(teamNum, points, activator, forceWin)
 	else
 		self:TriggerOutput("OnScoreBlu", activator or self)
 	end
+	firePasstimeGameEvent("pass_score", {
+		scorer = IsValid(activator) and activator:IsPlayer() and activator:EntIndex() or -1,
+		assister = -1,
+		points = points,
+	})
 
 	if self:GetTeamScore(teamNum) >= PASSTIME_SCORE_LIMIT:GetInt() and GAMEMODE and not GAMEMODE.RoundHasWinner then
 		GAMEMODE:RoundWin(teamNum)
@@ -505,13 +720,18 @@ end
 
 function ENT:ScheduleRespawnBall()
 	timer.Remove("tf_passtime_spawn_" .. self:EntIndex())
+	self.BallRespawnAt = CurTime() + self.BallSpawnCountdownSec
+	updateGlobals(self)
 	timer.Create("tf_passtime_spawn_" .. self:EntIndex(), self.BallSpawnCountdownSec, 1, function()
 		if not IsValid(self) or self.Disabled then return end
+		self.BallRespawnAt = 0
 		self:SpawnBallAtRandomSpawner()
 	end)
 end
 
 function ENT:SpawnBallAtSpawner(spawner)
+	timer.Remove("tf_passtime_spawn_" .. self:EntIndex())
+	self.BallRespawnAt = 0
 	clearExistingBallEntity(self)
 	clearCarrier(self)
 
@@ -521,9 +741,23 @@ function ENT:SpawnBallAtSpawner(spawner)
 	local ball = ents.Create("tf_weapon_passtime_gun")
 	if not IsValid(ball) then return false end
 
+	local spawnSkin = 0
+	if IsValid(spawner) then
+		local props = spawner.Properties or {}
+		local teamNum = tonumber(spawner.TeamNum or props.teamnum or props.team) or 0
+		if teamNum == TEAM_BLU or teamNum == TF_TEAM_PVE_INVADERS or teamNum == 3 then
+			spawnSkin = 1
+		end
+	end
+
 	ball:SetPos(spawnPos)
 	ball:SetAngles(spawnAng)
 	ball:Spawn()
+	ball.WeaponSkin = spawnSkin
+	ball:SetSkin(spawnSkin)
+	if ball.ApplyPasstimeSkin then
+		ball:ApplyPasstimeSkin(spawnSkin)
+	end
 	if ball.SetTrigger then
 		ball:SetTrigger(true)
 	end
@@ -547,12 +781,34 @@ function ENT:SpawnBallAtRandomSpawner()
 end
 
 function ENT:RemoveBall()
+	timer.Remove("tf_passtime_spawn_" .. self:EntIndex())
+	self.BallRespawnAt = 0
 	clearExistingBallEntity(self)
 	clearCarrier(self)
 	self.BallState = "removed"
 	self:TriggerOutput("OnBallRemoved", self)
 	updateGlobals(self)
 end
+
+hook.Add("PlayerDisconnected", "TF_PasstimeClearPassTarget_Disconnect", function(ply)
+	if not IsValid(ply) then
+		return
+	end
+
+	local owner = nil
+	for _, candidate in ipairs(player.GetAll()) do
+		if IsValid(candidate) and candidate:GetNWEntity("TFPasstimePassTarget") == ply then
+			owner = candidate
+			break
+		end
+	end
+
+	ply:SetNWBool("TFPasstimeIsTargeted", false)
+
+	if IsValid(owner) then
+		TF_PasstimeSetPassTarget(owner, nil)
+	end
+end)
 
 function ENT:OnEnterGoal(target, goal)
 	if not IsValid(goal) or goal.Disabled then return false end
@@ -562,6 +818,19 @@ function ENT:OnEnterGoal(target, goal)
 		if not goal:EnablePlayerScore() then return false end
 		if target:Team() ~= goal.TeamNum then return false end
 		if not TF_PlayerHasPasstimeBall(target) then return false end
+
+		if goal:GetPoints() == -1 then
+			local carriedWeapon = target:GetWeapon("tf_weapon_passtime_gun")
+			if IsValid(carriedWeapon) then
+				carriedWeapon:Remove()
+			end
+			clearCarrier(self, target)
+			self.BallState = "removed"
+			self:TriggerOutput("OnBallRemoved", goal)
+			self:ScheduleRespawnBall()
+			updateGlobals(self)
+			return true
+		end
 
 		local carriedWeapon = target:GetWeapon("tf_weapon_passtime_gun")
 		if IsValid(carriedWeapon) then
@@ -583,6 +852,18 @@ function ENT:OnEnterGoal(target, goal)
 		return false
 	end
 	if thrower:Team() ~= goal.TeamNum then return false end
+
+	if goal:GetPoints() == -1 then
+		if target == self.BallEntity then
+			self.BallEntity = nil
+		end
+		target:Remove()
+		self.BallState = "removed"
+		self:TriggerOutput("OnBallRemoved", goal)
+		self:ScheduleRespawnBall()
+		updateGlobals(self)
+		return true
+	end
 
 	target:Remove()
 	self:AddScore(thrower:Team(), goal:GetPoints(), thrower, goal:WinOnScore())
@@ -639,6 +920,7 @@ function ENT:AcceptInput(name, activator, caller, data)
 	name = string.lower(tostring(name or ""))
 
 	if name == "spawnball" then
+		timer.Remove("tf_passtime_spawn_" .. self:EntIndex())
 		self:RemoveBall()
 		self:ScheduleRespawnBall()
 		return true
@@ -661,6 +943,8 @@ function ENT:AcceptInput(name, activator, caller, data)
 				GAMEMODE:RoundWin(TEAM_RED)
 			elseif self.BlueScore > self.RedScore then
 				GAMEMODE:RoundWin(TEAM_BLU)
+			elseif GAMEMODE.RoundStalemate then
+				GAMEMODE:RoundStalemate()
 			end
 		end
 		return true
@@ -694,6 +978,8 @@ function ENT:Think()
 		self:OnProjectileEnteredNoBallZone(self.BallEntity)
 	end
 
+	updateGlobals(self)
+
 	self:NextThink(CurTime() + 0.1)
 	return true
 end
@@ -720,6 +1006,10 @@ hook.Add("EntityRemoved", "TF_PasstimeLogic_EntityRemoved", function(ent)
 	if not IsValid(logic) then return end
 
 	if ent == logic.BallEntity then
+		if ent.TFPasstimeSuppressRemovedRespawn then
+			ent.TFPasstimeSuppressRemovedRespawn = nil
+			return
+		end
 		logic.BallEntity = nil
 		logic:TriggerOutput("OnBallRemoved", ent)
 		logic:ScheduleRespawnBall()
@@ -738,11 +1028,28 @@ net.Receive("TFPasstimeAskForBall", function(_, ply)
 	if not IsValid(ply) or not ply:IsPlayer() or not ply:Alive() then return end
 	local logic = getActiveLogic()
 	if not IsValid(logic) then return end
+	if ply:GetNWFloat("TFPasstimeAskForBallUntil", 0) > CurTime() then return end
+
+	local ball = logic.BallEntity
+	if not IsValid(ball) then return end
+
 	local carrier = logic.BallCarrier or activeCarrier
 	if not IsValid(carrier) or carrier == ply then return end
 	if carrier:Team() ~= ply:Team() then return end
+
+	local canCarry, denyToken = logic:CanPlayerCarryBall(ply, true)
+	if not canCarry then
+		notifyPasstimeCarryDenied(ply, denyToken)
+		return
+	end
+
 	if logic.MaxPassRange and logic.MaxPassRange > 0 and carrier:GetPos():DistToSqr(ply:GetPos()) > (logic.MaxPassRange * logic.MaxPassRange) then
 		return
 	end
-	ply:SetNWFloat("TFPasstimeAskForBallUntil", CurTime() + 2.0)
+
+	if ply.Speak then
+		ply:Speak("TLK_PLAYER_ASK_FOR_BALL")
+	end
+	playAskForBallCue(ply, carrier)
+	ply:SetNWFloat("TFPasstimeAskForBallUntil", CurTime() + 5.0)
 end)

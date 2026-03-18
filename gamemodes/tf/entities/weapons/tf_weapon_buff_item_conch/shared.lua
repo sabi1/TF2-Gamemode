@@ -50,6 +50,23 @@ SWEP.GlobalCustomHUD = {HudItemEffectMeter = true}
 local BOOST_METER_NWKEY = "TFBoostMeter"
 local BOOST_METER_MAX = 100
 
+local function getConchTimerName(prefix, suffix)
+	return prefix .. "_" .. tostring(suffix)
+end
+
+local function stopConchTimersForOwner(owner)
+	if not IsValid(owner) then return end
+	local ownerId = owner:EntIndex()
+	timer.Remove(getConchTimerName("SetFasterSpeed1", ownerId))
+	timer.Remove(getConchTimerName("HealFor20SecsSelf", ownerId))
+	timer.Remove(getConchTimerName("RemoveBanner", ownerId))
+	for _, teammate in ipairs(team.GetPlayers(owner:Team())) do
+		if IsValid(teammate) then
+			timer.Remove(getConchTimerName("HealFor20Secs", teammate:EntIndex()))
+		end
+	end
+end
+
 local function GetOwnerBoostFraction(owner)
 	if not IsValid(owner) then return 0 end
 	local maxValue = 0
@@ -133,99 +150,128 @@ end
 function SWEP:PrimaryAttack()
 	if not IsOwnerBoostFull(self.Owner) then return end
 	ConsumeWeaponBoost(self, self.Owner)
+	local owner = self.Owner
+	if not IsValid(owner) then return end
+	local ownerId = owner:EntIndex()
+	local speedTimerName = getConchTimerName("SetFasterSpeed1", ownerId)
+	local selfHealTimerName = getConchTimerName("HealFor20SecsSelf", ownerId)
+	local bannerTimerName = getConchTimerName("RemoveBanner", ownerId)
 
 	self:SetNextPrimaryFire( CurTime() + self.Primary.Delay )	
-	self.Owner:DoAnimationEvent(ACT_MP_ATTACK_STAND_ITEM2, true)
+	owner:DoAnimationEvent(ACT_MP_ATTACK_STAND_ITEM2, true)
 	self:SendWeaponAnim(ACT_ITEM2_VM_SECONDARYATTACK)
 	self:EmitSound("items/samurai/tf_conch.wav", 90, 100)
 	timer.Simple(3, function()
-		if SERVER then
-		timer.Create("SetFasterSpeed1", 1, 20, function()
-			self.Owner:SetClassSpeed(self.Owner:GetClassSpeed() * 1.003)	
+		if not SERVER or not IsValid(self) or not IsValid(owner) then return end
+		timer.Remove(speedTimerName)
+		timer.Create(speedTimerName, 1, 20, function()
+			if not IsValid(owner) then
+				timer.Remove(speedTimerName)
+				return
+			end
+			owner:SetClassSpeed(owner:GetClassSpeed() * 1.003)	
 		end)
-		if SERVER then
-		animent3 = ents.Create( 'base_gmodentity' ) -- The entity used for the death animation	
-		animent3:SetAngles(self.Owner:GetAngles())
-		animent3:SetPos(self.Owner:GetPos())
+		local animent3 = ents.Create('base_gmodentity')
+		if not IsValid(animent3) then return end
+		animent3:SetAngles(owner:GetAngles())
+		animent3:SetPos(owner:GetPos())
 		animent3:SetModel("models/workshop_partner/weapons/c_models/c_shogun_warbanner/c_shogun_warbanner.mdl")
 		animent3:Spawn()
 		animent3:Activate()
-		animent3:SetParent(self.Owner)
+		animent3:SetParent(owner)
 		animent3:AddEffects(EF_BONEMERGE)
-		animent3:SetName("Cosmetic"..self.Owner:EntIndex())
+		animent3:SetName("Cosmetic"..ownerId)
 		
-		if self.Owner:GetPlayerClass() == "soldierbuffed" then	
-			timer.Create("RemoveBanner"..self.Owner:EntIndex(), 120, 1, function()
-				animent3:Remove()
+		timer.Remove(bannerTimerName)
+		if owner:GetPlayerClass() == "soldierbuffed" then	
+			timer.Create(bannerTimerName, 120, 1, function()
+				if IsValid(animent3) then
+					animent3:Remove()
+				end
 			end)
 		else
-			timer.Create("RemoveBanner"..self.Owner:EntIndex(), 20, 1, function()
-				animent3:Remove()
+			timer.Create(bannerTimerName, 20, 1, function()
+				if IsValid(animent3) then
+					animent3:Remove()
+				end
 			end)
 		end
-		end
 		self.Ready = false
-		timer.Create("HealFor20Secs", 1, 20, function()
-			GAMEMODE:HealPlayer(self.Owner, self.Owner, 30, false, false)
-			self.Owner:SetArmor(120) 
+		timer.Remove(selfHealTimerName)
+		timer.Create(selfHealTimerName, 1, 20, function()
+			if not IsValid(owner) then
+				timer.Remove(selfHealTimerName)
+				return
+			end
+			GAMEMODE:HealPlayer(owner, owner, 30, false, false)
+			owner:SetArmor(120) 
 		end)
-		for k,v in ipairs(team.GetPlayers(self.Owner:Team())) do
+		for k,v in ipairs(team.GetPlayers(owner:Team())) do
 			GAMEMODE:StartMiniCritBoost(v)
 			ParticleEffectAttach("soldierbuff_red_buffed", PATTACH_ABSORIGIN_FOLLOW, v, 0)
-			timer.Create("HealFor20Secs"..v:EntIndex(), 1, 20, function()
-				GAMEMODE:HealPlayer(self.Owner, v, 30, false, false)
+			local teamHealTimerName = getConchTimerName("HealFor20Secs", v:EntIndex())
+			timer.Remove(teamHealTimerName)
+			timer.Create(teamHealTimerName, 1, 20, function()
+				if not IsValid(owner) or not IsValid(v) then
+					timer.Remove(teamHealTimerName)
+					return
+				end
+				GAMEMODE:HealPlayer(owner, v, 30, false, false)
 				v:SetArmor(120)
 				v:SetClassSpeed(v:GetClassSpeed() * 1.003)				
 			end)
 		end
 		self.SpeedEnabled = true
-		self.Owner:Speak("TLK_PLAYER_BATTLECRY")
-		self.Owner:SelectWeapon("tf_weapon_rocketlauncher")
-		self.Owner:SelectWeapon("tf_weapon_rocketlauncher_bbox")
-		self.Owner:SelectWeapon("tf_weapon_rocketlauncher_qrl")
-		self.Owner:SelectWeapon("tf_weapon_rocketlauncher_dh")
-		self.Owner:SelectWeapon("tf_weapon_rocketlauncher_dt")
-		self.Owner:SelectWeapon("tf_weapon_rocketlauncher_airstrike")
-		self.Owner:SelectWeapon("tf_weapon_particle_launcher")
-		GAMEMODE:StartMiniCritBoost(self.Owner)
-		ParticleEffectAttach("soldierbuff_red_buffed", PATTACH_ABSORIGIN_FOLLOW, self.Owner, 0)
-		end
+		owner:Speak("TLK_PLAYER_BATTLECRY")
+		owner:SelectWeapon("tf_weapon_rocketlauncher")
+		owner:SelectWeapon("tf_weapon_rocketlauncher_bbox")
+		owner:SelectWeapon("tf_weapon_rocketlauncher_qrl")
+		owner:SelectWeapon("tf_weapon_rocketlauncher_dh")
+		owner:SelectWeapon("tf_weapon_rocketlauncher_dt")
+		owner:SelectWeapon("tf_weapon_rocketlauncher_airstrike")
+		owner:SelectWeapon("tf_weapon_particle_launcher")
+		GAMEMODE:StartMiniCritBoost(owner)
+		ParticleEffectAttach("soldierbuff_red_buffed", PATTACH_ABSORIGIN_FOLLOW, owner, 0)
 	end)
-	if self.Owner:GetPlayerClass() == "soldierbuffed" then
+	if owner:GetPlayerClass() == "soldierbuffed" then
 		timer.Simple(120, function()
-			if SERVER then
-				for k,v in ipairs(team.GetPlayers(self.Owner:Team())) do
-					timer.Stop("SetFasterSpeed1"..v:EntIndex())
+			if SERVER and IsValid(owner) then
+				for k,v in ipairs(team.GetPlayers(owner:Team())) do
 					GAMEMODE:StopCritBoost(v) 
 					v:ResetClassSpeed()
 					v:StopParticles() 
 				end
-				timer.Stop("SetFasterSpeed1")
-				GAMEMODE:StopCritBoost(self.Owner) 
-				self.Owner:ResetClassSpeed()	
-								
+				stopConchTimersForOwner(owner)
+				GAMEMODE:StopCritBoost(owner) 
+				owner:ResetClassSpeed()	
 			end
-			self.Owner:StopParticles()
-			self.SpeedEnabled = false
-			self.Ready = true
+			if IsValid(owner) then
+				owner:StopParticles()
+			end
+			if IsValid(self) then
+				self.SpeedEnabled = false
+				self.Ready = true
+			end
 		end)
 	else
 		timer.Simple(20, function()
-			if SERVER then
-				for k,v in ipairs(team.GetPlayers(self.Owner:Team())) do
-					timer.Stop("SetFasterSpeed1"..v:EntIndex())
+			if SERVER and IsValid(owner) then
+				for k,v in ipairs(team.GetPlayers(owner:Team())) do
 					GAMEMODE:StopCritBoost(v) 
 					v:ResetClassSpeed()
 					v:StopParticles() 
 				end
-				timer.Stop("SetFasterSpeed1")
-				GAMEMODE:StopCritBoost(self.Owner) 
-				self.Owner:ResetClassSpeed()	
-								
+				stopConchTimersForOwner(owner)
+				GAMEMODE:StopCritBoost(owner) 
+				owner:ResetClassSpeed()	
 			end
-			self.Owner:StopParticles()
-			self.SpeedEnabled = false
-			self.Ready = true
+			if IsValid(owner) then
+				owner:StopParticles()
+			end
+			if IsValid(self) then
+				self.SpeedEnabled = false
+				self.Ready = true
+			end
 		end)
 	end
 end
@@ -263,4 +309,10 @@ end
 function SWEP:Holster()
 	self.NextMeleeAttack = nil
 	return self:CallBaseFunction("Holster")
+end
+
+function SWEP:OnRemove()
+	if SERVER and IsValid(self.Owner) then
+		stopConchTimersForOwner(self.Owner)
+	end
 end

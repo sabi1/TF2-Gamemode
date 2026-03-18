@@ -126,10 +126,11 @@ function PANEL:Paint()
 	local maxhealth = healthOwner:GetMaxHealth()
 	
 	local ratio = math.Clamp(health/maxhealth,0,1)
+	local isLowHealth = health < (maxhealth * HealthRes.deathWarning)
 	
 	--local tbl = LocalPlayer():GetPlayerClassTable()
 	
-	if (1 - HealthRes.deathWarning) * health < HealthRes.deathWarning * maxhealth then -- Low health warning
+	if isLowHealth then -- Match TF2: m_nHealth < m_nMaxHealth * m_flHealthDeathWarning
 		size = (maxhealth - 2*health)/maxhealth
 		frequency = 20
 		amplitude = math.Clamp(size*127, 0, 127)
@@ -154,7 +155,7 @@ function PANEL:Paint()
 	local x,y,w,h = math.floor(HealthRes.fillX*Scale), math.floor(HealthRes.fillY*Scale), math.floor(HealthRes.fillW*Scale), math.floor(HealthRes.fillH*Scale)
 	surface.SetTexture(health_color)
 	
-	if (1 - HealthRes.deathWarning) * health < HealthRes.deathWarning * maxhealth then
+	if isLowHealth then
 		surface.SetDrawColor(255,0,0,255)
 	else
 		surface.SetDrawColor(255,255,255,255)

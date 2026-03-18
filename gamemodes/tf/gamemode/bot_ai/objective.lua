@@ -263,7 +263,7 @@ local function computeSupportSpot(carrier, goal, bot)
 	return carrierPos + dir * lead + right * offset * side
 end
 
-local function selectPassReceiver(bot, carrier, goal, maxPassRange)
+local function selectPassReceiver(bot, carrier, goal, logic, maxPassRange)
 	if not IsValid(bot) or not IsValid(carrier) or not IsValid(goal) then return nil end
 	local carrierPos = carrier:GetPos()
 	local goalPos = passtimeGoalPos(goal)
@@ -273,10 +273,14 @@ local function selectPassReceiver(bot, carrier, goal, maxPassRange)
 	local passRange2 = maxPassRange * maxPassRange
 	local best, bestScore
 
-	for _, ply in ipairs(getManagedBots()) do
-		if not isManagedAliveBot(ply) then continue end
+	for _, ply in ipairs(player.GetAll()) do
+		if not IsValid(ply) or not ply:IsPlayer() or not ply:Alive() then continue end
 		if ply == carrier or ply:Team() ~= carrier:Team() then continue end
 		if TF_PlayerHasPasstimeBall and TF_PlayerHasPasstimeBall(ply) then continue end
+		if ply.InCond and (ply:InCond(TF_COND_DISGUISED) or ply:InCond(TF_COND_DISGUISING)) then continue end
+		if ply.InCond and (ply:InCond(TF_COND_STEALTHED) or ply:InCond(TF_COND_STEALTHED_USER_BUFF)) then continue end
+		if ply.IsStealthed and ply:IsStealthed() then continue end
+		if IsValid(logic) and logic.CanPlayerCarryBall and not logic:CanPlayerCarryBall(ply) then continue end
 
 		local pos = ply:GetPos()
 		local d2 = carrierPos:DistToSqr(pos)
@@ -290,6 +294,14 @@ local function selectPassReceiver(bot, carrier, goal, maxPassRange)
 		local _, enemyDist = nearestEnemyToPos(bot, pos, 700)
 		local enemyPenalty = enemyDist and math.Clamp((700 - enemyDist) * 1.5, 0, 500) or 0
 		local score = progress - d2 - enemyPenalty
+
+		if ply:GetNWFloat("TFPasstimeAskForBallUntil", 0) > CurTime() then
+			score = score + 40000
+			if ply:KeyDown(IN_ATTACK2) then
+				score = score + 80000
+			end
+		end
+
 		if not bestScore or score > bestScore then
 			bestScore = score
 			best = ply
@@ -309,7 +321,7 @@ local function selectPasstimeDecision(bot, state, logic)
 	if IsValid(carrier) and carrier == bot and TF_PlayerHasPasstimeBall and TF_PlayerHasPasstimeBall(bot) then
 		if not IsValid(myGoal) then return nil end
 		local goalPos = passtimeGoalPos(myGoal)
-		local receiver = selectPassReceiver(bot, bot, myGoal, passRange)
+		local receiver = selectPassReceiver(bot, bot, myGoal, logic, passRange)
 		local threat, threatDist = nearestEnemyToPos(bot, bot:GetPos(), 520)
 		local goalDist = isvector(goalPos) and bot:GetPos():Distance(goalPos) or math.huge
 		local hasShot = isvector(goalPos) and hasDirectBallShot(bot, goalPos + Vector(0, 0, 48))

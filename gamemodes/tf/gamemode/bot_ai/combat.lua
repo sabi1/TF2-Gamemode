@@ -8,6 +8,9 @@ local cv_low_ammo_ratio = CreateConVar("tf_bot_low_ammo_ratio", "0.15", {FCVAR_A
 local cv_low_ammo_flee_dist = CreateConVar("tf_bot_low_ammo_flee_dist", "700", {FCVAR_ARCHIVE, FCVAR_NOTIFY})
 local cv_red_respect_blu_spawn = CreateConVar("tf_bot_red_respect_blu_spawn", "1", {FCVAR_ARCHIVE, FCVAR_NOTIFY}, "RED bots do not fire at BLU still inside BLU spawn.")
 local cv_allow_carrier_fight = CreateConVar("tf_mvm_bot_allow_flag_carrier_to_fight", "1", {FCVAR_ARCHIVE, FCVAR_NOTIFY})
+local PASSTIME_THROWSTATE_IDLE = 0
+local PASSTIME_THROWSTATE_CHARGING = 1
+local PASSTIME_THROWSTATE_CHARGED = 2
 
 local function isPasstimeMap()
 	return TF_IsPasstimeMap and TF_IsPasstimeMap() or false
@@ -139,6 +142,18 @@ local function passtimeAimPos(ent, fallback)
 	return fallback
 end
 
+local function syncPasstimePassTarget(ball, owner, passTarget)
+	if not IsValid(ball) then return end
+	ball.PassTarget = IsValid(passTarget) and passTarget or nil
+	if SERVER and IsValid(owner) then
+		if TF_PasstimeSetPassTarget then
+			TF_PasstimeSetPassTarget(owner, passTarget)
+		else
+			owner:SetNWEntity("TFPasstimePassTarget", IsValid(passTarget) and passTarget or NULL)
+		end
+	end
+end
+
 local function handlePasstimeCarrier(bot, cmd, state)
 	if not isPasstimeMap() then return false end
 	if not (TF_PlayerHasPasstimeBall and TF_PlayerHasPasstimeBall(bot)) then return false end
@@ -152,7 +167,16 @@ local function handlePasstimeCarrier(bot, cmd, state)
 	local mode = tostring(state.objective and state.objective.mode or "")
 	local actionTarget = state.objective and state.objective.targetEnt or nil
 	local targetPos = passtimeAimPos(actionTarget, state.objective and state.objective.targetPos or nil)
+	local throwCtl = state.objective
+	throwCtl.passtimeHoldStartedAt = tonumber(throwCtl.passtimeHoldStartedAt or 0)
+	throwCtl.passtimeReleaseAt = tonumber(throwCtl.passtimeReleaseAt or 0)
+	throwCtl.passtimeThrowMode = tostring(throwCtl.passtimeThrowMode or "")
+
 	if not isvector(targetPos) then
+		syncPasstimePassTarget(ball, bot, nil)
+		throwCtl.passtimeHoldStartedAt = 0
+		throwCtl.passtimeReleaseAt = 0
+		throwCtl.passtimeThrowMode = ""
 		cmd:RemoveKey(IN_ATTACK)
 		cmd:RemoveKey(IN_ATTACK2)
 		return true
@@ -163,16 +187,57 @@ local function handlePasstimeCarrier(bot, cmd, state)
 	bot:SetEyeAngles(lookAng)
 
 	if mode ~= "passtime_pass" and mode ~= "passtime_throw_goal" then
+		syncPasstimePassTarget(ball, bot, nil)
+		throwCtl.passtimeHoldStartedAt = 0
+		throwCtl.passtimeReleaseAt = 0
+		throwCtl.passtimeThrowMode = ""
 		cmd:RemoveKey(IN_ATTACK)
 		cmd:RemoveKey(IN_ATTACK2)
 		return true
 	end
 
-	local aimDot = lookAng:Forward():Dot(bot:GetAimVector())
-	local dist = bot:GetShootPos():Distance(targetPos)
-	if aimDot >= 0.985 or dist <= 140 then
-		cmd:SetButtons(bit.bor(cmd:GetButtons(), IN_ATTACK))
+	local now = CurTime()
+	local desiredPassTarget = (mode == "passtime_pass" and IsValid(actionTarget)) and actionTarget or nil
+	syncPasstimePassTarget(ball, bot, desiredPassTarget)
+
+	if throwCtl.passtimeThrowMode ~= mode then
+		throwCtl.passtimeHoldStartedAt = 0
+		throwCtl.passtimeReleaseAt = 0
+		throwCtl.passtimeThrowMode = mode
 	end
+
+	local aimDot = bot:EyeAngles():Forward():Dot(lookAng:Forward())
+	local dist = bot:GetShootPos():Distance(targetPos)
+	local stableAim = aimDot >= 0.992 or dist <= 140
+	local minHold = (mode == "passtime_pass") and 0.20 or 0.35
+	local throwState = tonumber(ball.ThrowState or PASSTIME_THROWSTATE_IDLE) or PASSTIME_THROWSTATE_IDLE
+
+	if throwState == PASSTIME_THROWSTATE_IDLE then
+		if throwCtl.passtimeHoldStartedAt <= 0 then
+			throwCtl.passtimeHoldStartedAt = now
+		end
+		throwCtl.passtimeReleaseAt = 0
+		cmd:SetButtons(bit.bor(cmd:GetButtons(), IN_ATTACK))
+		cmd:RemoveKey(IN_ATTACK2)
+		return true
+	end
+
+	if throwState == PASSTIME_THROWSTATE_CHARGING or throwState == PASSTIME_THROWSTATE_CHARGED then
+		local heldFor = now - math.max(throwCtl.passtimeHoldStartedAt, 0)
+		if throwCtl.passtimeReleaseAt <= 0 and stableAim and heldFor >= minHold then
+			throwCtl.passtimeReleaseAt = now
+		end
+		if throwCtl.passtimeReleaseAt <= 0 then
+			cmd:SetButtons(bit.bor(cmd:GetButtons(), IN_ATTACK))
+		else
+			cmd:RemoveKey(IN_ATTACK)
+		end
+		cmd:RemoveKey(IN_ATTACK2)
+		return true
+	end
+
+	throwCtl.passtimeHoldStartedAt = 0
+	throwCtl.passtimeReleaseAt = 0
 	cmd:RemoveKey(IN_ATTACK2)
 	return true
 end

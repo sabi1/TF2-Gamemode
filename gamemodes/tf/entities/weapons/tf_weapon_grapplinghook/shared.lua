@@ -31,6 +31,61 @@ local sndGrappleShoot	= Sound("weapons/grappling_hook_shoot.wav")
 local sndGrappleReel	= Sound("weapons/grappling_hook_reel_start.wav")
 local sndGrappleAbort	= Sound("weapons/grappling_hook_reel_stop.wav")
 
+local function getSupernovaTeamEffect(owner, suffix)
+	local team = IsValid(owner) and owner:EntityTeam() or TEAM_RED
+	local color = (team == TEAM_BLU or team == TF_TEAM_PVE_INVADERS) and "blue" or "red"
+	return "powerup_supernova_" .. suffix .. "_" .. color
+end
+
+local function activateSupernova(owner)
+	if not SERVER then return false end
+	if not IsValid(owner) or not owner:IsPlayer() or not owner:Alive() then return false end
+	if not owner.InCond or not owner:InCond(TF_COND_RUNE_SUPERNOVA) then return false end
+	if not owner.IsRuneCharged or not owner:IsRuneCharged() then return false end
+
+	local origin = owner:WorldSpaceCenter()
+	local victims = {}
+	for _, other in ipairs(ents.FindInSphere(origin, 450)) do
+		if not IsValid(other) or not other:IsPlayer() or other == owner or not other:Alive() then continue end
+		if owner.IsFriendly and owner:IsFriendly(other) then continue end
+		victims[#victims + 1] = other
+	end
+
+	if #victims == 0 then
+		owner:EmitSound("Player.UseDeny")
+		local denyText = tf_lang and tf_lang.GetRaw and tf_lang.GetRaw("#TF_Powerup_Supernova_Deny", true) or "There are no valid enemy targets!"
+		owner:PrintMessage(HUD_PRINTCENTER, denyText)
+		return false
+	end
+
+	local stunDuration = math.min(2 + math.max(#victims - 1, 0) * 0.5, 4)
+	for _, victim in ipairs(victims) do
+		ParticleEffect(getSupernovaTeamEffect(owner, "strike"), victim:WorldSpaceCenter(), Angle(0, 0, 0), victim)
+		if victim.DropRune then
+			victim:DropRune()
+		end
+		if victim.DropFlag then
+			victim:DropFlag()
+		end
+		if victim.AddCond then
+			victim:AddCond(TF_COND_STUNNED, stunDuration, owner)
+		end
+		local push = victim:WorldSpaceCenter() - origin
+		push.z = math.max(push.z, 0)
+		if push:LengthSqr() < 1 then
+			push = owner:GetForward()
+		end
+		push = push:GetNormalized()
+		push.z = 1
+		victim:SetVelocity(push * 420)
+	end
+
+	ParticleEffect(getSupernovaTeamEffect(owner, "explode"), owner:GetPos(), Angle(0, 0, 0), owner)
+	owner:EmitSound("Powerup.PickUpSupernovaActivate")
+	owner:SetCarryingRuneType(TF_RUNE_NONE)
+	return true
+end
+
 
 local VM_FIRESTART = ACT_GRAPPLE_FIRE_START
 local VM_FIREIDLE = ACT_GRAPPLE_FIRE_IDLE
@@ -411,4 +466,9 @@ function SWEP:PrimaryAttack()
 end
 
 function SWEP:SecondaryAttack()
+	if activateSupernova(self.Owner) then
+		self:SetNextPrimaryFire(CurTime() + 0.5)
+		self:SetNextSecondaryFire(CurTime() + 0.5)
+		return
+	end
 end

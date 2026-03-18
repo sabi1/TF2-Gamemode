@@ -3,8 +3,39 @@ if SERVER then
 end
 
 if CLIENT then
-	SWEP.PrintName			= "Jack"
-SWEP.Slot				= 5
+	SWEP.PrintName = "Jack"
+	SWEP.Slot = 5
+
+	local function drawLooseJackOutline(ent)
+		if not IsValid(ent) then
+			return
+		end
+
+		local pos = ent:GetPos()
+		local matrix = Matrix()
+		matrix:Translate(pos)
+		matrix:Scale(Vector(1.12, 1.12, 1.12))
+		matrix:Translate(-pos)
+
+		render.SuppressEngineLighting(true)
+		render.SetColorModulation(1.0, 0.92, 0.55)
+		render.SetBlend(0.9)
+		cam.PushModelMatrix(matrix)
+			ent:DrawModel()
+		cam.PopModelMatrix()
+		render.SetBlend(1)
+		render.SetColorModulation(1, 1, 1)
+		render.SuppressEngineLighting(false)
+	end
+
+	hook.Remove("PostDrawOpaqueRenderables", "TF_PasstimeLooseJackOutline")
+	hook.Add("PostDrawOpaqueRenderables", "TF_PasstimeLooseJackOutline", function()
+		for _, ent in ipairs(ents.FindByClass("tf_weapon_passtime_gun")) do
+			if IsValid(ent) and not IsValid(ent:GetOwner()) then
+				drawLooseJackOutline(ent)
+			end
+		end
+	end)
 end
 
 SWEP.Base				= "tf_weapon_gun_base"
@@ -155,6 +186,128 @@ local function passtimePreviewColor(owner)
 	return Color(255, 150, 120, 180), Color(255, 150, 120, 255)
 end
 
+local function passtimeNormalizeSkin(value)
+	value = math.floor(tonumber(value) or 0)
+	if value < 0 then
+		return 0
+	end
+	return value
+end
+
+local function restartPasstimeGesture(owner, standAct, crouchAct, swimAct)
+	if not IsValid(owner) then
+		return
+	end
+
+	local act = standAct
+	if owner.anim_InSwim and swimAct then
+		act = swimAct
+	elseif owner.Crouching and owner:Crouching() and crouchAct then
+		act = crouchAct
+	end
+
+	if not act then
+		return
+	end
+
+	if owner.PuppetAnim and owner.DoTauntEvent then
+		local seq = owner:SelectWeightedSequence(act)
+		if seq and seq >= 0 then
+			owner:DoTauntEvent(owner:GetSequenceName(seq), true)
+		end
+	else
+		owner:AnimRestartGesture(GESTURE_SLOT_ATTACK_AND_RELOAD, act, true)
+	end
+end
+
+function SWEP:ApplyPasstimeSkin(skin)
+	skin = passtimeNormalizeSkin(skin or self.WeaponSkin or self:GetSkin())
+	self.WeaponSkin = skin
+	self:SetSkin(skin)
+
+	local owner = self.Owner
+	if IsValid(owner) and owner.GetViewModel then
+		local vm = owner:GetViewModel()
+		if IsValid(vm) then
+			vm:SetSkin(skin)
+		end
+	end
+
+	if CLIENT then
+		if IsValid(self.CModel) then
+			self.CModel:SetSkin(skin)
+		end
+		if IsValid(self.AttachedVModel) then
+			self.AttachedVModel:SetSkin(skin)
+		end
+		if IsValid(self.WModel) then
+			self.WModel:SetSkin(skin)
+		end
+		if IsValid(self.AttachedWModel) then
+			self.AttachedWModel:SetSkin(skin)
+		end
+	end
+
+	return skin
+end
+
+function SWEP:SetupPasstimeThirdPersonActivities()
+	self.ActivityTranslate = self.ActivityTranslate or {}
+	self.ActivityTranslate[ACT_MP_STAND_IDLE] = ACT_MP_STAND_ITEM1
+	self.ActivityTranslate[ACT_MP_WALK] = ACT_MP_WALK_ITEM1
+	self.ActivityTranslate[ACT_MP_RUN] = ACT_MP_RUN_ITEM1
+	self.ActivityTranslate[ACT_MP_CROUCH_IDLE] = ACT_MP_CROUCH_ITEM1
+	self.ActivityTranslate[ACT_MP_CROUCHWALK] = ACT_MP_CROUCHWALK_ITEM1
+	self.ActivityTranslate[ACT_MP_SWIM] = ACT_MP_SWIM_ITEM1
+	self.ActivityTranslate[ACT_MP_AIRWALK] = ACT_MP_AIRWALK_ITEM1
+	self.ActivityTranslate[ACT_MP_JUMP_START] = ACT_MP_JUMP_START_ITEM1
+	self.ActivityTranslate[ACT_MP_JUMP_FLOAT] = ACT_MP_JUMP_FLOAT_ITEM1
+	self.ActivityTranslate[ACT_MP_JUMP_LAND] = ACT_MP_JUMP_LAND_ITEM1
+	self.ActivityTranslate[ACT_MP_ATTACK_STAND_PRIMARYFIRE] = ACT_MP_ATTACK_STAND_ITEM1
+	self.ActivityTranslate[ACT_MP_ATTACK_CROUCH_PRIMARYFIRE] = ACT_MP_ATTACK_CROUCH_ITEM1
+	self.ActivityTranslate[ACT_MP_ATTACK_SWIM_PRIMARYFIRE] = ACT_MP_ATTACK_SWIM_ITEM1
+end
+
+function SWEP:EnsurePasstimeCarryPose(forceSequenceRefresh)
+	local owner = self.Owner
+	if not IsValid(owner) then
+		return
+	end
+
+	if self.HoldType ~= "ITEM1" then
+		self.HoldType = "ITEM1"
+	end
+
+	self:SetHoldType("ITEM1")
+	self:SetupPasstimeThirdPersonActivities()
+
+	if forceSequenceRefresh and owner.AnimRestartMainSequence then
+		owner:AnimRestartMainSequence()
+	end
+end
+
+function SWEP:PlayPasstimeCatchAnimation()
+	local owner = self.Owner
+	if not IsValid(owner) then
+		return
+	end
+
+	restartPasstimeGesture(owner, ACT_MP_ITEM1_GRENADE1_DRAW, ACT_MP_ITEM1_GRENADE1_DRAW, ACT_MP_ITEM1_GRENADE1_DRAW)
+end
+
+function SWEP:PlayPasstimeThrowAnimation(isPass)
+	local owner = self.Owner
+	if not IsValid(owner) then
+		return
+	end
+
+	if isPass then
+		restartPasstimeGesture(owner, ACT_MP_ATTACK_STAND_ITEM1_SECONDARY, ACT_MP_ATTACK_CROUCH_ITEM1_SECONDARY, ACT_MP_ATTACK_SWIM_ITEM1)
+	else
+		restartPasstimeGesture(owner, ACT_MP_ATTACK_STAND_ITEM1, ACT_MP_ATTACK_CROUCH_ITEM1, ACT_MP_ATTACK_SWIM_ITEM1)
+	end
+end
+
 local function findWeaponByClass(owner, className)
 	if not IsValid(owner) or not isstring(className) or className == "" then
 		return nil
@@ -253,14 +406,20 @@ function SWEP:Deploy()
 	self:InspectAnimCheck()
 	local deployed = self:CallBaseFunction("Deploy")
 	if IsValid(self.Owner) then
-		self:SetHoldType(self.HoldType)
+		self:EnsurePasstimeCarryPose(true)
 	end
+	self:ApplyPasstimeSkin()
+	self:PlayPasstimeCatchAnimation()
 	self.ThrowState = THROWSTATE_IDLE
 	self.ThrowLoopStartTime = nil
 	self.ChargeBeginTime = nil
 	self.PassTarget = nil
 	if SERVER and IsValid(self.Owner) then
-		self.Owner:SetNWEntity("TFPasstimePassTarget", NULL)
+		if TF_PasstimeSetPassTarget then
+			TF_PasstimeSetPassTarget(self.Owner, nil)
+		else
+			self.Owner:SetNWEntity("TFPasstimePassTarget", NULL)
+		end
 	end
 	return deployed
 end
@@ -359,8 +518,7 @@ function SWEP:FinishThrow(passTarget)
 
 	self.ThrowState = THROWSTATE_THROWN
 	self.ThrowLoopStartTime = nil
-	self.Owner:DoAttackEvent()
-	self.Owner:SetAnimation(PLAYER_ATTACK1)
+	self:PlayPasstimeThrowAnimation(IsValid(throwTarget))
 	self:SendWeaponAnim(self.VM_SWINGHARD)
 	self.NextIdle = CurTime() + throwDuration
 	self:SetNextPrimaryFire(CurTime() + throwDuration)
@@ -370,7 +528,11 @@ function SWEP:FinishThrow(passTarget)
 	self.Ball = 0
 	self.PassTarget = nil
 	if SERVER and IsValid(self.Owner) then
-		self.Owner:SetNWEntity("TFPasstimePassTarget", NULL)
+		if TF_PasstimeSetPassTarget then
+			TF_PasstimeSetPassTarget(self.Owner, nil)
+		else
+			self.Owner:SetNWEntity("TFPasstimePassTarget", NULL)
+		end
 	end
 	return true
 end
@@ -389,6 +551,8 @@ function SWEP:Think()
 		if activeClass then
 			self.StoredLastWeaponClass = activeClass
 		end
+		self:EnsurePasstimeCarryPose()
+		self:ApplyPasstimeSkin()
 	end
 
 	if self.Ball ~= 1 then
@@ -445,7 +609,11 @@ function SWEP:SecondaryAttack()
 
 	self.PassTarget = target
 	if SERVER then
-		self.Owner:SetNWEntity("TFPasstimePassTarget", target)
+		if TF_PasstimeSetPassTarget then
+			TF_PasstimeSetPassTarget(self.Owner, target)
+		else
+			self.Owner:SetNWEntity("TFPasstimePassTarget", target)
+		end
 	end
 	return self:FinishThrow(target)
 end
@@ -476,6 +644,7 @@ function SWEP:ShootProjectile(passTarget, delay)
 				grenade.Thrower = owner
 				grenade.SpawnTime = CurTime()
 				grenade.LeftOwner = false
+				grenade:SetSkin(self:ApplyPasstimeSkin())
 		
 				grenade.NameOverride = self:GetItemData().item_iconname
 				grenade:Spawn()
@@ -490,7 +659,11 @@ function SWEP:ShootProjectile(passTarget, delay)
 				local phys = grenade:GetPhysicsObject()
 				if IsValid(phys) then
 					phys:SetVelocity(startVel)
-					phys:AddAngleVelocity(Vector(0, 0, 1))
+					local spinAxis = startVel:GetNormalized()
+					if spinAxis:LengthSqr() <= 0 then
+						spinAxis = owner:EyeAngles():Forward()
+					end
+					phys:AddAngleVelocity(Vector(spinAxis.x, spinAxis.y, spinAxis.z) * 600)
 				end
 				if TF_PasstimeBallThrown then
 					TF_PasstimeBallThrown(owner, grenade)
@@ -533,10 +706,98 @@ function SWEP:Holster()
 end
 
 function SWEP:OnRemove()
+	if SERVER and IsValid(self.Owner) and TF_PasstimeSetPassTarget then
+		TF_PasstimeSetPassTarget(self.Owner, nil)
+	end
 	self.PassTarget = nil
 end
 
 if CLIENT then
+	local cv_passtime_ball_sphere_radius = CreateClientConVar("tf_passtime_ball_sphere_radius", "7.2", true, false, "PASSTIME ball sphere radius used for preview tracing.")
+	local function getPasstimePreviewMaterial(path)
+		if not isstring(path) or path == "" then
+			return nil
+		end
+
+		local mat = Material(path, "smooth")
+		if mat and not mat:IsError() then
+			return mat
+		end
+		return nil
+	end
+
+	local mat_passtime_bounce_star = getPasstimePreviewMaterial("passtime/hud/passtime_ball_reticle_passlock")
+	local mat_passtime_bounce_ring = getPasstimePreviewMaterial("passtime/hud/passtime_ball_reticle_piece_1")
+
+	local function getPasstimePreviewImpact(owner)
+		if not IsValid(owner) then
+			return nil
+		end
+
+		local traceHullRadius = cv_passtime_ball_sphere_radius:GetFloat() / 3.0
+		local traceHullSize = Vector(traceHullRadius, traceHullRadius, traceHullRadius)
+		local currentPos, velocity = calcPasstimeLaunch(owner, false)
+		local superSamples = 8
+		local dt = (1 / 16) / superSamples
+		local gravityDt = Vector(0, 0, -800) * dt
+		local dampingDt = passtimeConVarFloat("tf_passtime_ball_damping_scale", 0) * dt
+		local traceFilter = owner
+
+		for _ = 1, 100 do
+			local startPos = currentPos
+			for _ = 1, superSamples do
+				velocity = velocity + gravityDt
+				velocity = velocity - (velocity * dampingDt)
+				currentPos = currentPos + velocity * dt
+			end
+
+			local tr = util.TraceHull({
+				start = startPos,
+				endpos = currentPos,
+				mins = -traceHullSize,
+				maxs = traceHullSize,
+				filter = traceFilter,
+				mask = MASK_PLAYERSOLID
+			})
+
+			if tr.Hit then
+				return tr
+			end
+		end
+
+		return nil
+	end
+
+	local function drawPasstimeBounceReticle(screenPos, normal)
+		if not screenPos or not screenPos.visible then return end
+
+		local angle = 0
+		if isvector(normal) then
+			angle = math.deg(math.atan2(normal.y, normal.x))
+		end
+
+		local color = Color(255, 255, 0, 200)
+		local starSize = 160
+		local ringSize = 80
+		local ringSpin = 180 + (CurTime() * 200)
+		surface.SetDrawColor(color.r, color.g, color.b, color.a)
+
+		if mat_passtime_bounce_ring then
+			surface.SetMaterial(mat_passtime_bounce_ring)
+			surface.DrawTexturedRectRotated(screenPos.x, screenPos.y, ringSize, ringSize, ringSpin)
+		else
+			surface.DrawOutlinedRect(screenPos.x - (ringSize * 0.5), screenPos.y - (ringSize * 0.5), ringSize, ringSize, 2)
+		end
+
+		if mat_passtime_bounce_star then
+			surface.SetMaterial(mat_passtime_bounce_star)
+			surface.DrawTexturedRectRotated(screenPos.x, screenPos.y, starSize, starSize, angle + 180)
+		else
+			surface.DrawLine(screenPos.x - 8, screenPos.y, screenPos.x + 8, screenPos.y)
+			surface.DrawLine(screenPos.x, screenPos.y - 8, screenPos.x, screenPos.y + 8)
+		end
+	end
+
 	function SWEP:DrawHUD()
 		if not IsValid(self.Owner) or self.Owner ~= LocalPlayer() then return end
 		if self.Owner:GetActiveWeapon() ~= self then return end
@@ -544,45 +805,9 @@ if CLIENT then
 		if self.ThrowState ~= THROWSTATE_CHARGING and self.ThrowState ~= THROWSTATE_CHARGED then return end
 		if IsValid(self.PassTarget) then return end
 
-		local currentPos, velocity = calcPasstimeLaunch(self.Owner, false)
-		local gravity = Vector(0, 0, -800)
-		local hull = Vector(4, 4, 4)
-		local step = 1 / 32
-		local maxSteps = 96
-		local lineColor, impactColor = passtimePreviewColor(self.Owner)
+		local tr = getPasstimePreviewImpact(self.Owner)
+		if not tr or not tr.Hit then return end
 
-		surface.SetDrawColor(lineColor.r, lineColor.g, lineColor.b, lineColor.a)
-
-		for _ = 1, maxSteps do
-			local nextPos = currentPos + velocity * step
-			velocity = velocity + gravity * step
-
-			local tr = util.TraceHull({
-				start = currentPos,
-				endpos = nextPos,
-				mins = -hull,
-				maxs = hull,
-				filter = self.Owner,
-				mask = MASK_PLAYERSOLID
-			})
-
-			local screenStart = currentPos:ToScreen()
-			local screenEnd = tr.HitPos:ToScreen()
-			if screenStart.visible and screenEnd.visible then
-				surface.DrawLine(screenStart.x, screenStart.y, screenEnd.x, screenEnd.y)
-			end
-
-			if tr.Hit then
-				local impact = tr.HitPos:ToScreen()
-				if impact.visible then
-					surface.SetDrawColor(impactColor.r, impactColor.g, impactColor.b, impactColor.a)
-					surface.DrawLine(impact.x - 8, impact.y, impact.x + 8, impact.y)
-					surface.DrawLine(impact.x, impact.y - 8, impact.x, impact.y + 8)
-				end
-				break
-			end
-
-			currentPos = nextPos
-		end
+		drawPasstimeBounceReticle(tr.HitPos:ToScreen(), tr.HitNormal or tr.Normal)
 	end
 end

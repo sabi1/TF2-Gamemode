@@ -90,13 +90,17 @@ function PANEL:AddModel(id, mdl, keys)
 	end
 
 	if istable(keys.TintColor) then
-		ent:SetRenderMode(RENDERMODE_TRANSCOLOR)
-		ent:SetColor(Color(
-			math.Clamp(tonumber(keys.TintColor.r) or 255, 0, 255),
-			math.Clamp(tonumber(keys.TintColor.g) or 255, 0, 255),
-			math.Clamp(tonumber(keys.TintColor.b) or 255, 0, 255),
-			math.Clamp(tonumber(keys.TintColor.a) or 255, 0, 255)
-		))
+		if ent.SetPreviewCosmeticTint then
+			ent:SetPreviewCosmeticTint(keys.TintColor)
+		else
+			ent:SetRenderMode(RENDERMODE_TRANSCOLOR)
+			ent:SetColor(Color(
+				math.Clamp(tonumber(keys.TintColor.r) or 255, 0, 255),
+				math.Clamp(tonumber(keys.TintColor.g) or 255, 0, 255),
+				math.Clamp(tonumber(keys.TintColor.b) or 255, 0, 255),
+				math.Clamp(tonumber(keys.TintColor.a) or 255, 0, 255)
+			))
+		end
 	end
 
 	if isstring(keys.ParticleSystem) and keys.ParticleSystem ~= "" then
@@ -149,6 +153,12 @@ function PANEL:Paint()
 	
 	self:RunAnimation()
 	for _,v in pairs(self.Entities) do
+		if v.ColorType == "hat" and v.SetPreviewCosmeticTint then
+			v:SetPreviewCosmeticTint(string.ToColor(LocalPlayer():GetInfo("tf_hatcolor")))
+		elseif v.ColorType == "person" and IsValid(LocalPlayer().NeutralModel) then
+			v:SetColor(LocalPlayer().NeutralModel:GetColor())
+		end
+
 		if v.LayoutEntity then
 			v:LayoutEntity()
 		else
@@ -173,17 +183,6 @@ function PANEL:Paint()
 	cam.End3D()
 	
 	self.LastPaint = RealTime()
-	for k, v in pairs(self.Entities) do
-		if v.ColorType == "hat" then
-			--print("Uhh..")
-			--print(v:GetModel())
-			v:SetColor(string.ToColor(LocalPlayer():GetInfo("tf_hatcolor")))
-			PrintTable(v:GetColor())
-			--print(string.ToColor(LocalPlayer():GetInfo("tf_hatcolor")))
-		elseif v.ColorType == "person" and IsValid(LocalPlayer().NeutralModel) then
-			v:SetColor(LocalPlayer().NeutralModel:GetColor())
-		end
-	end
 end
 
 function PANEL:RunAnimation()

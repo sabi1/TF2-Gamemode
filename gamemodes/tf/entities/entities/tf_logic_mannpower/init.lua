@@ -3,11 +3,57 @@ ENT.Type = "point"
 if SERVER and not ConVarExists("tf_powerup_mode") then
 	CreateConVar("tf_powerup_mode", "0", { FCVAR_NOTIFY, FCVAR_ARCHIVE, FCVAR_REPLICATED }, "Enable Mannpower mode rules.")
 end
+if SERVER and not ConVarExists("tf_powerup_max_charge_time") then
+	CreateConVar("tf_powerup_max_charge_time", "20", { FCVAR_NOTIFY, FCVAR_ARCHIVE, FCVAR_REPLICATED }, "Seconds needed to fully charge the Supernova rune.")
+end
 
 local function setGrapplingHookEnabled(enabled)
 	local hookCvar = GetConVar("tf_grapplinghook_enable")
 	if hookCvar then
 		hookCvar:SetBool(enabled and true or false)
+	end
+end
+
+local function getEligibleRuneSpawns()
+	local spawns = {}
+	for _, spawn in ipairs(ents.FindByClass("info_powerup_spawn")) do
+		if IsValid(spawn) and not spawn.Disabled then
+			spawns[#spawns + 1] = spawn
+		end
+	end
+	return spawns
+end
+
+local function ensureMapRunes()
+	if not TF_IsMannpowerMode or not TF_IsMannpowerMode() then return end
+	if not ents.FindByClass("item_powerup_rune")[1] then
+		local defs = TF_GetMannpowerRuneDefs and TF_GetMannpowerRuneDefs() or nil
+		if not istable(defs) then return end
+
+		local runeTypes = {}
+		for runeType, _ in pairs(defs) do
+			runeTypes[#runeTypes + 1] = runeType
+		end
+		table.sort(runeTypes)
+
+		local spawns = getEligibleRuneSpawns()
+		if #spawns == 0 then return end
+
+		for idx, runeType in ipairs(runeTypes) do
+			local spawn = spawns[((idx - 1) % #spawns) + 1]
+			if not IsValid(spawn) then continue end
+			if IsValid(spawn.ActiveRune) then continue end
+
+			local rune = ents.Create("item_powerup_rune")
+			if not IsValid(rune) then continue end
+			rune:SetPos(spawn:GetPos() + Vector(0, 0, 48))
+			rune:SetAngles(Angle(0, 0, 0))
+			rune:Spawn()
+			rune:Activate()
+			rune:SetRuneType(runeType)
+			rune.SpawnPoint = spawn
+			spawn.ActiveRune = rune
+		end
 	end
 end
 
@@ -33,6 +79,10 @@ local function updateMannpowerState()
 	end
 
 	setGrapplingHookEnabled(enabled)
+
+	if enabled then
+		timer.Simple(0, ensureMapRunes)
+	end
 
 	for _, ply in ipairs(player.GetAll()) do
 		if not IsValid(ply) or not ply:IsPlayer() then continue end
@@ -96,7 +146,34 @@ hook.Add("PlayerSpawn", "TF_Mannpower_GiveGrapplingHook", function(ply)
 	end)
 end)
 
+hook.Add("PlayerDeath", "TF_Mannpower_DropRuneOnDeath", function(ply)
+	if not TF_IsMannpowerMode() or not IsValid(ply) or not ply.DropRune then return end
+	ply:SetNWBool("TFKingRuneBuffActive", false)
+	ply:SetNWBool("TFRuneCharged", false)
+	ply:DropRune()
+end)
+
+hook.Add("PlayerDisconnected", "TF_Mannpower_DropRuneOnDisconnect", function(ply)
+	if not TF_IsMannpowerMode() or not IsValid(ply) or not ply.DropRune then return end
+	ply:SetNWBool("TFKingRuneBuffActive", false)
+	ply:SetNWBool("TFRuneCharged", false)
+	ply:DropRune()
+end)
+
 hook.Add("EntityRemoved", "TF_Mannpower_RefreshState", function(ent)
-	if not IsValid(ent) or ent:GetClass() ~= "tf_logic_mannpower" then return end
-	timer.Simple(0, updateMannpowerState)
+	if not IsValid(ent) then return end
+	if ent:GetClass() == "tf_logic_mannpower" then
+		timer.Simple(0, updateMannpowerState)
+		return
+	end
+	if ent:GetClass() == "item_powerup_rune" and IsValid(ent.SpawnPoint) then
+		ent.SpawnPoint.ActiveRune = nil
+	end
+end)
+
+hook.Add("InitPostEntity", "TF_Mannpower_EnsureMapRunes", function()
+	timer.Simple(0, function()
+		updateMannpowerState()
+		ensureMapRunes()
+	end)
 end)

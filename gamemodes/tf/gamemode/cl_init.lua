@@ -2012,8 +2012,12 @@ local function applyPreviewWearables(className)
 			p:GetEntity():AddEffects(EF_BONEMERGE)
 p:GetEntity():AddEffects(EF_PARENT_ANIMATES)
 			p:GetEntity():SetMaterial("")
-			p:GetEntity():SetRenderMode(RENDERMODE_NORMAL)
-			p:GetEntity():SetColor(Color(255, 255, 255, 255))
+			if p:GetEntity().SetPreviewCosmeticTint then
+				p:GetEntity():SetPreviewCosmeticTint(nil)
+			else
+				p:GetEntity():SetRenderMode(RENDERMODE_NORMAL)
+				p:GetEntity():SetColor(Color(255, 255, 255, 255))
+			end
 			p:GetEntity():SetNoDraw(false)
 		end
 	end
@@ -2033,7 +2037,9 @@ p:GetEntity():AddEffects(EF_PARENT_ANIMATES)
 panel:GetEntity():AddEffects(EF_PARENT_ANIMATES)
 
 							local tint = decodeItemTintColor(slotProps and getPropertyAttributeByClass(slotProps, "set_item_tint_rgb", nil) or nil)
-							if tint then
+							if panel:GetEntity().SetPreviewCosmeticTint then
+								panel:GetEntity():SetPreviewCosmeticTint(tint)
+							elseif tint then
 								panel:GetEntity():SetRenderMode(RENDERMODE_TRANSCOLOR)
 								panel:GetEntity():SetColor(tint)
 							else

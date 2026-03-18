@@ -117,49 +117,49 @@ end
 function SWEP:PrimaryAttack()
 	if not IsOwnerBoostFull(self.Owner) then return end
 	ConsumeWeaponBoost(self, self.Owner)
+	local owner = self.Owner
 
 	self:SetNextPrimaryFire( CurTime() + self.Primary.Delay )
 	self:SendWeaponAnim(ACT_ITEM1_VM_SECONDARYATTACK)
-		self.Owner:DoAnimationEvent(ACT_MP_ATTACK_STAND_ITEM1, true)
+		owner:DoAnimationEvent(ACT_MP_ATTACK_STAND_ITEM1, true)
 		if self:GetItemData().model_player == "models/weapons/c_models/c_battalion_bugle/c_battalion_bugle.mdl" then
-			if self.Owner:Team() == TEAM_BLU then
+			if owner:Team() == TEAM_BLU then
 				self:EmitSound(self.SwingCrit2, 85 )
-			elseif self.Owner:Team() == TF_TEAM_PVE_INADERS then
+			elseif owner:Team() == TF_TEAM_PVE_INADERS then
 				self:EmitSound(self.SwingCrit2, 85 )
 			else
 				self:EmitSound(self.Swing2, 85 )
 			end
 		else
-			if self.Owner:Team() == TEAM_BLU then
+			if owner:Team() == TEAM_BLU then
 				self:EmitSound(self.SwingCrit, 85 )
-			elseif self.Owner:Team() == TF_TEAM_PVE_INADERS then
+			elseif owner:Team() == TF_TEAM_PVE_INADERS then
 				self:EmitSound(self.SwingCrit, 85 )
 			else
 				self:EmitSound(self.Swing, 85 )
 			end
 		end
 	timer.Simple(3, function()
-		if SERVER then
-		self.Owner:EmitSoundEx( self.HitWorld, 85	 )
-		self.Owner:Speak("TLK_PLAYER_BATTLECRY")
-		self.Owner:SelectWeapon("tf_weapon_rocketlauncher")
-		self.Owner:SelectWeapon("tf_weapon_rocketlauncher_bbox")
-		self.Owner:SelectWeapon("tf_weapon_rocketlauncher_qrl")
-		self.Owner:SelectWeapon("tf_weapon_rocketlauncher_dh")
-		self.Owner:SelectWeapon("tf_weapon_rocketlauncher_dt")
-		self.Owner:SelectWeapon("tf_weapon_rocketlauncher_airstrike")
-		self.Owner:SelectWeapon("tf_weapon_particle_launcher")
-		GAMEMODE:StartMiniCritBoost(self.Owner)
+		if SERVER and IsValid(owner) then
+		owner:EmitSoundEx( self.HitWorld, 85	 )
+		owner:Speak("TLK_PLAYER_BATTLECRY")
+		owner:SelectWeapon("tf_weapon_rocketlauncher")
+		owner:SelectWeapon("tf_weapon_rocketlauncher_bbox")
+		owner:SelectWeapon("tf_weapon_rocketlauncher_qrl")
+		owner:SelectWeapon("tf_weapon_rocketlauncher_dh")
+		owner:SelectWeapon("tf_weapon_rocketlauncher_dt")
+		owner:SelectWeapon("tf_weapon_rocketlauncher_airstrike")
+		owner:SelectWeapon("tf_weapon_particle_launcher")
+		GAMEMODE:StartMiniCritBoost(owner)
 		end
 	end)
 	local buffDuration = 20
-	if IsValid(self.Owner) then
-		local mul = tonumber(self.Owner:GetNWFloat("TF_MVM_BuffDurationMul", 1)) or 1
+	if IsValid(owner) then
+		local mul = tonumber(owner:GetNWFloat("TF_MVM_BuffDurationMul", 1)) or 1
 		if mul < 0.1 then mul = 0.1 end
 		buffDuration = buffDuration * mul
 	end
 	timer.Simple(buffDuration, function()
-		local owner = self.Owner
 		if not IsValid(owner) then return end
 		GAMEMODE:StopCritBoost(owner)
 	end)

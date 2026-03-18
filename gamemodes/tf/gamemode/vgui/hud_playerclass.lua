@@ -372,6 +372,8 @@ local function CollectWearableModels(owner)
 			model = mdl,
 			idx = ent:EntIndex(),
 			slot = slot,
+			tint = ent.GetCosmeticTint and ent:GetCosmeticTint() or nil,
+			itemTint = ent.GetItemTint and ent:GetItemTint() or nil,
 		}
 	end)
 	table.sort(entries, function(a, b) return a.idx < b.idx end)
@@ -391,7 +393,11 @@ local function CollectWearableModels(owner)
 
 		if seen[entry.model] then continue end
 		seen[entry.model] = true
-		result[#result + 1] = entry.model
+		result[#result + 1] = {
+			model = entry.model,
+			tint = isvector(entry.tint) and Vector(entry.tint.x, entry.tint.y, entry.tint.z) or nil,
+			itemTint = tonumber(entry.itemTint) or 0,
+		}
 		if entry.slot == "head" then pickedHead = pickedHead + 1 end
 		if entry.slot == "misc" then pickedMisc = pickedMisc + 1 end
 	end
@@ -509,9 +515,17 @@ local function GetHUDCosmeticModels(classPly)
 
 		local fallback = SplitDisguiseModelList(classPly:GetNWString("TFSpyDisguiseFallbackCosmeticModels", ""))
 		if #fallback > 3 then
-			return { fallback[1], fallback[2], fallback[3] }
+			return {
+				{ model = fallback[1] },
+				{ model = fallback[2] },
+				{ model = fallback[3] },
+			}
 		end
-		return fallback
+		local out = {}
+		for i, mdl in ipairs(fallback) do
+			out[i] = { model = mdl }
+		end
+		return out
 	end
 
 	local owner = GetHUDWearableOwner(classPly)
@@ -526,7 +540,7 @@ local function ApplyTeamSkin(ent, teamNum)
 	end
 end
 
-local function EnsureBonemergedChild(parentEnt, childEnt, modelPath, teamNum)
+local function EnsureBonemergedChild(parentEnt, childEnt, modelPath, teamNum, tint, itemTint)
 	if not IsValid(parentEnt) then return nil end
 
 	if not isstring(modelPath) or modelPath == "" or not util.IsValidModel(modelPath) then
@@ -551,6 +565,10 @@ local function EnsureBonemergedChild(parentEnt, childEnt, modelPath, teamNum)
 	childEnt:AddEffects(EF_PARENT_ANIMATES)
 	childEnt:SetNoDraw(false)
 	ApplyTeamSkin(childEnt, teamNum)
+	if childEnt.SetPreviewCosmeticTint then
+		childEnt:SetPreviewCosmeticTint(tint)
+	end
+	childEnt.PreviewItemTint = tonumber(itemTint) or 0
 
 	return childEnt
 end
@@ -743,45 +761,27 @@ function PANEL:Paint()
 			ApplyHUDWearableBodygroups(ent, wearableOwner, t, displayClassName)
 			local activeWep = ply:GetActiveWeapon()
 			local holdtype = IsValid(activeWep) and (activeWep.HoldType or activeWep:GetHoldType()) or "normal"
-			local srcSeq = ply:GetSequence()
-			local srcAct = (ply.GetSequenceActivity and ply:GetSequenceActivity(srcSeq)) or -1
-			local applied = false
-			if srcAct and srcAct >= 0 then
-				local seq = ent:SelectWeightedSequence(srcAct)
-				if seq and seq >= 0 then
-					ent:SetSequence(seq)
-					ent:SetCycle(ply:GetCycle())
-					ent:SetPlaybackRate(ply:GetPlaybackRate())
-					applied = true
-				end
+			local seqName = "stand_" .. tostring(holdtype or "normal")
+			local seq = ent:LookupSequence(seqName)
+			if not seq or seq < 0 then
+				seq = ent:LookupSequence("idle")
 			end
-			if not applied then
-				local seqName = "stand_" .. tostring(holdtype or "normal")
-				local seq = ent:LookupSequence(seqName)
-				if seq and seq >= 0 then
-					ent:SetSequence(seq)
-				else
-					local idle = ent:LookupSequence("idle")
-					if idle and idle >= 0 then
-						ent:SetSequence(idle)
-					end
-				end
+			if seq and seq >= 0 and ent:GetSequence() ~= seq then
+				ent:ResetSequence(seq)
+				ent:SetCycle(0)
 			end
-			for i = 0, ply:GetNumPoseParameters() - 1 do
-				local flMin, flMax = ply:GetPoseParameterRange(i)
-				local sPose = ply:GetPoseParameterName(i)
-				if !string.find(sPose,"body_yaw") and !string.find(sPose,"body_pitch") and !string.find(sPose,"aim_yaw") and !string.find(sPose,"aim_pitch") then
-					ent:SetPoseParameter(sPose, math.Remap(ply:GetPoseParameter(sPose), 0, 1, flMin, flMax))
-				end
-			end 
+			ent:SetPlaybackRate(1)
 			local wmodel = GetHUDWeaponModel(ply)
 			ent.Weapon = EnsureBonemergedChild(ent, ent.Weapon, wmodel, t)
 
 			local cosmetics = GetHUDCosmeticModels(ply)
 			ent.Cosmetics = ent.Cosmetics or {}
 			for i = 1, 3 do
-				local mdl = cosmetics[i]
-				ent.Cosmetics[i] = EnsureBonemergedChild(ent, ent.Cosmetics[i], mdl, t)
+				local cosmetic = cosmetics[i]
+				local mdl = istable(cosmetic) and cosmetic.model or cosmetic
+				local tint = istable(cosmetic) and cosmetic.tint or nil
+				local itemTint = istable(cosmetic) and cosmetic.itemTint or 0
+				ent.Cosmetics[i] = EnsureBonemergedChild(ent, ent.Cosmetics[i], mdl, t, tint, itemTint)
 			end
 			for i = 4, #ent.Cosmetics do
 				if IsValid(ent.Cosmetics[i]) then
@@ -800,7 +800,9 @@ function PANEL:Paint()
 				if istable(ent.Cosmetics) then
 					for _, cosmetic in ipairs(ent.Cosmetics) do
 						if IsValid(cosmetic) then
+							cosmetic:StartItemTint(cosmetic.PreviewItemTint)
 							cosmetic:DrawModel()
+							cosmetic:EndItemTint()
 						end
 					end
 				end

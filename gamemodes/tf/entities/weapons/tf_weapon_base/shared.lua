@@ -53,6 +53,9 @@ local function ShouldHideWeaponModels(wep)
 end
 
 local function ApplyNoWeaponDrawState(wep, hide)
+	if IsValid(wep) then
+		wep:SetNoDraw(hide)
+	end
 	if IsValid(wep.WModel) then wep.WModel:SetNoDraw(hide) end
 	if IsValid(wep.WModel2) then wep.WModel2:SetNoDraw(hide) end
 	if IsValid(wep.AttachedWModel) then wep.AttachedWModel:SetNoDraw(hide) end
@@ -920,6 +923,18 @@ hook.Add("PostPlayerDraw", "ForceDrawTFWorldModel", function(pl)
 	pl.RenderingWorldModel = false
 	if not ok then
 		ErrorNoHalt(string.format("ForceDrawTFWorldModel(shared) failed for %s: %s\n", tostring(wep), tostring(err)))
+	end
+end)
+
+hook.Add("PostPlayerDraw", "TFHideInactiveWeaponModels", function(pl)
+	if not CLIENT or not IsValid(pl) then return end
+	local active = pl.GetActiveWeapon and pl:GetActiveWeapon() or nil
+
+	for _, wep in ipairs(pl.GetWeapons and pl:GetWeapons() or {}) do
+		if IsValid(wep) and wep.IsTFWeapon then
+			local hide = (wep ~= active) or ShouldHideWeaponModels(wep)
+			ApplyNoWeaponDrawState(wep, hide)
+		end
 	end
 end)
 
@@ -1950,6 +1965,17 @@ function SWEP:Reload()
 	
 	----MsgN("Reload!")
 	self.RequestedReload = false
+
+	local function playReloadStartGesture()
+		if not SERVER or not IsValid(self.Owner) then return end
+		if self.Owner.anim_InSwim then
+			self.Owner:DoAnimationEvent(ACT_MP_RELOAD_SWIM, true)
+		elseif self.Owner:Crouching() then
+			self.Owner:DoAnimationEvent(ACT_MP_RELOAD_CROUCH, true)
+		else
+			self.Owner:DoAnimationEvent(ACT_MP_RELOAD_STAND, true)
+		end
+	end
 	
 	if self.Primary and self.Primary.Ammo and self.Primary.ClipSize ~= -1 then
 		local available = self.Owner:GetAmmoCount(self.Primary.Ammo)
@@ -1961,6 +1987,7 @@ function SWEP:Reload()
 				--self:SendWeaponAnimEx(ACT_RELOAD_START)
 				if self.ReloadTime == 1.1 then 
 					self:SendWeaponAnimEx(self.VM_RELOAD_START)
+					playReloadStartGesture()
 					--[[
 					if self.Owner.anim_InSwim then
 						self.Owner:AnimRestartGesture(GESTURE_SLOT_ATTACK_AND_RELOAD, ACT_MP_RELOAD_SWIM, true)
@@ -1978,6 +2005,7 @@ function SWEP:Reload()
 					if SERVER then
 					self:SendWeaponAnimEx(self.VM_RELOAD_START)
 					end
+					playReloadStartGesture()
 					--[[
 					if self.Owner.anim_InSwim then
 						self.Owner:AnimRestartGesture(GESTURE_SLOT_ATTACK_AND_RELOAD, ACT_MP_RELOAD_SWIM, true)
@@ -2004,6 +2032,7 @@ function SWEP:Reload()
 				if SERVER then
 					self:SendWeaponAnimEx(self.VM_RELOAD)
 				end
+				playReloadStartGesture()
 				self.Owner:SetAnimation(PLAYER_RELOAD)
 				if (!self.Owner:KeyDown(IN_ATTACK)) then
 					if self.FastReloadTime and self.OldReloadTime then  

@@ -29,6 +29,7 @@ end
 
 function ENT:Initialize()
 	self.Properties = self.Properties or {}
+	self.Disabled = tonumber((self.Properties or {}).startdisabled or 0) == 1
 	self.CurrentBall = NULL
 	self.BallPresent = false
 	self:NextThink(CurTime())
@@ -48,6 +49,13 @@ function ENT:KeyValue(key, value)
 end
 
 function ENT:Think()
+	if self.Disabled then
+		self.BallPresent = false
+		self.CurrentBall = NULL
+		self:NextThink(CurTime())
+		return true
+	end
+
 	local tracked = getActivePasstimeBallEntity()
 	local presentNow = IsValid(tracked) and isInsideBrush(self, tracked)
 
@@ -65,5 +73,13 @@ function ENT:Think()
 end
 
 function ENT:AcceptInput(name, activator, caller, data)
+	name = string.lower(tostring(name or ""))
+	if name == "enable" then
+		self.Disabled = false
+		return true
+	elseif name == "disable" then
+		self.Disabled = true
+		return true
+	end
 	return false
 end

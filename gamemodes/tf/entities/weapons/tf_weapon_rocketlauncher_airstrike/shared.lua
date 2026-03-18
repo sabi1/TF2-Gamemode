@@ -43,17 +43,47 @@ SWEP.PunchView = Angle( 0, 0, 0 )
 
 SWEP.Properties = {}
 
+local function getAirborneTimerName(weapon)
+	if not IsValid(weapon) then return nil end
+	return "CheckIfPlayerIsAirborne_" .. weapon:EntIndex()
+end
 
 function SWEP:Deploy()
 	self:CallBaseFunction("Deploy")
-	timer.Create("CheckIfPlayerIsAirborne", 0.001, 0, function()
-		if not self.Owner:Alive() then timer.Stop("CheckIfPlayerIsAirborne") return end
-		if self.Owner:IsOnGround() != true then
+	local timerName = getAirborneTimerName(self)
+	if not timerName then return end
+	timer.Remove(timerName)
+	timer.Create(timerName, 0.001, 0, function()
+		if not IsValid(self) then
+			timer.Remove(timerName)
+			return
+		end
+		local owner = self.Owner
+		if not IsValid(owner) or not owner:Alive() then
+			timer.Remove(timerName)
+			return
+		end
+		if owner:IsOnGround() != true then
 			self.Primary.Delay          = 0.30
 		else
 			self.Primary.Delay          = 0.8
 		end
 	end)
+end
+
+function SWEP:Holster()
+	local timerName = getAirborneTimerName(self)
+	if timerName then
+		timer.Remove(timerName)
+	end
+	return self:CallBaseFunction("Holster")
+end
+
+function SWEP:OnRemove()
+	local timerName = getAirborneTimerName(self)
+	if timerName then
+		timer.Remove(timerName)
+	end
 end
 
 function SWEP:ShootProjectile()

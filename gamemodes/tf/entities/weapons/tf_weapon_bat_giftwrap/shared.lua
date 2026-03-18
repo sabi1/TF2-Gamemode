@@ -29,6 +29,11 @@ SWEP.Primary.Delay          = 0.5
 SWEP.Secondary.Automatic		= true
 SWEP.Secondary.Ammo			= "none"
 SWEP.Secondary.Delay          = 10
+SWEP.GlobalCustomHUD = {
+	HudItemEffectMeter = function(self)
+		return CurTime() < (self:GetNextSecondaryFire() or 0)
+	end
+}
 
 SWEP.HoldType = "MELEE"
 SWEP.HasThirdpersonCritAnimation = false
@@ -94,6 +99,27 @@ end
 
 function SWEP:OffhandProjectileReady()
 	return CurTime() >= (self:GetNextSecondaryFire() or 0)
+end
+
+function SWEP:GetHUDMeterName()
+	return "#TF_Ball"
+end
+
+function SWEP:GetHUDMeterResFile()
+	return "resource/ui/huditemeffectmeter_scout.res"
+end
+
+function SWEP:GetHUDMeterValue()
+	local nextSecondary = self:GetNextSecondaryFire() or 0
+	if CurTime() >= nextSecondary then
+		return 1
+	end
+
+	local recharge = self.Secondary.Delay or 10
+	if recharge <= 0 then return 0 end
+
+	local elapsed = recharge - math.max(0, nextSecondary - CurTime())
+	return math.Clamp(elapsed / recharge, 0, 1)
 end
 
 function SWEP:Think()

@@ -317,6 +317,9 @@ function GM:PlayerBindPress(pl, cmd, down)
 
 	if down and string.find(bind, "^%+attack3") then
 		if TF_IsPasstimeMap and TF_IsPasstimeMap() and not (TF_PlayerHasPasstimeBall and TF_PlayerHasPasstimeBall(pl)) then
+			if pl:GetNWFloat("TFPasstimeAskForBallUntil", 0) > CurTime() then
+				return true
+			end
 			net.Start("TFPasstimeAskForBall")
 			net.SendToServer()
 			return true

@@ -17,6 +17,79 @@ function ENT:GetItemTint(t)
 	return self.dt.ItemTint
 end
 
+local function DecodeItemTintVector(raw)
+	local n = tonumber(raw)
+	if not n or n <= 0 then return nil end
+
+	n = math.floor(n)
+	if n > 0xFFFFFF then
+		n = bit.band(n, 0xFFFFFF)
+	end
+
+	return Vector(
+		bit.band(bit.rshift(n, 16), 0xFF) / 255,
+		bit.band(bit.rshift(n, 8), 0xFF) / 255,
+		bit.band(n, 0xFF) / 255
+	)
+end
+
+local function EncodeItemTintInt(col)
+	if not istable(col) then return 0 end
+	local r = math.Clamp(math.floor(tonumber(col.r) or tonumber(col[1]) or 0), 0, 255)
+	local g = math.Clamp(math.floor(tonumber(col.g) or tonumber(col[2]) or 0), 0, 255)
+	local b = math.Clamp(math.floor(tonumber(col.b) or tonumber(col[3]) or 0), 0, 255)
+	return bit.bor(bit.lshift(r, 16), bit.lshift(g, 8), b)
+end
+
+function ENT:GetConfiguredPaintData()
+	local attrRaw = self.GetAttributeValue and self:GetAttributeValue("set_item_tint_rgb", nil) or nil
+	local attrTint = DecodeItemTintVector(attrRaw)
+	if attrTint then
+		return tonumber(attrRaw) or 0, attrTint
+	end
+
+	local owner = self:GetOwner()
+	if not IsValid(owner) then return 0, vector_origin end
+
+	local item = self:GetItemData()
+	local slot = item and item.item_slot or nil
+	local color = nil
+
+	if slot == "head" then
+		if owner:GetInfoNum("tf_hatcolor_rainbow", 0) == 1 then
+			local tint = Vector(math.random(5, 255) / 255, math.random(5, 255) / 255, math.random(5, 255) / 255)
+			return EncodeItemTintInt({
+				r = tint.x * 255,
+				g = tint.y * 255,
+				b = tint.z * 255,
+			}), tint
+		end
+		color = string.ToColor(owner:GetInfo("tf_hatcolor"))
+	elseif slot == "misc" then
+		if owner:GetInfoNum("tf_misccolor_rainbow", 0) == 1 then
+			local tint = Vector(math.random(5, 255) / 255, math.random(5, 255) / 255, math.random(5, 255) / 255)
+			return EncodeItemTintInt({
+				r = tint.x * 255,
+				g = tint.y * 255,
+				b = tint.z * 255,
+			}), tint
+		end
+		color = string.ToColor(owner:GetInfo("tf_misccolor"))
+	end
+
+	if not color then
+		return 0, vector_origin
+	end
+
+	local encoded = EncodeItemTintInt(color)
+	return encoded, DecodeItemTintVector(encoded) or vector_origin
+end
+
+function ENT:GetConfiguredCosmeticTint()
+	local _, tint = self:GetConfiguredPaintData()
+	return tint
+end
+
 if SERVER then
 
 AddCSLuaFile("shared.lua")
@@ -69,6 +142,13 @@ function ENT:Draw()
 	if (IsMounted("tf")) then
 		if self:GetOwner() ~= LocalPlayer() or LocalPlayer():ShouldDrawLocalPlayer() then
 			SyncStealthFromOwner(self)
+			if CLIENT then
+				local tint = self.GetCosmeticTint and self:GetCosmeticTint() or nil
+				if isvector(tint) then
+					self.ProxyCosmeticTint = Vector(tint.x, tint.y, tint.z)
+					self.ProxyentPaintColor = self
+				end
+			end
 			self:StartVisualOverrides()
 			self:StartItemTint(self:GetItemTint())
 			self:GetOwner().RenderingWorldModel = true
@@ -127,6 +207,11 @@ function ENT:Think()
 		if model and self:GetModel() ~= model then
 			self:SetModel(model)
 		end
+		local tint = self.GetCosmeticTint and self:GetCosmeticTint() or nil
+		if isvector(tint) then
+			self.ProxyCosmeticTint = Vector(tint.x, tint.y, tint.z)
+			self.ProxyentPaintColor = self
+		end
 	end
 	
 	if self:GetOwner() ~= LocalPlayer() or LocalPlayer():ShouldDrawLocalPlayer() then
@@ -160,20 +245,9 @@ function ENT:Think()
 		else
 			self:SetNoDraw(false)
 		end
-		local item = self:GetItemData()
-		if self:GetItemData()["item_slot"] == "head" then
-			if self:GetOwner():GetInfoNum("tf_hatcolor_rainbow", 0) == 1 then 
-				self:SetCosmeticTint(Vector(math.random(5, 255)/255, math.random(5, 255)/255, math.random(5, 255)/255))
-			else
-				self:SetCosmeticTint(Vector(string.ToColor(self:GetOwner():GetInfo("tf_hatcolor")).r/255, string.ToColor(self:GetOwner():GetInfo("tf_hatcolor")).g/255, string.ToColor(self:GetOwner():GetInfo("tf_hatcolor")).b/255))
-			end
-		elseif self:GetItemData()["item_slot"] == "misc" then
-			if self:GetOwner():GetInfoNum("tf_hatcolor_rainbow", 0) == 1 then
-				self:SetCosmeticTint(Vector(math.random(5, 255)/255, math.random(5, 255)/255, math.random(5, 255)/255))
-			else
-				self:SetCosmeticTint(Vector(string.ToColor(self:GetOwner():GetInfo("tf_misccolor")).r/255, string.ToColor(self:GetOwner():GetInfo("tf_misccolor")).g/255, string.ToColor(self:GetOwner():GetInfo("tf_misccolor")).b/255))
-			end
-		end
+		local itemTint, cosmeticTint = self:GetConfiguredPaintData()
+		self:SetItemTint(itemTint)
+		self:SetCosmeticTint(cosmeticTint)
 	end
 
 	if (IsValid(self.Owner) and string.find(self.Owner:GetModel(),"/player/touhou/")) then

@@ -14,9 +14,12 @@ ENT.Model = "models/passtime/ball/passtime_ball.mdl"
 ENT.Mass = 1
 ENT.PickupDist = 24
 ENT.BlockDist = 18
+ENT.HomingPickupDist = 56
 ENT.ClearOwnerDist = 22
 ENT.HomingStrengthStart = 0.01
-ENT.Gravity = 800
+ENT.LinearDamping = 0.01
+ENT.RotationalDamping = 0.01
+ENT.IdleRespawnTime = CreateConVar("tf_passtime_ball_reset_time", "15", { FCVAR_NOTIFY, FCVAR_ARCHIVE, FCVAR_REPLICATED }, "How long a loose PASSTIME ball may remain grounded/idle before it respawns.")
 
 local function dist_to_segment(point, segStart, segEnd)
 	local segment = segEnd - segStart
@@ -55,6 +58,7 @@ function ENT:Initialize()
 	self.LastCollisionTime = CurTime()
 	self.SpawnTime = CurTime()
 	self.LastThinkTime = CurTime()
+	self.IdleRespawnAt = 0
 	self:SetNWEntity("TFPasstimeHomingTarget", self.Target or NULL)
 	self:SetNWEntity("TFPasstimePrevCarrier", self.Thrower or self:GetOwner() or NULL)
 
@@ -67,9 +71,9 @@ function ENT:Initialize()
 	if IsValid(phys) then
 		phys:Wake()
 		phys:SetMass(self.Mass)
-		phys:EnableGravity(false)
+		phys:EnableGravity(true)
 		if phys.SetDamping then
-			phys:SetDamping(0.01, 1.0)
+			phys:SetDamping(self.LinearDamping, self.RotationalDamping)
 		end
 	end
 end
@@ -100,6 +104,9 @@ function ENT:CanTouchPlayer(ply)
 	local feet = ply:GetPos()
 	local head = feet + Vector(0, 0, (ply.BoundingRadius and ply:BoundingRadius() or 24) + 8)
 	local dist = dist_to_segment(ballPos, feet, head)
+	if IsValid(self.Target) and ply == self.Target then
+		return dist <= math.max(self.PickupDist, self.HomingPickupDist or 56)
+	end
 	return dist <= self.PickupDist or dist <= self.BlockDist
 end
 
@@ -143,6 +150,9 @@ function ENT:TouchPlayer(ply)
 	if not sameTeam then
 		local phys = self:GetPhysicsObject()
 		local vel = IsValid(phys) and phys:GetVelocity() or self:GetVelocity()
+		if TF_PasstimeBallBlocked then
+			TF_PasstimeBallBlocked(self, ply)
+		end
 		self:BlockReflect(ply, vel)
 		self.CollisionCount = self.CollisionCount + 1
 		self.Thrower = nil
@@ -178,6 +188,9 @@ function ENT:PhysicsCollide(data, physobj)
 		self:SetNWEntity("TFPasstimeHomingTarget", NULL)
 		self.AirtimeDistance = 0
 		self.LastCollisionTime = CurTime()
+		if self.TouchedSinceSpawn then
+			self.IdleRespawnAt = CurTime() + math.max(self.IdleRespawnTime:GetFloat(), 0)
+		end
 	end
 
 	if data.Speed > 50 and data.DeltaTime > 0.2 then
@@ -218,20 +231,35 @@ function ENT:Think()
 	phys:Wake()
 	local homing = self:ApplyHoming(phys)
 
-	if not homing then
-		local now = CurTime()
-		local dt = math.Clamp(now - (self.LastThinkTime or now), 0, 0.05)
-		if dt > 0 then
-			local vel = phys:GetVelocity()
-			vel.z = vel.z - self.Gravity * dt
-			phys:SetVelocity(vel)
-		end
-	end
-
 	local pos = self:GetPos()
 	self.AirtimeDistance = self.AirtimeDistance + pos:Distance(self.LastPos or pos)
 	self.LastPos = pos
 	self.LastThinkTime = CurTime()
+
+	if util.PointContents(pos) == CONTENTS_SOLID then
+		if TF_PasstimePanicRespawnBall then
+			TF_PasstimePanicRespawnBall(self, self)
+		else
+			self:Remove()
+		end
+		return true
+	end
+
+	if self.CollisionCount > 0 and self.IdleRespawnAt > 0 and CurTime() >= self.IdleRespawnAt then
+		if TF_PasstimePanicRespawnBall then
+			TF_PasstimePanicRespawnBall(self, self)
+		else
+			self:Remove()
+		end
+		return true
+	end
+
+	if IsValid(self.Target) and not self:CanIgnorePlayer(self.Target) and self:CanTouchPlayer(self.Target) then
+		if self:TouchPlayer(self.Target) then
+			self:NextThink(CurTime())
+			return true
+		end
+	end
 
 	for _, ply in ipairs(player.GetAll()) do
 		if not self:CanIgnorePlayer(ply) and self:CanTouchPlayer(ply) then
@@ -239,11 +267,6 @@ function ENT:Think()
 				break
 			end
 		end
-	end
-
-	local vel = phys:GetVelocity()
-	if vel:LengthSqr() > 1 then
-		self:SetAngles(vel:Angle())
 	end
 
 	self:NextThink(CurTime())

@@ -2,6 +2,10 @@
 local meta = FindMetaTable( "Entity" )
 if not meta then return end 
 
+if SERVER then
+	util.AddNetworkString("TFSetDeathFlags")
+end
+
 --[[
 RegisterNetworkedTable("TFPlayerData", {
 	PlayerState = "Int",
@@ -66,11 +70,13 @@ function meta:EntityID()
 end
 
 function meta:HasNPCData()
+	if not IsValid(self) then return false end
 	if NPCData[self:GetClass()] then return true end
 	return false
 end
 
 function meta:GetNPCData()
+	if not IsValid(self) then return {} end
 	return NPCData[self:GetClass()] or {}
 end
 
@@ -84,6 +90,7 @@ function meta:CallNPCEvent(event, ...)
 end
 
 function meta:HasNPCFlag(f)
+	if not IsValid(self) then return false end
 	local d = self:GetNPCData()
 	return d.flags and bit.band(d.flags, f)>0
 end
@@ -187,6 +194,9 @@ local function get_disguise_visible_team(ent, observerTeam)
 end
 
 function meta:IsFriendly(target)
+	if not IsValid(self) or not IsValid(target) then
+		return false
+	end
 	local t1, t2 = self:EntityTeam(), target:EntityTeam()
 
 	-- TF2 behavior: disguised spies appear friendly only to entities on the disguise team.
@@ -222,6 +232,9 @@ function meta:IsFriendly(target)
 end
 
 function meta:CanDamage(target)
+	if not IsValid(self) or not IsValid(target) then
+		return false
+	end
 	if (self:IsL4D() and target:IsNPC() and target:Classify() == CLASS_ZOMBIE) then
 		return false
 	end
@@ -260,6 +273,14 @@ DF_SILENCED	= 32	-- death from Your Eternal Reward, suppress death sound and clo
 DF_FROZEN	= 64	-- death from Your Eternal Reward, suppress death sound and cloak ragdoll
 DF_GIB		= 128
 
+local function SyncDeathFlags(ent)
+	if not SERVER or not IsValid(ent) then return end
+	net.Start("TFSetDeathFlags")
+		net.WriteEntity(ent)
+		net.WriteUInt(math.max(0, ent.DeathFlags or 0), 16)
+	net.Broadcast()
+end
+
 function meta:AddDeathFlag(f)
 	--[[local dt = self:GetDataTableEntity()
 	if IsValid(dt) then
@@ -268,12 +289,7 @@ function meta:AddDeathFlag(f)
 		self:SetNWInt("DeathFlags", self:GetNWInt("DeathFlags") | f)
 	end]]
 	self.DeathFlags = bit.bor((self.DeathFlags or 0), f)
-	if SERVER then
-		umsg.Start("SetDeathFlags")
-			umsg.Entity(self)
-			umsg.Short(self.DeathFlags)
-		umsg.End()
-	end
+	SyncDeathFlags(self)
 end
 
 function meta:RemoveDeathFlag(f)
@@ -284,12 +300,7 @@ function meta:RemoveDeathFlag(f)
 		self:SetNWInt("DeathFlags", self:GetNWInt("DeathFlags") & (65535 - f))
 	end]]
 	self.DeathFlags = bit.band((self.DeathFlags or 0), (65535 - f))
-	if SERVER then
-		umsg.Start("SetDeathFlags")
-			umsg.Entity(self)
-			umsg.Short(self.DeathFlags)
-		umsg.End()
-	end
+	SyncDeathFlags(self)
 end
 
 function meta:ResetDeathFlags()
@@ -300,12 +311,7 @@ function meta:ResetDeathFlags()
 		self:SetNWInt("DeathFlags", 0)
 	end]]
 	self.DeathFlags = 0
-	if SERVER then
-		umsg.Start("SetDeathFlags")
-			umsg.Entity(self)
-			umsg.Short(self.DeathFlags)
-		umsg.End()
-	end
+	SyncDeathFlags(self)
 end
 
 function meta:HasDeathFlag(f)
@@ -322,9 +328,9 @@ end
 
 if CLIENT then
 
-usermessage.Hook("SetDeathFlags", function(msg)
-	local self = msg:ReadEntity()
-	local flags = msg:ReadShort()
+net.Receive("TFSetDeathFlags", function()
+	local self = net.ReadEntity()
+	local flags = net.ReadUInt(16)
 	
 	if IsValid(self) then
 		self.DeathFlags = flags

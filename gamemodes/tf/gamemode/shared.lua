@@ -2798,8 +2798,6 @@ elseif (CLIENT) then
 	local voice_mat2 = Material('effects/speech_voice_blue')
 	local text_mat = Material('effects/speech_typing')
 	local partner_mat = Material('effects/speech_taunt')
-	local medic_bubble_bg_mat = Material("sprites/light_glow02_add_noz")
-	local medic_bubble_duration = 3
 
 	local function GetTalkBubblePos(ply)
 		local pos = ply:GetPos() + Vector(0, 0, ply:GetModelRadius() + 10)
@@ -2898,22 +2896,6 @@ elseif (CLIENT) then
 
 		render.DrawSprite(pos, 16, 16, Color(color_var, color_var, color_var, 255))
 	end)
-	hook.Add("PostPlayerDraw", "TalkIconMedicHealthBackground", function(ply)
-		if ply == LocalPlayer() and GetViewEntity() == LocalPlayer() and not LocalPlayer():ShouldDrawLocalPlayer() then return end
-		if not ply:Alive() then return end
-
-		local callTime = ply:GetNW2Float("tf_medic_call_time", 0)
-		if callTime <= 0 or callTime + medic_bubble_duration < CurTime() then return end
-
-		local maxHealth = math.max(ply:GetMaxHealth(), 1)
-		local healthRatio = math.Clamp(ply:Health() / maxHealth, 0, 1)
-		local bubbleColor = Color(255, 255 * healthRatio, 255 * healthRatio, 170)
-
-		render.SetMaterial(medic_bubble_bg_mat)
-		render.DrawSprite(GetTalkBubblePos(ply), 20, 20, bubbleColor)
-	end)
-
-
 	hook.Add("InitPostEntity", "RemoveChatBubble", function()
 		hook.Remove("StartChat", "StartChatIndicator")
 		hook.Remove("FinishChat", "EndChatIndicator")
@@ -3013,7 +2995,6 @@ concommand.Add("__svspeak", function(pl,_,args)
 		end
 		if (args[1] == "TLK_PLAYER_MEDIC") then
 			pl:SetNW2Float("tf_medic_call_time", CurTime())
-			ParticleEffectAttach("speech_mediccall", PATTACH_POINT_FOLLOW,pl,pl:LookupAttachment("head"))
 		end
 		umsg.Start("TFPlayerVoice")
 			umsg.Entity(pl)
@@ -3036,11 +3017,42 @@ end)
 
 else
 
+local function PlayMedicCallBubble(pl)
+	if not IsValid(pl) or not pl:IsPlayer() then return end
+
+	if pl.StopParticlesNamed then
+		pl:StopParticlesNamed("speech_mediccall")
+		pl:StopParticlesNamed("speech_mediccall_auto")
+	end
+
+	local attachment = pl:LookupAttachment("head")
+	local maxHealth = math.max(tonumber(pl:GetMaxHealth()) or 1, 1)
+	local healthRatio = math.Clamp((tonumber(pl:Health()) or 0) / maxHealth, 0, 1)
+	local healthColor = Vector(healthRatio, healthRatio, healthRatio)
+
+	if CreateParticleSystem then
+		local ok, effect = pcall(CreateParticleSystem, pl, "speech_mediccall", PATTACH_POINT_FOLLOW, attachment)
+		if ok and effect then
+			if effect.SetControlPoint then
+				pcall(function()
+					effect:SetControlPoint(1, healthColor)
+				end)
+			end
+			return
+		end
+	end
+
+	ParticleEffectAttach("speech_mediccall", PATTACH_POINT_FOLLOW, pl, attachment)
+end
+
 usermessage.Hook("TFPlayerVoice", function(msg)
 	local pl = msg:ReadEntity()
 	local voice = msg:ReadString()
 	
 	if not IsValid(pl) or not pl:IsPlayer() then return end
+	if voice == "TLK_PLAYER_MEDIC" then
+		PlayMedicCallBubble(pl)
+	end
 	if pl:Team() ~= TEAM_SPECTATOR and pl:Team() ~= LocalPlayer():Team() then return end
 	
 	local v = VoiceMenuChatMessage[voice]

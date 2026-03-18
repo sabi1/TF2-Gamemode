@@ -60,6 +60,27 @@ local function tf_spy_mark_sapper_attack(owner, duration)
 	owner:SetNWFloat("TFSpyDisguiseSapperAttackUntil", CurTime() + math.max(tonumber(duration) or 0.35, 0.1))
 end
 
+local function tf_builder_get_buildings(owner)
+	if not IsValid(owner) then
+		return nil
+	end
+
+	local buildings = owner.Buildings
+	if buildings ~= nil then
+		return buildings
+	end
+
+	if owner.BuilderInit ~= nil then
+		buildings = owner.BuilderInit
+		if SERVER then
+			owner.Buildings = buildings
+		end
+		return buildings
+	end
+
+	return nil
+end
+
 function SWEP:SetupDataTables()
 	self:CallBaseFunction("SetupDataTables")
 	self:DTVar("Int", 1, "BuildGroup")
@@ -78,9 +99,10 @@ function SWEP:GetBuilding()
 	local group, mode = self.dt.BuildGroup, self.dt.BuildMode
 	if self then
 		if self.Owner and self.Owner:GetPlayerClass() != "spy" then
-			if self.Owner.Buildings then
-				if self.Owner.Buildings[group] and self.Owner.Buildings[group][mode] then
-					return self.Owner.Buildings[group][mode]
+			local buildings = tf_builder_get_buildings(self.Owner)
+			if buildings then
+				if buildings[group] and buildings[group][mode] then
+					return buildings[group][mode]
 				end
 			end
 		end
@@ -137,15 +159,20 @@ end
 
 function SWEP:Equip()
 	if SERVER then
-		if self.Owner:GetPlayerClass() != "spy" then
+		if IsValid(self.Owner) and self.Owner:GetPlayerClass() != "spy" then
 		----print("Equip building", self.Owner)
 		--PrintTable(self.Owner.Buildings)
 		
+		local buildings = tf_builder_get_buildings(self.Owner)
+		if not buildings then
+			return self:CallBaseFunction("Equip")
+		end
+
 		local group, mode = self.dt.BuildGroup, self.dt.BuildMode
-		if not self.Owner.Buildings[group] or not self.Owner.Buildings[group][mode] then
+		if not buildings[group] or not buildings[group][mode] then
 			----print("Not a valid building, changing current building mode")
 			for group=0,tf_objects.NumObjects()-1 do
-				if self.Owner.Buildings[group] then
+				if buildings[group] then
 					self.dt.BuildGroup = group
 					self.dt.BuildMode = 0
 					break
@@ -1356,19 +1383,21 @@ end
 if SERVER then
 
 function SWEP:SetBuilding(group, mode)
-	if self.Owner.Buildings[group] and self.Owner.Buildings[group][mode] then
+	local buildings = tf_builder_get_buildings(self.Owner)
+	if buildings and buildings[group] and buildings[group][mode] then
 		self.dt.BuildGroup = group
 		self.dt.BuildMode = mode
-		self:SetupBuilding(self.Owner.Buildings[group][mode])
+		self:SetupBuilding(buildings[group][mode])
 		return true
 	end
 end
 
 function SWEP:SetBuilding2(group, mode)
-	if self.Owner.Buildings[group] and self.Owner.Buildings[group][mode] then
+	local buildings = tf_builder_get_buildings(self.Owner)
+	if buildings and buildings[group] and buildings[group][mode] then
 		self.dt.BuildGroup = group
 		self.dt.BuildMode = mode
-		self:SetupBuilding(self.Owner.Buildings[group][mode])
+		self:SetupBuilding(buildings[group][mode])
 		return true
 	end
 end

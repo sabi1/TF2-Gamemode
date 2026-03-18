@@ -1,20 +1,43 @@
 local PANEL = {}
 
+local cv_passtime_player_reticles_friends = CreateClientConVar("tf_passtime_player_reticles_friends", "2", true, false, "Controls HUD reticles for teammates. 0 = never, 1 = when carrying ball, 2 = always.")
+local cv_passtime_player_reticles_enemies = CreateClientConVar("tf_passtime_player_reticles_enemies", "1", true, false, "Controls HUD reticles for enemies. 0 = never, 1 = when carrying ball, 2 = always.")
+local cv_passtime_ball_sphere_radius = CreateClientConVar("tf_passtime_ball_sphere_radius", "7.2", true, false, "PASSTIME ball sphere radius used for HUD sizing.")
+
 local W = ScrW()
 local H = ScrH()
 local WScale = W / 640
 local Scale = H / 480
+
+local function IsUnresolvedToken(raw, token)
+	if not isstring(raw) or raw == "" then
+		return true
+	end
+
+	if not isstring(token) or token == "" then
+		return false
+	end
+
+	local bareToken = string.TrimLeft(token, "#")
+	return raw == token
+		or raw == bareToken
+		or raw == "#" .. bareToken
+		or string.find(raw, "^[A-Za-z0-9_]+$") ~= nil
+end
 
 local function Localize(token, fallback)
 	if not isstring(token) or token == "" then
 		return fallback or ""
 	end
 	if tf_lang and tf_lang.Exists and tf_lang.Exists(token) then
-		return tf_lang.GetRaw(token, true)
+		local raw = tf_lang.GetRaw(token, true)
+		if not IsUnresolvedToken(raw, token) then
+			return raw
+		end
 	end
 	if language and language.GetPhrase and string.StartWith(token, "#") then
 		local phrase = language.GetPhrase(string.sub(token, 2))
-		if isstring(phrase) and phrase ~= "" and phrase ~= token then
+		if isstring(phrase) and phrase ~= "" and not IsUnresolvedToken(phrase, token) then
 			return phrase
 		end
 	end
@@ -26,22 +49,31 @@ local function LocalizeStrict(token)
 		return ""
 	end
 	if tf_lang and tf_lang.Exists and tf_lang.Exists(token) then
-		return tf_lang.GetRaw(token, true)
+		local raw = tf_lang.GetRaw(token, true)
+		if not IsUnresolvedToken(raw, token) then
+			return raw
+		end
+		return ""
 	end
 	if language and language.GetPhrase and string.StartWith(token, "#") then
 		local phrase = language.GetPhrase(string.sub(token, 2))
-		if isstring(phrase) and phrase ~= "" and phrase ~= token then
+		if isstring(phrase) and phrase ~= "" and not IsUnresolvedToken(phrase, token) then
 			return phrase
 		end
 		return ""
 	end
-	return token
+	return IsUnresolvedToken(token, token) and "" or token
 end
 
 local function LocalizeAndSubstitute(token, fallback, substitutions)
 	local text
 	if tf_lang and tf_lang.Exists and tf_lang.Exists(token) then
-		text = tf_lang.GetRaw(token, true)
+		local raw = tf_lang.GetRaw(token, true)
+		if not IsUnresolvedToken(raw, token) then
+			text = raw
+		else
+			text = Localize(token, fallback)
+		end
 	else
 		text = Localize(token, fallback)
 	end
@@ -49,6 +81,7 @@ local function LocalizeAndSubstitute(token, fallback, substitutions)
 		return text
 	end
 	for key, value in pairs(substitutions) do
+		text = string.gsub(text, "%%" .. tostring(key) .. "%%", tostring(value))
 		text = string.gsub(text, "%%" .. tostring(key), tostring(value))
 	end
 	return text
@@ -66,6 +99,9 @@ local function TFLocalizeFormatted(token, fallback, ...)
 
 	if tf_lang and tf_lang.Exists and tf_lang.Exists(token) then
 		local text = tf_lang.GetRaw(token, true)
+		if IsUnresolvedToken(text, token) then
+			return LocalizeAndSubstitute(token, fallback, substitutions)
+		end
 		for key, value in pairs(substitutions) do
 			text = string.gsub(text, "%%" .. tostring(key) .. "%%", tostring(value or ""))
 		end
@@ -83,6 +119,9 @@ local function LocalizeAndSubstituteStrict(token, substitutions)
 	local text
 	if tf_lang and tf_lang.Exists and tf_lang.Exists(token) then
 		text = tf_lang.GetRaw(token, true)
+		if IsUnresolvedToken(text, token) then
+			text = ""
+		end
 	else
 		text = LocalizeStrict(token)
 	end
@@ -90,6 +129,7 @@ local function LocalizeAndSubstituteStrict(token, substitutions)
 		return text
 	end
 	for key, value in pairs(substitutions) do
+		text = string.gsub(text, "%%" .. tostring(key) .. "%%", tostring(value))
 		text = string.gsub(text, "%%" .. tostring(key), tostring(value))
 	end
 	return text
@@ -241,6 +281,14 @@ local PasstimeRes = {
 	passLockIndicator = { x = W * 0.5 - 158 * Scale, y = H * 0.5 - 166 * Scale, w = 64 * Scale, h = 64 * Scale, tex = 0 },
 	speechIndicator = { x = W * 0.5 + 102 * Scale, y = H * 0.5 - 172 * Scale, w = 48 * Scale, h = 48 * Scale, tex = 0 },
 	offscreenArrow = { w = 30 * Scale, h = 30 * Scale, tex = 0 },
+	ballReticlePiece1 = { tex = 0 },
+	ballReticlePiece2 = { tex = 0 },
+	ballReticlePassLock = { tex = 0 },
+	playerReticleRed = { tex = 0 },
+	playerReticleBlue = { tex = 0 },
+	offscreenArrowRed = { tex = 0 },
+	offscreenArrowBlue = { tex = 0 },
+	offscreenArrowNeutral = { tex = 0 },
 	eventTitle = { x = 0, y = H * 0.2, w = W, h = 25 * Scale, font = ResolveFont("HudFontBiggerBold", "HudFontBig", "HudFontMediumSmallBold", "DermaDefaultBold") },
 	eventBonus = { x = 0, y = H * 0.2 + 24 * Scale, w = W, h = 20 * Scale, font = ResolveFont("HudFontMediumSmallBold", "HudFontSmallBold", "DermaDefaultBold") },
 	eventDetail = { x = 0, y = H * 0.2 + 48 * Scale, w = W, h = 24 * Scale, font = ResolveFont("HudFontMediumSmallBold", "HudFontSmallBold", "DermaDefaultBold") },
@@ -277,6 +325,99 @@ local function SetHudEvent(titleToken, detailToken, bonusToken, substitutions)
 		bonus = LocalizeAndSubstituteStrict(bonusToken, substitutions),
 	}
 	PasstimeHudState.eventUntil = CurTime() + 3.0
+end
+
+local function GetPasstimeTeamColor(teamNum)
+	if teamNum == TEAM_RED then
+		return Color(255, 81, 81)
+	elseif teamNum == TEAM_BLU then
+		return Color(165, 222, 255)
+	end
+	return Color(245, 231, 222)
+end
+
+local function DrawTexturedMarker(tex, x, y, w, h, color, rot)
+	if not tex or tex <= 0 then
+		return
+	end
+
+	color = color or Color(255, 255, 255, 255)
+	surface.SetDrawColor(color.r, color.g, color.b, color.a or 255)
+	surface.SetTexture(tex)
+	surface.DrawTexturedRectRotated(x, y, w, h, rot or 0)
+end
+
+local function ShouldShowWorldMarker(screen)
+	if not screen then
+		return false
+	end
+
+	return screen.visible
+		and screen.x >= 0
+		and screen.x <= ScrW()
+		and screen.y >= 0
+		and screen.y <= ScrH()
+end
+
+local function GetProjectedWorldDiameter(worldPos, worldRadius)
+	if not isvector(worldPos) then
+		return 0
+	end
+
+	worldRadius = math.max(tonumber(worldRadius) or 0, 0)
+	if worldRadius <= 0 then
+		return 0
+	end
+
+	local center = worldPos:ToScreen()
+	local edge = (worldPos + EyeAngles():Right() * worldRadius):ToScreen()
+	if not (center and edge and center.visible and edge.visible) then
+		return 0
+	end
+
+	return math.max(center.x - edge.x, edge.x - center.x) * 2
+end
+
+local function CanTargetPassRecipient(owner, target)
+	if not (IsValid(owner) and IsValid(target) and owner ~= target) then return false end
+	if not (target:IsPlayer() and target:Alive()) then return false end
+	if target:Team() ~= owner:Team() then return false end
+	if target.InCond and (target:InCond(TF_COND_DISGUISED) or target:InCond(TF_COND_DISGUISING)) then return false end
+	if target.InCond and (target:InCond(TF_COND_STEALTHED) or target:InCond(TF_COND_STEALTHED_USER_BUFF)) then return false end
+	if target.IsStealthed and target:IsStealthed() then return false end
+
+	local maxRange = GetGlobalFloat("tf_passtime_max_pass_range", 0)
+	if maxRange > 0 and owner:GetPos():DistToSqr(target:GetPos()) > (maxRange * maxRange) then
+		return false
+	end
+
+	return true
+end
+
+local function FindBestPassHintTarget(owner)
+	if not IsValid(owner) then
+		return nil
+	end
+
+	local eyePos = owner:EyePos()
+	local eyeForward = owner:EyeAngles():Forward()
+	local bestScore = 0.96
+	local bestTarget = nil
+
+	for _, ply in ipairs(player.GetAll()) do
+		if not CanTargetPassRecipient(owner, ply) then
+			continue
+		end
+
+		local toTarget = (ply:WorldSpaceCenter() - eyePos):GetNormalized()
+		local score = eyeForward:Dot(toTarget)
+		if score > bestScore and CanSeeTarget(eyePos, ply:WorldSpaceCenter(), { owner, ply }) then
+			bestScore = score
+			bestTarget = ply
+		end
+	end
+
+	return bestTarget
 end
 
 local function LoadPasstimeRes()
@@ -401,9 +542,15 @@ local function LoadPasstimeRes()
 	if speechIndicator and TF2Res.GetTextureID then
 		PasstimeRes.speechIndicator.tex = TF2Res.GetTextureID(speechIndicator, "image", "../passtime/hud/passtime_pass_to_me_prompt")
 	end
-	if offscreenImage and TF2Res.GetTextureID then
-		PasstimeRes.offscreenArrow.tex = TF2Res.GetTextureID(offscreenImage, "image", "../passtime/hud/passtime_ball")
-	end
+	PasstimeRes.ballReticlePiece1.tex = GetSafeTextureID("passtime/hud/passtime_ball_reticle_piece_1", "../passtime/hud/passtime_ball_reticle_piece_1")
+	PasstimeRes.ballReticlePiece2.tex = GetSafeTextureID("passtime/hud/passtime_ball_reticle_piece_2", "../passtime/hud/passtime_ball_reticle_piece_2")
+	PasstimeRes.ballReticlePassLock.tex = GetSafeTextureID("passtime/hud/passtime_ball_reticle_passlock", "../passtime/hud/passtime_ball_reticle_passlock")
+	PasstimeRes.playerReticleRed.tex = GetSafeTextureID("passtime/hud/passtime_teamicon_red", "../passtime/hud/passtime_teamicon_red")
+	PasstimeRes.playerReticleBlue.tex = GetSafeTextureID("passtime/hud/passtime_teamicon_blue", "../passtime/hud/passtime_teamicon_blue")
+	PasstimeRes.offscreenArrowBlue.tex = GetSafeTextureID("passtime/hud/passtime_ball_offscreen_blue", "../passtime/hud/passtime_ball_offscreen_blue")
+	PasstimeRes.offscreenArrowRed.tex = GetSafeTextureID("passtime/hud/passtime_ball_offscreen_red", "../passtime/hud/passtime_ball_offscreen_red")
+	PasstimeRes.offscreenArrowNeutral.tex = GetSafeTextureID("passtime/hud/passtime_ball", "../passtime/hud/passtime_ball")
+	PasstimeRes.offscreenArrow.tex = PasstimeRes.offscreenArrowNeutral.tex
 
 	for i = 0, 2 do
 		local blueNode = statusTree and TF2Res.FindByFieldName and TF2Res.FindByFieldName(statusTree, "GoalBlue" .. i)
@@ -716,8 +863,9 @@ function PANEL:DrawProgressBar()
 			yalign = TEXT_ALIGN_CENTER,
 		})
 	elseif GetGlobalInt("tf_passtime_ball_spawn_countdown", 0) > 0 and not GetGlobalBool("tf_passtime_ball_free", false) then
+		local countdown = GetGlobalInt("tf_passtime_ball_spawn_countdown", 0)
 		draw.Text({
-			text = "JACK SPAWNS IN " .. tostring(GetGlobalInt("tf_passtime_ball_spawn_countdown", 0)),
+			text = TFLocalizeFormatted("#TF_Passtime_BallSpawnsIn", "JACK SPAWNS IN %s1", countdown),
 			font = PasstimeRes.ballCarrierName.font or "TargetID",
 			pos = {
 				PasstimeRes.ballCarrierName.x + (PasstimeRes.ballCarrierName.w * 0.5),
@@ -734,17 +882,6 @@ function PANEL:DrawPowerMeter()
 	local power = math.Clamp(GetGlobalInt("tf_passtime_ball_power", 0), 0, 100)
 	if power <= 0 then
 		return
-	end
-
-	surface.SetDrawColor(255, 255, 255, 255)
-	if PasstimeRes.ballPowerFrame.tex and PasstimeRes.ballPowerFrame.tex > 0 then
-		surface.SetTexture(PasstimeRes.ballPowerFrame.tex)
-		surface.DrawTexturedRect(
-			PasstimeRes.ballPowerFrame.x,
-			PasstimeRes.ballPowerFrame.y,
-			PasstimeRes.ballPowerFrame.w,
-			PasstimeRes.ballPowerFrame.h
-		)
 	end
 
 	local fillW = math.floor(PasstimeRes.ballPowerFill.w * (power / 100))
@@ -765,6 +902,17 @@ function PANEL:DrawPowerMeter()
 			PasstimeRes.ballPowerFinal.w,
 			PasstimeRes.ballPowerFinal.h,
 			Color(255, 255, 255, 50)
+		)
+	end
+
+	surface.SetDrawColor(255, 255, 255, 255)
+	if PasstimeRes.ballPowerFrame.tex and PasstimeRes.ballPowerFrame.tex > 0 then
+		surface.SetTexture(PasstimeRes.ballPowerFrame.tex)
+		surface.DrawTexturedRect(
+			PasstimeRes.ballPowerFrame.x,
+			PasstimeRes.ballPowerFrame.y,
+			PasstimeRes.ballPowerFrame.w,
+			PasstimeRes.ballPowerFrame.h
 		)
 	end
 end
@@ -804,7 +952,7 @@ function PANEL:UpdateState()
 			"#Msg_PasstimeEventScoreBonus",
 			{
 				team = redScore > PasstimeHudState.lastRedScore and "RED" or "BLU",
-				subject = IsValid(scorer) and scorer:Nick() or LocalizeStrict("#TF_Passtime_Goal"),
+				subject = IsValid(scorer) and scorer:Nick() or Localize("#TF_Passtime_Goal", "GOAL"),
 			}
 		)
 	end
@@ -932,8 +1080,275 @@ function PANEL:DrawPassNotify()
 	end
 end
 
+function PANEL:DrawBallReticle()
+	local lp = LocalPlayer()
+	if not IsValid(lp) then
+		return
+	end
+
+	local carrier = GetCarrier()
+	local projectile = GetProjectileBall()
+	local target = IsValid(carrier) and carrier or (IsValid(projectile) and projectile or GetLooseBallWeapon())
+	if not IsValid(target) or target == lp then
+		return
+	end
+
+	local teamNum = TEAM_UNASSIGNED
+	if IsValid(carrier) then
+		teamNum = carrier:Team()
+	elseif IsValid(projectile) then
+		local prevCarrier = projectile:GetNWEntity("TFPasstimePrevCarrier")
+		if IsValid(prevCarrier) then
+			teamNum = prevCarrier:Team()
+		end
+	end
+
+	if teamNum ~= TEAM_UNASSIGNED and teamNum ~= lp:Team() then
+		return
+	end
+
+	local pos = target:WorldSpaceCenter()
+	local screen = pos:ToScreen()
+	if not ShouldShowWorldMarker(screen) then
+		return
+	end
+
+	local homingActive = IsValid(projectile) and IsValid(projectile:GetNWEntity("TFPasstimeHomingTarget"))
+	local targeted = lp:GetNWBool("TFPasstimeIsTargeted", false)
+	local alpha = (homingActive or targeted) and math.floor((math.fmod(CurTime() * 3.0, 1.0)) * 255) or 180
+	local dist = pos:Distance(EyePos())
+	local scale = math.Remap(math.Clamp(dist, 768, 4096), 768, 4096, 64, 192)
+	local projectedBallDiameter = GetProjectedWorldDiameter(pos, cv_passtime_ball_sphere_radius:GetFloat())
+	if projectedBallDiameter > 0 then
+		scale = math.max(scale, projectedBallDiameter * 1.1)
+	end
+	if homingActive or targeted then
+		scale = scale * 2
+	end
+
+	local teamColor = GetPasstimeTeamColor(teamNum)
+	teamColor.a = alpha
+	DrawTexturedMarker(PasstimeRes.ballReticlePiece1.tex, screen.x, screen.y, scale, scale, teamColor, 0)
+	DrawTexturedMarker(PasstimeRes.ballReticlePiece2.tex, screen.x, screen.y, scale, scale, teamColor, 0)
+end
+
+function PANEL:DrawGoalReticles()
+	local lp = LocalPlayer()
+	local carrier = GetCarrier()
+	if not (IsValid(lp) and carrier == lp) then
+		return
+	end
+
+	for _, goal in ipairs(ents.FindByClass("func_passtime_goal")) do
+		if not IsValid(goal) or goal.Disabled or goal.TeamNum ~= lp:Team() then
+			continue
+		end
+
+		local vec = goal:WorldSpaceCenter()
+		local facingFrac = EyeAngles():Forward():Dot((vec - EyePos()):GetNormalized())
+		if facingFrac < 0.6 then
+			continue
+		end
+
+		local screen = vec:ToScreen()
+		if not ShouldShowWorldMarker(screen) then
+			continue
+		end
+
+		local color = GetPasstimeTeamColor(lp:Team())
+		local ringAlpha = math.Clamp(math.cos(CurTime() * 10.0), 0, 1) * (120 * math.Remap(math.Clamp(facingFrac, 0.8, 1.0), 0.8, 1.0, 1.0, 0.3))
+		local arrowFrac = 1.0 - (CurTime() % 1.0)
+		local arrowScreen = (vec + Vector(0, 0, arrowFrac * 64)):ToScreen()
+
+		DrawTexturedMarker(PasstimeRes.ballReticlePiece1.tex, screen.x, screen.y, 256, 256, Color(color.r, color.g, color.b, ringAlpha), 0)
+		if ShouldShowWorldMarker(arrowScreen) then
+			DrawTexturedMarker(PasstimeRes.ballReticlePiece2.tex, arrowScreen.x, arrowScreen.y, 128, 128, Color(color.r, color.g, color.b, arrowFrac * (255 * math.Remap(math.Clamp(facingFrac, 0.8, 1.0), 0.8, 1.0, 1.0, 0.3))), 0)
+		end
+	end
+end
+
+function PANEL:DrawPassReticle()
+	local lp = LocalPlayer()
+	local carrier = GetCarrier()
+	if not (IsValid(lp) and carrier == lp) then
+		return
+	end
+
+	local passTarget = lp:GetNWEntity("TFPasstimePassTarget")
+	local hintedTarget = nil
+	local alpha = 0
+	local baseScale = 64
+
+	if IsValid(passTarget) then
+		hintedTarget = passTarget
+		alpha = math.floor((math.fmod(CurTime() * 3.0, 1.0)) * 255)
+	else
+		hintedTarget = FindBestPassHintTarget(lp)
+		if not IsValid(hintedTarget) then
+			return
+		end
+		alpha = 200 * math.Clamp(math.cos(CurTime() * 20.0), 0.3, 1.0)
+		baseScale = 48
+	end
+
+	local pos = hintedTarget:WorldSpaceCenter()
+	local screen = pos:ToScreen()
+	if not ShouldShowWorldMarker(screen) then
+		return
+	end
+
+	local dist = pos:Distance(EyePos())
+	local scale = math.Remap(math.Clamp(dist, 768, 8192), 768, 8192, 1.0, 8.0) * baseScale
+	local teamColor = IsValid(passTarget) and GetPasstimeTeamColor(lp:Team()) or GetPasstimeTeamColor(TEAM_UNASSIGNED)
+	local neutralColor = GetPasstimeTeamColor(TEAM_UNASSIGNED)
+
+	if IsValid(passTarget) then
+		DrawTexturedMarker(PasstimeRes.ballReticlePassLock.tex, screen.x, screen.y, scale * 2, scale * 2, Color(teamColor.r, teamColor.g, teamColor.b, alpha), 0)
+	end
+	DrawTexturedMarker(PasstimeRes.ballReticlePiece1.tex, screen.x, screen.y, scale * 2, scale * 2, Color(neutralColor.r, neutralColor.g, neutralColor.b, IsValid(passTarget) and 255 or 80), 0)
+	DrawTexturedMarker(PasstimeRes.ballReticlePiece2.tex, screen.x, screen.y, scale * 2, scale * 2, Color(teamColor.r, teamColor.g, teamColor.b, alpha), 0)
+end
+
+function PANEL:DrawAskForBallReticles()
+	local lp = LocalPlayer()
+	if not IsValid(lp) then
+		return
+	end
+
+	for _, ply in ipairs(player.GetAll()) do
+		if not (IsValid(ply) and ply ~= lp and ply:Alive() and ply:Team() == lp:Team()) then
+			continue
+		end
+		if ply:GetNWFloat("TFPasstimeAskForBallUntil", 0) <= CurTime() then
+			continue
+		end
+
+		local pos = ply:WorldSpaceCenter() + Vector(0, 0, 18)
+		local screen = pos:ToScreen()
+		if not ShouldShowWorldMarker(screen) then
+			continue
+		end
+
+		DrawTexturedMarker(PasstimeRes.speechIndicator.tex, screen.x, screen.y, 32 * Scale, 32 * Scale, Color(255, 255, 255, 220), 0)
+	end
+end
+
+function PANEL:DrawPlayerReticles()
+	local lp = LocalPlayer()
+	if not IsValid(lp) or not lp:Alive() then
+		return
+	end
+
+	local friendsDetail = cv_passtime_player_reticles_friends:GetInt()
+	local enemiesDetail = cv_passtime_player_reticles_enemies:GetInt()
+	local localHasBall = lp:GetNWBool("TFHasPasstimeBall", false)
+
+	for _, ply in ipairs(player.GetAll()) do
+		if not (IsValid(ply) and ply ~= lp and ply:Alive()) then
+			continue
+		end
+
+		if ply.GetPercentInvisible and ply:GetPercentInvisible() > 0 then
+			continue
+		end
+
+		local disguisedEnemy = false
+		if ply.InCond and ply:InCond(TF_COND_DISGUISED) and ply.GetDisguiseTeam and ply:GetDisguiseTeam() == lp:Team() then
+			disguisedEnemy = true
+		end
+
+		local isFriend = ply:Team() == lp:Team() or disguisedEnemy
+		local detail = isFriend and friendsDetail or enemiesDetail
+		if detail <= 0 then
+			continue
+		end
+		if detail == 1 and not localHasBall then
+			continue
+		end
+
+		local vecTarget = ply:EyePos()
+		local screen = vecTarget:ToScreen()
+		if not ShouldShowWorldMarker(screen) then
+			continue
+		end
+
+		local tr = util.TraceLine({
+			start = EyePos(),
+			endpos = vecTarget,
+			filter = lp,
+			mask = MASK_PLAYERSOLID
+		})
+
+		if tr.Fraction >= 1 or tr.Entity == ply then
+			continue
+		end
+
+		local teamNum = ply:Team()
+		if disguisedEnemy and ply:Team() ~= lp:Team() then
+			teamNum = lp:Team()
+		end
+
+		local tex = teamNum == TEAM_RED and PasstimeRes.playerReticleRed.tex or PasstimeRes.playerReticleBlue.tex
+		if not tex or tex <= 0 then
+			continue
+		end
+
+		local dist = vecTarget:Distance(EyePos())
+		local scale = math.Remap(math.Clamp(dist, 1024, 4096), 1024, 4096, 80, 128)
+		DrawTexturedMarker(tex, screen.x, screen.y, scale, scale, Color(255, 255, 255, 100), 0)
+	end
+end
+
 function PANEL:DrawOffscreenArrow()
-	return
+	local target = GetBallTargetEntity()
+	local lp = LocalPlayer()
+	if not (IsValid(target) and IsValid(lp)) then
+		return
+	end
+	if target == lp then
+		return
+	end
+
+	local worldPos = target:WorldSpaceCenter()
+	local screen = worldPos:ToScreen()
+	if ShouldShowWorldMarker(screen) then
+		return
+	end
+
+	local iconTex = PasstimeRes.offscreenArrowNeutral.tex
+	local teamNum = TEAM_UNASSIGNED
+	if target:IsPlayer() then
+		teamNum = target:Team()
+	else
+		local prevCarrier = target.GetNWEntity and target:GetNWEntity("TFPasstimePrevCarrier") or nil
+		if IsValid(prevCarrier) then
+			teamNum = prevCarrier:Team()
+		end
+	end
+
+	if teamNum == TEAM_RED then
+		iconTex = PasstimeRes.offscreenArrowRed.tex
+	elseif teamNum == TEAM_BLU then
+		iconTex = PasstimeRes.offscreenArrowBlue.tex
+	end
+
+	local x, y, angle = ComputeEdgeIndicator(worldPos, math.max(PasstimeRes.offscreenArrow.w, PasstimeRes.offscreenArrow.h) + 48)
+	DrawTexturedMarker(iconTex, x, y, PasstimeRes.offscreenArrow.w, PasstimeRes.offscreenArrow.h, Color(255, 255, 255, 255), 0)
+
+	local radians = math.rad(angle)
+	local arrowLength = 18 * Scale
+	local arrowWidth = 10 * Scale
+	local tip = { x = x + math.cos(radians) * arrowLength, y = y + math.sin(radians) * arrowLength }
+	local left = { x = x + math.cos(radians + 2.5) * arrowWidth, y = y + math.sin(radians + 2.5) * arrowWidth }
+	local right = { x = x + math.cos(radians - 2.5) * arrowWidth, y = y + math.sin(radians - 2.5) * arrowWidth }
+
+	draw.NoTexture()
+	surface.SetDrawColor(255, 255, 255, 220)
+	surface.DrawPoly({
+		{ x = tip.x, y = tip.y },
+		{ x = left.x, y = left.y },
+		{ x = right.x, y = right.y },
+	})
 end
 
 function PANEL:Paint()
@@ -945,6 +1360,11 @@ function PANEL:Paint()
 	self:DrawPowerMeter()
 	self:DrawEventText()
 	self:DrawPassNotify()
+	self:DrawBallReticle()
+	self:DrawGoalReticles()
+	self:DrawPassReticle()
+	self:DrawAskForBallReticles()
+	self:DrawPlayerReticles()
 	self:DrawOffscreenArrow()
 end
 

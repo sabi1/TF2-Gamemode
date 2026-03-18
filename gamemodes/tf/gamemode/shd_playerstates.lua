@@ -21,6 +21,20 @@ PLAYERSTATE_REPROGRAMMED = 8192
 = 32768
 ]]
 
+TF_RUNE_NONE = TF_RUNE_NONE or -1
+TF_RUNE_STRENGTH = TF_RUNE_STRENGTH or 0
+TF_RUNE_HASTE = TF_RUNE_HASTE or 1
+TF_RUNE_REGEN = TF_RUNE_REGEN or 2
+TF_RUNE_RESIST = TF_RUNE_RESIST or 3
+TF_RUNE_VAMPIRE = TF_RUNE_VAMPIRE or 4
+TF_RUNE_REFLECT = TF_RUNE_REFLECT or 5
+TF_RUNE_PRECISION = TF_RUNE_PRECISION or 6
+TF_RUNE_AGILITY = TF_RUNE_AGILITY or 7
+TF_RUNE_KNOCKOUT = TF_RUNE_KNOCKOUT or 8
+TF_RUNE_KING = TF_RUNE_KING or 9
+TF_RUNE_PLAGUE = TF_RUNE_PLAGUE or 10
+TF_RUNE_SUPERNOVA = TF_RUNE_SUPERNOVA or 11
+
 local function DefaultParticleNameFunc(v, p)
 	return string.format(v.particle,ParticleSuffix(p:EntityTeam()))
 end
@@ -461,6 +475,14 @@ PrecacheParticleSystem("eye_powerup_blue_lvl_3")
 
 PrecacheParticleSystem("eye_powerup_red_lvl_4")
 PrecacheParticleSystem("eye_powerup_blue_lvl_4")
+PrecacheParticleSystem("powerup_king_red")
+PrecacheParticleSystem("powerup_king_blue")
+PrecacheParticleSystem("powerup_supernova_ready")
+PrecacheParticleSystem("powerup_supernova_strike_red")
+PrecacheParticleSystem("powerup_supernova_strike_blue")
+PrecacheParticleSystem("powerup_supernova_explode_red")
+PrecacheParticleSystem("powerup_supernova_explode_blue")
+PrecacheParticleSystem("powerup_plague_carrier")
 PrecacheParticleSystem("mark_for_death")
 PrecacheParticleSystem("speed_boost_trail")
 PrecacheParticleSystem("bot_radio_waves")
@@ -608,6 +630,26 @@ for cond_name, cond_id in pairs(TF_COND) do
 	if _G[cond_name] == nil then
 		_G[cond_name] = cond_id
 	end
+end
+
+TF_RUNE_COND_BY_TYPE = TF_RUNE_COND_BY_TYPE or {
+	[TF_RUNE_STRENGTH] = TF_COND_RUNE_STRENGTH,
+	[TF_RUNE_HASTE] = TF_COND_RUNE_HASTE,
+	[TF_RUNE_REGEN] = TF_COND_RUNE_REGEN,
+	[TF_RUNE_RESIST] = TF_COND_RUNE_RESIST,
+	[TF_RUNE_VAMPIRE] = TF_COND_RUNE_VAMPIRE,
+	[TF_RUNE_REFLECT] = TF_COND_RUNE_REFLECT,
+	[TF_RUNE_PRECISION] = TF_COND_RUNE_PRECISION,
+	[TF_RUNE_AGILITY] = TF_COND_RUNE_AGILITY,
+	[TF_RUNE_KNOCKOUT] = TF_COND_RUNE_KNOCKOUT,
+	[TF_RUNE_KING] = TF_COND_RUNE_KING,
+	[TF_RUNE_PLAGUE] = TF_COND_RUNE_PLAGUE,
+	[TF_RUNE_SUPERNOVA] = TF_COND_RUNE_SUPERNOVA,
+}
+
+TF_RUNE_TYPE_BY_COND = TF_RUNE_TYPE_BY_COND or {}
+for runeType, cond in pairs(TF_RUNE_COND_BY_TYPE) do
+	TF_RUNE_TYPE_BY_COND[cond] = runeType
 end
 
 STATE_TO_PRIMARY_COND[PLAYERSTATE_ONFIRE] = TF_COND_BURNING
@@ -804,11 +846,12 @@ local function ensure_condition_core(self)
 	if self.TFCondBits3 == nil then self.TFCondBits3 = 0 end
 	if self.TFCondBits4 == nil then self.TFCondBits4 = 0 end
 
-	self.TFConditionData = self.TFConditionData or {}
+	local conditionData = istable(self.TFConditionData) and self.TFConditionData or {}
+	self.TFConditionData = conditionData
 	for i = 0, (TF_COND_LAST or 0) - 1 do
-		local data = self.TFConditionData[i]
+		local data = conditionData[i]
 		if not data then
-			self.TFConditionData[i] = {
+			conditionData[i] = {
 				m_bPrevActive = false,
 				m_flExpireTime = 0,
 				m_pProvider = NULL,
@@ -2137,76 +2180,191 @@ function meta:OnRemoveCannotSwitchFromMelee()
 	cond_stack_remove(self, "cant_switch_melee")
 end
 
+function meta:GetCarryingRuneType()
+	if not self.InCond then
+		return TF_RUNE_NONE
+	end
+
+	for runeType = TF_RUNE_STRENGTH, TF_RUNE_SUPERNOVA do
+		local cond = TF_RUNE_COND_BY_TYPE[runeType]
+		if cond and self:InCond(cond) then
+			return runeType
+		end
+	end
+
+	return TF_RUNE_NONE
+end
+
+function meta:IsCarryingRune()
+	return self:GetCarryingRuneType() ~= TF_RUNE_NONE
+end
+
+function meta:SetRuneCharge(value)
+	value = math.Clamp(tonumber(value) or 0, 0, 100)
+	self:SetNWFloat("TFRuneCharge", value)
+	self:SetNWBool("TFRuneCharged", value >= 100)
+end
+
+function meta:GetRuneCharge()
+	return math.Clamp(tonumber(self:GetNWFloat("TFRuneCharge", 0)) or 0, 0, 100)
+end
+
+function meta:IsRuneCharged()
+	return self:GetRuneCharge() >= 100
+end
+
+function meta:CanRuneCharge()
+	return self.InCond and self:InCond(TF_COND_RUNE_SUPERNOVA) or false
+end
+
+function meta:SetCarryingRuneType(runeType)
+	if not self.AddCond or not self.RemoveCond then return end
+
+	local wanted = tonumber(runeType)
+	if wanted == nil then
+		wanted = TF_RUNE_NONE
+	end
+
+	if wanted == self:GetCarryingRuneType() then return end
+
+	self:SetRuneCharge(0)
+
+	for candidate, cond in pairs(TF_RUNE_COND_BY_TYPE) do
+		if candidate == wanted then
+			self:AddCond(cond, PERMANENT_CONDITION or -1, self)
+		elseif self:InCond(cond) then
+			self:RemoveCond(cond, true)
+		end
+	end
+
+	if wanted == TF_RUNE_NONE then
+		self:SetNWInt("TFCarryingRuneType", TF_RUNE_NONE)
+	end
+end
+
+function meta:DropRune()
+	if not SERVER then return nil end
+
+	local runeType = self:GetCarryingRuneType()
+	if runeType == TF_RUNE_NONE then return nil end
+
+	self:SetCarryingRuneType(TF_RUNE_NONE)
+
+	local dropped = ents.Create("item_powerup_rune")
+	if not IsValid(dropped) then return nil end
+
+	dropped:SetPos(self:GetPos() + Vector(0, 0, 48))
+	dropped:SetAngles(Angle(0, self:EyeAngles().y, 0))
+	dropped:Spawn()
+	dropped:Activate()
+	if dropped.SetRuneType then
+		dropped:SetRuneType(runeType)
+	end
+	if dropped.DropWithGravity then
+		dropped:DropWithGravity(self:GetVelocity() + self:GetAimVector() * 150)
+	end
+	dropped:SetOwner(self)
+	dropped.NextActive = CurTime() + 0.4
+	return dropped
+end
+
+local function sync_carrying_rune_network(self, preferredType)
+	if not IsValid(self) then return end
+	local runeType = preferredType
+	if runeType == nil then
+		runeType = self.GetCarryingRuneType and self:GetCarryingRuneType() or TF_RUNE_NONE
+	end
+	self:SetNWInt("TFCarryingRuneType", runeType or TF_RUNE_NONE)
+end
+
 function meta:OnAddRuneResist()
 	self:OnAddDefenseBuff()
+	sync_carrying_rune_network(self, TF_RUNE_RESIST)
 end
 
 function meta:OnRemoveRuneResist()
 	self:OnRemoveDefenseBuff()
+	sync_carrying_rune_network(self)
 end
 
 function meta:OnAddRuneStrength()
 	self:OnAddCritBoost()
+	sync_carrying_rune_network(self, TF_RUNE_STRENGTH)
 end
 
 function meta:OnRemoveRuneStrength()
 	self:OnRemoveCritBoost()
+	sync_carrying_rune_network(self)
 end
 
 function meta:OnAddRuneHaste()
 	set_speed_mult(self, "rune_haste", 1.25)
+	sync_carrying_rune_network(self, TF_RUNE_HASTE)
 end
 
 function meta:OnRemoveRuneHaste()
 	clear_speed_mult(self, "rune_haste")
+	sync_carrying_rune_network(self)
 end
 
 function meta:OnAddRuneRegen()
 	update_regen_timer(self)
+	sync_carrying_rune_network(self, TF_RUNE_REGEN)
 end
 
 function meta:OnRemoveRuneRegen()
 	update_regen_timer(self)
+	sync_carrying_rune_network(self)
 end
 
 function meta:OnAddRuneVampire()
 	self:SetNWBool("RuneVampire", true)
+	sync_carrying_rune_network(self, TF_RUNE_VAMPIRE)
 end
 
 function meta:OnRemoveRuneVampire()
 	self:SetNWBool("RuneVampire", false)
+	sync_carrying_rune_network(self)
 end
 
 function meta:OnAddRuneReflect()
 	self:SetNWBool("RuneReflect", true)
+	sync_carrying_rune_network(self, TF_RUNE_REFLECT)
 end
 
 function meta:OnRemoveRuneReflect()
 	self:SetNWBool("RuneReflect", false)
+	sync_carrying_rune_network(self)
 end
 
 function meta:OnAddRunePrecision()
 	self:OnAddCritBoost()
+	sync_carrying_rune_network(self, TF_RUNE_PRECISION)
 end
 
 function meta:OnRemoveRunePrecision()
 	self:OnRemoveCritBoost()
+	sync_carrying_rune_network(self)
 end
 
 function meta:OnAddRuneAgility()
 	set_speed_mult(self, "rune_agility", 1.15)
+	sync_carrying_rune_network(self, TF_RUNE_AGILITY)
 end
 
 function meta:OnRemoveRuneAgility()
 	clear_speed_mult(self, "rune_agility")
+	sync_carrying_rune_network(self)
 end
 
 function meta:OnAddRuneKnockout()
 	self:OnAddOffenseBuff()
+	sync_carrying_rune_network(self, TF_RUNE_KNOCKOUT)
 end
 
 function meta:OnRemoveRuneKnockout()
 	self:OnRemoveOffenseBuff()
+	sync_carrying_rune_network(self)
 end
 
 function meta:OnAddRuneImbalance()
@@ -2222,6 +2380,7 @@ function meta:OnAddRuneKing()
 	self:OnAddDefenseBuff()
 	set_speed_mult(self, "rune_king", 1.1)
 	update_regen_timer(self)
+	sync_carrying_rune_network(self, TF_RUNE_KING)
 end
 
 function meta:OnRemoveRuneKing()
@@ -2229,6 +2388,7 @@ function meta:OnRemoveRuneKing()
 	self:OnRemoveDefenseBuff()
 	clear_speed_mult(self, "rune_king")
 	update_regen_timer(self)
+	sync_carrying_rune_network(self)
 end
 
 function meta:OnAddKingBuff()
@@ -2244,11 +2404,15 @@ end
 function meta:OnAddRuneSupernova()
 	self:OnAddCritBoost()
 	self:OnAddInvulnerable()
+	self:SetRuneCharge(0)
+	sync_carrying_rune_network(self, TF_RUNE_SUPERNOVA)
 end
 
 function meta:OnRemoveRuneSupernova()
 	self:OnRemoveCritBoost()
 	self:OnRemoveInvulnerable()
+	self:SetRuneCharge(0)
+	sync_carrying_rune_network(self)
 end
 
 function meta:OnAddPasstimeInterception()
@@ -2269,10 +2433,12 @@ end
 
 function meta:OnAddRunePlague()
 	self:OnAddCondGas()
+	sync_carrying_rune_network(self, TF_RUNE_PLAGUE)
 end
 
 function meta:OnRemoveRunePlague()
 	self:OnRemoveCondGas()
+	sync_carrying_rune_network(self)
 end
 
 function meta:OnAddCompetitiveWinner()
@@ -2848,6 +3014,37 @@ if SERVER then
 			if IsValid(pl) and pl.ConditionGameRulesThink and pl.ConditionThink then
 				pl:ConditionGameRulesThink()
 				pl:ConditionThink()
+
+				if pl.CanRuneCharge and pl:CanRuneCharge() and not pl:IsRuneCharged() then
+					local now = CurTime()
+					local lastUpdate = pl._tfLastRuneChargeUpdate or now
+					local dt = math.max(now - lastUpdate, 0)
+					local chargeCvar = GetConVar("tf_powerup_max_charge_time")
+					local maxChargeTime = chargeCvar and math.max(chargeCvar:GetFloat(), 0.1) or 20
+					pl:SetRuneCharge(pl:GetRuneCharge() + (dt * 100 / maxChargeTime))
+
+					if pl:IsRuneCharged() then
+						local deployHint = tf_lang and tf_lang.GetRaw and tf_lang.GetRaw("#TF_Powerup_Supernova_Deploy", true) or "Grapple SECONDARY FIRE to deploy Supernova attack!"
+						pl:PrintMessage(HUD_PRINTCENTER, deployHint)
+					end
+				end
+				pl._tfLastRuneChargeUpdate = CurTime()
+
+				if pl.InCond and pl:InCond(TF_COND_RUNE_KING) then
+					if (pl._tfNextKingBuffCheck or 0) <= CurTime() then
+						local active = false
+						for _, target in ipairs(ents.FindInSphere(pl:GetPos(), 450)) do
+							if not IsValid(target) or target == pl or not target:IsPlayer() or not target:Alive() then continue end
+							if not target.IsFriendly or not target:IsFriendly(pl) then continue end
+							target:AddCond(TF_COND_KING_BUFFED, 1, pl)
+							active = true
+						end
+						pl:SetNWBool("TFKingRuneBuffActive", active)
+						pl._tfNextKingBuffCheck = CurTime() + 0.5
+					end
+				else
+					pl:SetNWBool("TFKingRuneBuffActive", false)
+				end
 			end
 		end
 	end)
@@ -2856,6 +3053,53 @@ else
 		for _, pl in ipairs(player.GetAll()) do
 			if IsValid(pl) and pl.ConditionThink then
 				pl:ConditionThink()
+			end
+		end
+	end)
+
+	local mannpowerFxState = {}
+
+	local function attach_mannpower_effects(pl, state)
+		if not IsValid(pl) then return end
+
+		if state.plague then
+			ParticleEffectAttach("powerup_plague_carrier", PATTACH_ABSORIGIN_FOLLOW, pl, 0)
+		end
+
+		if state.king then
+			local team = pl:EntityTeam()
+			local effect = (team == TEAM_BLU or team == TF_TEAM_PVE_INVADERS) and "powerup_king_blue" or "powerup_king_red"
+			ParticleEffectAttach(effect, PATTACH_ABSORIGIN_FOLLOW, pl, 0)
+		end
+
+		if state.supernovaReady then
+			ParticleEffectAttach("powerup_supernova_ready", PATTACH_ABSORIGIN_FOLLOW, pl, 0)
+		end
+	end
+
+	hook.Add("Think", "TFMannpowerVisualEffects", function()
+		for _, pl in ipairs(player.GetAll()) do
+			if not IsValid(pl) then continue end
+
+			local idx = pl:EntIndex()
+			local wants = {
+				plague = pl.InCond and pl:InCond(TF_COND_RUNE_PLAGUE) or false,
+				king = pl:GetNWBool("TFKingRuneBuffActive", false) and not (pl.InCond and pl:InCond(TF_COND_PLAGUE)),
+				supernovaReady = pl:GetNWBool("TFRuneCharged", false) and pl.InCond and pl:InCond(TF_COND_RUNE_SUPERNOVA) or false,
+			}
+			local prev = mannpowerFxState[idx]
+
+			if not prev
+				or prev.plague ~= wants.plague
+				or prev.king ~= wants.king
+				or prev.supernovaReady ~= wants.supernovaReady
+			then
+				pl:StopParticles()
+				if pl.UpdateStateParticles then
+					pl:UpdateStateParticles(pl:GetPlayerState())
+				end
+				attach_mannpower_effects(pl, wants)
+				mannpowerFxState[idx] = wants
 			end
 		end
 	end)

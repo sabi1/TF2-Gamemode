@@ -23,7 +23,7 @@ Status meanings:
 | Mode | TF2 map prefixes / logic | Status | Notes |
 | --- | --- | --- | --- |
 | Special Delivery | `sd_` | partial | Prefix and neutral-flag detection exist, and neutral captures now resolve as team wins instead of CTF scoring; full round/entity parity still needs validation. |
-| PASSTIME | `pass_`, `passtime_logic` | partial | `passtime_logic`, spawn/goal/trigger entities, goalie zones, and no-ball zones now expose real server-side state, scoring, catches, and out-of-bounds handling; full TF2 ball physics and HUD parity are still incomplete. |
+| PASSTIME | `pass_`, `passtime_logic` | partial | `passtime_logic`, spawn/goal/trigger entities, goalie zones, no-ball zones, server game events, and most HUD reticle/offscreen state now exist; full TF2 ball physics/effects parity still needs live validation. |
 | Player Destruction | `pd_`, `tf_logic_player_destruction` | partial | Score tracking, countdown, and team outputs exist, but full map-rule and HUD parity still needs validation. |
 | Robot Destruction | `rd_`, `tf_logic_robot_destruction` | partial | Score and stolen-core output logic exists, but full robot-mode rules and HUD parity still needs validation. |
 | Mannpower | `powerup_`, `tf_logic_mannpower`, `info_powerup_spawn`, `item_powerup_crit`, `item_powerup_uber`, `func_powerupvolume` | partial | Mode flagging, grappling-hook enablement, temp powerup pickups, and powerup volume behavior now exist; full rune spawning and dominant-state parity are still incomplete. |

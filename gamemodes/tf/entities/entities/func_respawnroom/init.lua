@@ -1,6 +1,20 @@
 ENT.Base = "base_brush"
 ENT.Type = "brush"
 
+local function IsBlueSideTeam(teamNum)
+	return teamNum == TEAM_BLU or teamNum == TF_TEAM_PVE_INVADERS
+end
+
+local function IsAllowedInRespawnRoom(playerTeam, roomTeam)
+	if roomTeam == TEAM_RED then
+		return playerTeam == TEAM_RED
+	end
+	if roomTeam == TEAM_BLU then
+		return IsBlueSideTeam(playerTeam)
+	end
+	return true
+end
+
 randomscoutubertaunt = 
 {
 	"vo/Scout_specialcompleted12.mp3",
@@ -64,15 +78,20 @@ end
 function ENT:StartTouch(ent) 
 	--print(self.Team, self.TeamNum)
 	if ent:IsPlayer() then
-		ent:SetNWBool("InRespawnRoom",true)
+		local allowed = IsAllowedInRespawnRoom(ent:Team(), self.TeamNum)
+		ent:SetNWBool("InRespawnRoom", allowed)
 	end
 end
 
 function ENT:Touch(ent)
 	if ent:IsPlayer() then
 		self.Players[ent] = ent:EntIndex()
-		----print(self.Team)
-		ent:GodEnable()
+		if IsAllowedInRespawnRoom(ent:Team(), self.TeamNum) then
+			ent:GodEnable()
+		else
+			ent:SetNWBool("InRespawnRoom", false)
+			ent:GodDisable()
+		end
 	end
 	--[[
 	if (ent:IsPlayer()) then
@@ -88,7 +107,9 @@ function ENT:EndTouch(ent)
 		timer.Simple(2.0, function()
 			if not IsValid(ent) then return end
 			ent:SetNWBool("InRespawnRoom",false)
-			ent:GodDisable()
+			if IsAllowedInRespawnRoom(ent:Team(), self.TeamNum) then
+				ent:GodDisable()
+			end
 		end)
 		
 		self.Players[ent] = nil

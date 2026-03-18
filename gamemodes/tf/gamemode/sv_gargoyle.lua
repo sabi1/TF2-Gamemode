@@ -1904,13 +1904,13 @@ function GM:DoPlayerDeath(ply, attacker, dmginfo)
 		ply:SpectateEntity(attacker)
 		ply:SetFOV(attacker:GetFOV())
 		timer.Simple(2.0, function()
-			if (!ply:Alive() && IsValid(attacker)) then
+			if (IsValid(ply) and !ply:Alive() and IsValid(attacker)) then
 				ply:SendLua("surface.PlaySound('misc/freeze_cam.wav')")
 				ply:SetFOV(attacker:GetFOV())
 			end
 		end)
 		timer.Simple(2.0, function()
-			if (!ply:Alive() && IsValid(attacker)) then
+			if (IsValid(ply) and !ply:Alive() and IsValid(attacker)) then
 				ply:Spectate(OBS_MODE_FREEZECAM)
 				ply:SpectateEntity(attacker)
 				ply:SetFOV(attacker:GetFOV())
@@ -2001,10 +2001,13 @@ function GM:DoPlayerDeath(ply, attacker, dmginfo)
 		if (ply:HasDeathFlag(DF_DECAP)) then
 			ply:Decap()
 			timer.Simple(0.1, function()
-			
-				ply:GetRagdollEntity():EmitSound("TFPlayer.Decapitated")
+				if not IsValid(ply) then return end
+				local ragdoll = ply:GetRagdollEntity()
+				if not IsValid(ragdoll) then return end
+
+				ragdoll:EmitSound("TFPlayer.Decapitated")
 				if (!ply:IsHL2()) then
-					HideDecapitatedHeadBones(ply:GetRagdollEntity())
+					HideDecapitatedHeadBones(ragdoll)
 				end
 
 			end)

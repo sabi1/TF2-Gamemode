@@ -61,6 +61,28 @@ function ENT:ReloadProperties()
 	end
 end
 
+local function PickBestHUDTimer()
+	local fallback
+	for _, timerEnt in ipairs(ents.FindByClass("team_round_timer")) do
+		if IsValid(timerEnt) then
+			if timerEnt.ShowInHUD then
+				return timerEnt
+			end
+
+			if not fallback then
+				local hasUsableLength = (tonumber(timerEnt.SetupLength) or 0) > 0
+					or (tonumber(timerEnt.TimerLength) or 0) > 0
+					or (tonumber(timerEnt.TimerReference) or 0) > 0
+				if hasUsableLength then
+					fallback = timerEnt
+				end
+			end
+		end
+	end
+
+	return fallback
+end
+
 function ENT:InitPostEntity()
 	--print(self)
 	PrintTable(self.Properties or {})
@@ -69,6 +91,8 @@ function ENT:InitPostEntity()
 	
 	if self.ShowInHUD then
 		GAMEMODE.CurrentHUDTimer = self
+	elseif not IsValid(GAMEMODE.CurrentHUDTimer) then
+		GAMEMODE.CurrentHUDTimer = PickBestHUDTimer()
 	end
 	
 	self:RestartTimer()
@@ -351,6 +375,10 @@ function ENT:SetShowInHUD(enabled, recipient)
 			GAMEMODE.CurrentHUDTimer = v
 			break
 		end
+	end
+
+	if not IsValid(GAMEMODE.CurrentHUDTimer) then
+		GAMEMODE.CurrentHUDTimer = PickBestHUDTimer()
 	end
 
 	if IsValid(GAMEMODE.CurrentHUDTimer) and GAMEMODE.CurrentHUDTimer.SyncHUDTimerState then
@@ -716,6 +744,10 @@ local function SyncRoundTimerToPlayer(ply)
 	if string.StartWith(string.lower(game.GetMap() or ""), "koth_") then return end
 
 	local timerEnt = GAMEMODE.CurrentHUDTimer
+	if not IsValid(timerEnt) then
+		timerEnt = PickBestHUDTimer()
+		GAMEMODE.CurrentHUDTimer = timerEnt
+	end
 	if IsValid(timerEnt) and timerEnt.SyncHUDTimerState then
 		timerEnt:SyncHUDTimerState(ply)
 		return
