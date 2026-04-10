@@ -32,6 +32,25 @@ local function modeFromPrefix(mapName)
 	return prefix and MAP_PREFIX_TO_MODE[prefix] or nil
 end
 
+local function hasClass(className)
+	if not ents or not ents.FindByClass then return false end
+	local found = ents.FindByClass(className)
+	return istable(found) and #found > 0
+end
+
+local function hasLiveMannpowerSignals()
+	if TF_IsMannpowerMode and TF_IsMannpowerMode() then
+		return true
+	end
+	if GetGlobalBool("tf_mannpower_mode", false) or GetGlobalBool("tf_powerup_mode", false) then
+		return true
+	end
+	if hasClass("tf_logic_mannpower") or hasClass("info_powerup_spawn") or hasClass("func_powerupvolume") then
+		return true
+	end
+	return false
+end
+
 function TF_MAPTYPES.GetMapPrefix(mapName)
 	return getMapPrefix(mapName)
 end
@@ -89,7 +108,7 @@ function TF_MAPTYPES.IsPassTime(forceRefresh)
 end
 
 function TF_MAPTYPES.IsMannpower(forceRefresh)
-	if TF_IsMannpowerMode and TF_IsMannpowerMode() then
+	if hasLiveMannpowerSignals() then
 		return true
 	end
 	return TF_MAPTYPES.IsMode("mannpower", forceRefresh)

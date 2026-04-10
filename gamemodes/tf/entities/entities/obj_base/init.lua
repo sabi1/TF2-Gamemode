@@ -43,10 +43,18 @@ function ENT:SpawnFunction(pl, tr)
 end
 
 function ENT:OnStartBuilding() end
-function ENT:OnDoneBuilding() end
+function ENT:OnDoneBuilding()
+	if isfunction(TF_NotifyObjectBuiltInSuggestedArea) then
+		TF_NotifyObjectBuiltInSuggestedArea(self)
+	end
+end
 function ENT:OnStartUpgrade() end
 function ENT:PreUpgradeAnim() end
-function ENT:OnDoneUpgrade() end
+function ENT:OnDoneUpgrade()
+	if isfunction(TF_NotifyObjectUpgradedInSuggestedArea) then
+		TF_NotifyObjectUpgradedInSuggestedArea(self)
+	end
+end
 function ENT:PostEnable() end
 function ENT:OnThink() end
 function ENT:OnThinkActive() end

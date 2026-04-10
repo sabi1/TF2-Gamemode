@@ -119,6 +119,22 @@ function GM:PreScaleDamage(ent, hitgroup, dmginfo)
 		att:CallNPCEvent("pre_damage", ent, hitgroup, dmginfo)
 	end
 
+	if IsValid(att) and att:IsPlayer() and IsValid(ent) and ent:IsPlayer() and att ~= ent then
+		local attackerRune = att.GetCarryingRuneType and att:GetCarryingRuneType() or TF_RUNE_NONE
+		local victimRune = ent.GetCarryingRuneType and ent:GetCarryingRuneType() or TF_RUNE_NONE
+		local attackerDominant = att.InCond and att:InCond(TF_COND_POWERUPMODE_DOMINANT) or false
+		local isCrit = bit.band(dmginfo:GetDamageType(), DMG_CRITICAL or 0) ~= 0
+
+		if attackerRune == TF_RUNE_STRENGTH and not (ent.IsBuilding and ent:IsBuilding()) and not isCrit then
+			dmginfo:ScaleDamage(attackerDominant and 1.4 or 2.0)
+		end
+
+		-- Resist blocks backstabs outright in TF2 before item checks.
+		if victimRune == TF_RUNE_RESIST and (dmginfo.GetDamageCustom and dmginfo:GetDamageCustom() or 0) == (TF_DMG_CUSTOM_BACKSTAB or -1) then
+			dmginfo:SetDamage(0)
+		end
+	end
+
 	-- Used for recalculating custom damage falloff
 	-- (especially for the Direct Hit which does not do enough damage due to its poor blast radius)
 	--[[
@@ -161,6 +177,37 @@ function GM:PostScaleDamage(ent, hitgroup, dmginfo)
 	if dmginfo:GetDamage() > 0 and ent:IsTFPlayer() and not ent:IsBuilding()
 	and att:IsTFPlayer() and not att:IsBuilding() and ent:HasPlayerState(PLAYERSTATE_MILK) then
 		GAMEMODE:HealPlayer(nil, att, dmginfo:GetDamage() * 0.75, true, false)
+	end
+
+	if not (IsValid(ent) and ent:IsPlayer() and IsValid(att) and att:IsPlayer()) then return end
+	if ent == att or dmginfo:GetDamage() <= 0 then return end
+
+	local victimRune = ent.GetCarryingRuneType and ent:GetCarryingRuneType() or TF_RUNE_NONE
+	local attackerRune = att.GetCarryingRuneType and att:GetCarryingRuneType() or TF_RUNE_NONE
+
+	if attackerRune == TF_RUNE_VAMPIRE and att.Alive and att:Alive() then
+		local maxBuffed = (tonumber(att:GetMaxHealth()) or 100) + (tonumber(att.GetMaxOverheal and att:GetMaxOverheal()) or 0)
+		local missing = math.max(0, maxBuffed - (tonumber(att:Health()) or 0))
+		if missing > 0 then
+			att:SetHealth(math.min(maxBuffed, att:Health() + math.floor(dmginfo:GetDamage() + 0.5)))
+		end
+	end
+
+	if victimRune == TF_RUNE_REFLECT and attackerRune ~= TF_RUNE_RESIST and attackerRune ~= TF_RUNE_VAMPIRE then
+		if not (att.InCond and att:InCond(TF_COND_INVULNERABLE)) and att:Alive() then
+			local now = CurTime()
+			if (ent._tfNextReflectZap or 0) <= now then
+				ent._tfNextReflectZap = now + 0.5
+				ent:EmitSound("Powerup.Reflect.Reflect", 75, 100)
+			end
+
+			local reflected = DamageInfo()
+			reflected:SetDamage(dmginfo:GetDamage() * ((ent.InCond and ent:InCond(TF_COND_POWERUPMODE_DOMINANT)) and 0.5 or 0.8))
+			reflected:SetDamageType(bit.bor(DMG_PREVENT_PHYSICS_FORCE, DMG_GENERIC))
+			reflected:SetAttacker(ent)
+			reflected:SetInflictor(IsValid(dmginfo:GetInflictor()) and dmginfo:GetInflictor() or ent)
+			att:TakeDamageInfo(reflected)
+		end
 	end
 end
 

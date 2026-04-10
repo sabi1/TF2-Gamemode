@@ -67,6 +67,39 @@ local function GetControlPointOwnerTeam(cp)
 	return tonumber(cp.OwnerTeam or (cp.Properties and cp.Properties.point_default_owner))
 end
 
+local function GetControlPointCaptureSound(cp, key, defaultName)
+	if not IsValid(cp) then
+		return defaultName
+	end
+
+	local props = cp.Properties or {}
+	local value = string.Trim(tostring(props[key] or ""))
+	if value == "" then
+		return defaultName
+	end
+
+	return value
+end
+
+local function StopControlPointCaptureSounds(cp)
+	if not IsValid(cp) then
+		return
+	end
+
+	cp:StopSound("ControlPoint.Move")
+	cp:StopSound("ControlPoint.Malfunction")
+	cp:StopSound("Hologram.Move")
+	cp:StopSound("Hologram.Interrupted")
+end
+
+local function EmitControlPointCaptureSound(cp, key, defaultName, level, pitch)
+	if not IsValid(cp) then
+		return
+	end
+
+	cp:EmitSound(GetControlPointCaptureSound(cp, key, defaultName), level or 80, pitch or 100)
+end
+
 local function TeamCanCapturePoint(triggerEnt, teamNum)
 	if not (teamNum == 2 or teamNum == 3) then
 		return false
@@ -162,6 +195,7 @@ function ENT:Initialize()
 	self.NextContestedAnnounce = 0
 	self.NextHudStateUpdate = 0
 	self.LastHudStateKey = nil
+	self.LastCaptureSoundState = "idle"
 end
 
 function ENT:GetCurrentCaptureProgress()
@@ -202,6 +236,24 @@ function ENT:BroadcastContestedAnnouncer(ownerTeam, cappingTeam)
 			SendGlobalSoundToPlayer(pl, "Announcer.ControlPointContested_Neutral")
 		end
 	end
+end
+
+function ENT:ShouldBroadcastContestedAnnouncer(ownerTeam, cappingTeam, progress)
+	if not (cappingTeam == 2 or cappingTeam == 3) then
+		return false
+	end
+
+	if ownerTeam == cappingTeam then
+		return false
+	end
+
+	-- Mirror TF2's warning timing more closely: only warn when a cap starts,
+	-- not while a partial cap/revert is already in progress.
+	if math.Clamp(tonumber(progress) or 0, 0, 1) > 0 then
+		return false
+	end
+
+	return true
 end
 
 function ENT:IsPayloadPushTrigger()
@@ -526,6 +578,217 @@ function ENT:GetHudCapState()
 	}
 end
 
+function ENT:GetCaptureTimerName(pointID)
+	return "CapPoint" .. tostring(pointID or GetControlPointID(self.CapturePoint) or 0)
+end
+
+function ENT:GetRequiredCappers(teamNum)
+	if teamNum == 2 or teamNum == 3 then
+		return math.max(math.floor(tonumber(self.Properties["team_numcap_" .. tostring(teamNum)]) or 1), 1)
+	end
+	return 1
+end
+
+function ENT:StopControlPointTimer(pointID)
+	timer.Stop(self:GetCaptureTimerName(pointID))
+end
+
+function ENT:ClearCaptureState(stopMoveSound)
+	self.CappingTeam = nil
+	self.CaptureStartedAt = nil
+	self.CaptureEndsAt = nil
+	if stopMoveSound and IsValid(self.CapturePoint) then
+		StopControlPointCaptureSounds(self.CapturePoint)
+	end
+	self.LastCaptureSoundState = "idle"
+end
+
+function ENT:SetCaptureSoundState(state)
+	state = tostring(state or "idle")
+	if self.LastCaptureSoundState == state then
+		return false
+	end
+	self.LastCaptureSoundState = state
+	return true
+end
+
+function ENT:ScheduleControlPointCapture(pointID, captureTeam, activator)
+	if not IsValid(self.CapturePoint) then return end
+	if not captureTeam or captureTeam == 0 then return end
+
+	local remaining = math.max((1 - math.Clamp(self.CaptureBaseProgress or 0, 0, 1)) * 10, 0.05)
+	self.CaptureStartedAt = CurTime()
+	self.CaptureEndsAt = CurTime() + remaining
+
+	local timerName = self:GetCaptureTimerName(pointID)
+	timer.Create(timerName, remaining, 1, function()
+		if not IsValid(self) or not IsValid(self.CapturePoint) then
+			return
+		end
+		if self.CapturePoint.Locked then
+			return
+		end
+		if self.CappingTeam ~= captureTeam then
+			return
+		end
+
+		local state = self:GetHudCapState()
+		if not state then
+			return
+		end
+		if state.cappingTeam ~= captureTeam then
+			return
+		end
+		if state.blocked then
+			return
+		end
+		if (state.cappers or 0) < self:GetRequiredCappers(captureTeam) then
+			return
+		end
+		if GetControlPointOwnerTeam(self.CapturePoint) == captureTeam then
+			return
+		end
+		if not TeamCanCapturePoint(self, captureTeam) then
+			return
+		end
+
+		self.CapturePoint:SetOwnerTeam(captureTeam, activator or NULL, true)
+		self:ClearCaptureState(true)
+		self.CaptureBaseProgress = 0
+		self.DecayStartedAt = nil
+		self.DecayStartProgress = 0
+		StopControlPointCaptureSounds(self.CapturePoint)
+		EmitControlPointCaptureSound(self.CapturePoint, "point_capture_end_sound", "Hologram.Stop")
+		self:TriggerOutput("OnCapture", activator or NULL, self.CapturePoint)
+		if captureTeam == 2 then
+			self:TriggerOutput("OnCapTeam1", activator or NULL, self.CapturePoint)
+		elseif captureTeam == 3 then
+			self:TriggerOutput("OnCapTeam2", activator or NULL, self.CapturePoint)
+		end
+		self:RefreshControlPointLocks()
+		self:BroadcastHudCapState(true)
+	end)
+end
+
+function ENT:ReconcileControlPointCaptureState(forceBroadcast)
+	if self.Disabled or not IsValid(self.CapturePoint) or self:IsPayloadMode() then
+		return
+	end
+
+	local pointID = GetControlPointID(self.CapturePoint)
+	if pointID == nil then return end
+
+	local ownerTeam = GetControlPointOwnerTeam(self.CapturePoint) or 0
+	local isLocked = self.CapturePoint.Locked and true or false
+	local attackersByTeam = {
+		[2] = 0,
+		[3] = 0,
+	}
+	local defenders = 0
+	local activatorByTeam = {}
+
+	for ply in pairs(self.Occupants or {}) do
+		if not (IsValid(ply) and ply:IsPlayer() and ply:Alive()) then
+			continue
+		end
+
+		local teamNum = GetPlayerControlPointTeam(ply)
+		if teamNum == ownerTeam then
+			defenders = defenders + 1
+		elseif teamNum and teamNum >= 2 and TeamCanCapturePoint(self, teamNum) then
+			attackersByTeam[teamNum] = (attackersByTeam[teamNum] or 0) + 1
+			activatorByTeam[teamNum] = activatorByTeam[teamNum] or ply
+		end
+	end
+
+	local chosenTeam = tonumber(self.CappingTeam) or 0
+	if isLocked or chosenTeam == ownerTeam or (attackersByTeam[chosenTeam] or 0) <= 0 then
+		chosenTeam = 0
+	end
+	if chosenTeam == 0 then
+		if attackersByTeam[2] > 0 and attackersByTeam[2] >= attackersByTeam[3] then
+			chosenTeam = 2
+		elseif attackersByTeam[3] > 0 then
+			chosenTeam = 3
+		end
+	end
+
+	local attackers = attackersByTeam[chosenTeam] or 0
+	local requiredPlayers = self:GetRequiredCappers(chosenTeam)
+	local blocked = (not isLocked) and attackers > 0 and defenders > 0
+	local canProgress = chosenTeam ~= 0
+		and (not isLocked)
+		and ownerTeam ~= chosenTeam
+		and TeamCanCapturePoint(self, chosenTeam)
+		and attackers >= requiredPlayers
+		and not blocked
+
+	local previousTeam = self.CappingTeam
+	local currentProgress = self:GetCurrentCaptureProgress()
+
+	if chosenTeam ~= previousTeam then
+		currentProgress = 0
+	end
+
+	if chosenTeam ~= 0 and chosenTeam ~= previousTeam then
+		self.CappingTeam = chosenTeam
+		self.CaptureBaseProgress = math.Clamp(currentProgress, 0, 1)
+		self.DecayStartedAt = nil
+		self.DecayStartProgress = 0
+		if self:ShouldBroadcastContestedAnnouncer(ownerTeam, chosenTeam, currentProgress) then
+			self:BroadcastContestedAnnouncer(ownerTeam, chosenTeam)
+		end
+		if canProgress and self:SetCaptureSoundState("progress") then
+			StopControlPointCaptureSounds(self.CapturePoint)
+			EmitControlPointCaptureSound(self.CapturePoint, "point_capture_start_sound", "Hologram.Start")
+			EmitControlPointCaptureSound(self.CapturePoint, "point_capture_progress_sound", "Hologram.Move")
+		end
+	end
+
+	if canProgress then
+		self.CappingTeam = chosenTeam
+		self:SetCaptureSoundState("progress")
+		if not self.CaptureStartedAt or not self.CaptureEndsAt then
+			self.CaptureBaseProgress = math.Clamp(currentProgress, 0, 1)
+			self.DecayStartedAt = nil
+			self.DecayStartProgress = 0
+			self:ScheduleControlPointCapture(pointID, chosenTeam, activatorByTeam[chosenTeam])
+		end
+	else
+		self:StopControlPointTimer(pointID)
+		if chosenTeam ~= 0 and (attackers > 0 or blocked) then
+			self.CappingTeam = chosenTeam
+			self.CaptureBaseProgress = math.Clamp(currentProgress, 0, 1)
+			self.CaptureStartedAt = nil
+			self.CaptureEndsAt = nil
+			self.DecayStartedAt = nil
+			self.DecayStartProgress = 0
+			if self:SetCaptureSoundState("blocked") then
+				StopControlPointCaptureSounds(self.CapturePoint)
+				EmitControlPointCaptureSound(self.CapturePoint, "point_capture_interrupted_sound", "Hologram.Interrupted")
+			end
+		else
+			self.CappingTeam = nil
+			self.CaptureStartedAt = nil
+			self.CaptureEndsAt = nil
+			self.CaptureBaseProgress = math.Clamp(currentProgress, 0, 1)
+			if self.CaptureBaseProgress > 0 then
+				self.DecayStartedAt = CurTime()
+				self.DecayStartProgress = self.CaptureBaseProgress
+			else
+				self.DecayStartedAt = nil
+				self.DecayStartProgress = 0
+			end
+			if self:SetCaptureSoundState("idle") then
+				StopControlPointCaptureSounds(self.CapturePoint)
+				EmitControlPointCaptureSound(self.CapturePoint, "point_capture_end_sound", "Hologram.Stop")
+			end
+		end
+	end
+
+	self:BroadcastHudCapState(forceBroadcast and true or false)
+end
+
 function ENT:BroadcastHudCapState(force)
 	if self:IsPayloadMode() then return end
 
@@ -583,75 +846,9 @@ function ENT:StartControlPointCapture(ply)
 		umsg.Start("TF_EnterControlPoint", ply)
 			umsg.Char(ply.CurrentControlPoint)
 		umsg.End()
-
-		local ownerTeam = GetControlPointOwnerTeam(self.CapturePoint)
-		if ownerTeam ~= capTeam and not self.CapturePoint.Locked and TeamCanCapturePoint(self, capTeam) then
-			local currentProgress = self:GetCurrentCaptureProgress()
-			local switchingTeams = self.CappingTeam and self.CappingTeam ~= capTeam
-			if switchingTeams then
-				currentProgress = 0
-			end
-
-			self.CappingTeam = capTeam
-			self.CaptureStartedAt = CurTime()
-			self.CaptureBaseProgress = math.Clamp(currentProgress, 0, 1)
-			self.DecayStartedAt = nil
-			self.DecayStartProgress = 0
-			local remaining = math.max((1 - self.CaptureBaseProgress) * 10, 0.05)
-			self.CaptureEndsAt = CurTime() + remaining
-			self:BroadcastHudCapState(true)
-			self:BroadcastContestedAnnouncer(ownerTeam, capTeam)
-			self.CapturePoint:EmitSound("ControlPoint.Start", 80, 100)
-			self.CapturePoint:EmitSound("ControlPoint.Move", 80, 100)
-
-			timer.Create("CapPoint" .. tostring(pointID), remaining, 1, function()
-				if not IsValid(self) or not IsValid(self.CapturePoint) or not IsValid(ply) then
-					return
-				end
-				if ply.CurrentControlPoint ~= pointID then
-					return
-				end
-				if self.CapturePoint.Locked then
-					return
-				end
-
-				local captureTeam = GetPlayerControlPointTeam(ply)
-				if not captureTeam then
-					return
-				end
-				if not TeamCanCapturePoint(self, captureTeam) then
-					return
-				end
-				if GetControlPointOwnerTeam(self.CapturePoint) == captureTeam then
-					return
-				end
-
-				self.CapturePoint:SetOwnerTeam(captureTeam, ply, true)
-				self.CappingTeam = nil
-				self.CaptureStartedAt = nil
-				self.CaptureEndsAt = nil
-				self.CaptureBaseProgress = 0
-				self.DecayStartedAt = nil
-				self.DecayStartProgress = 0
-				self.CapturePoint:StopSound("ControlPoint.Move")
-				self.CapturePoint:EmitSound("ControlPoint.Stop")
-				self:TriggerOutput("OnCapture", ply, self.CapturePoint)
-				if captureTeam == 2 then
-					self:TriggerOutput("OnCapTeam1", ply, self.CapturePoint)
-				elseif captureTeam == 3 then
-					self:TriggerOutput("OnCapTeam2", ply, self.CapturePoint)
-				end
-				self:RefreshControlPointLocks()
-				self:BroadcastHudCapState(true)
-			end)
-		end
-
-		-- Defenders entering their own point should block capture, not reset enemy capture
-		-- progress or force malfunction state.
-		if ownerTeam == capTeam then
-			self:BroadcastHudCapState(true)
-		end
 	end
+
+	self:ReconcileControlPointCaptureState(true)
 end
 
 function ENT:EndControlPointCapture(ply)
@@ -660,47 +857,11 @@ function ENT:EndControlPointCapture(ply)
 	local pointID = GetControlPointID(self.CapturePoint)
 	if pointID == nil or ply.CurrentControlPoint ~= pointID then return end
 
-	timer.Stop("CapPoint" .. tostring(pointID))
+	self:StopControlPointTimer(pointID)
 	ply.CurrentControlPoint = -1
 	umsg.Start("TF_ExitControlPoint", ply)
 	umsg.End()
-
-	local remainingAttackers = 0
-	for other in pairs(self.Occupants or {}) do
-		if IsValid(other) and other:IsPlayer() and other:Alive() then
-			local teamNum = GetPlayerControlPointTeam(other)
-			if teamNum and teamNum ~= GetControlPointOwnerTeam(self.CapturePoint) and TeamCanCapturePoint(self, teamNum) then
-				remainingAttackers = remainingAttackers + 1
-			end
-		end
-	end
-
-	if remainingAttackers <= 0 then
-		local currentProgress = self:GetCurrentCaptureProgress()
-		self.CappingTeam = nil
-		self.CaptureStartedAt = nil
-		self.CaptureEndsAt = nil
-		self.CaptureBaseProgress = math.Clamp(currentProgress, 0, 1)
-		if self.CaptureBaseProgress > 0 then
-			self.DecayStartedAt = CurTime()
-			self.DecayStartProgress = self.CaptureBaseProgress
-		else
-			self.DecayStartedAt = nil
-			self.DecayStartProgress = 0
-		end
-	end
-
-	local capTeam = GetPlayerControlPointTeam(ply)
-	if capTeam and GetControlPointOwnerTeam(self.CapturePoint) ~= capTeam then
-		timer.Create("CapPoint" .. tostring(pointID), 20, 1, function()
-			if not IsValid(self) or not IsValid(self.CapturePoint) then return end
-			self.CapturePoint:StopSound("ControlPoint.Move")
-			self.CapturePoint:StopSound("ControlPoint.Malfunction")
-			self.CapturePoint:EmitSound("ControlPoint.Stop")
-		end)
-	end
-
-	self:BroadcastHudCapState(true)
+	self:ReconcileControlPointCaptureState(true)
 end
 
 function ENT:Input_Enable()
@@ -745,8 +906,9 @@ function ENT:Input_CaptureCurrentCP(_, _, data)
 	self.CaptureBaseProgress = 0
 	self.DecayStartedAt = nil
 	self.DecayStartProgress = 0
-	self.CapturePoint:StopSound("ControlPoint.Move")
-	self.CapturePoint:EmitSound("ControlPoint.Stop")
+	self.LastCaptureSoundState = "idle"
+	StopControlPointCaptureSounds(self.CapturePoint)
+	EmitControlPointCaptureSound(self.CapturePoint, "point_capture_end_sound", "Hologram.Stop")
 	self:TriggerOutput("OnCapture", activator, self.CapturePoint)
 	if captureTeam == 2 then
 		self:TriggerOutput("OnCapTeam1", activator, self.CapturePoint)
@@ -771,8 +933,8 @@ function ENT:AbortControlPointCaptureForTruce()
 	self.CaptureBaseProgress = 0
 	self.DecayStartedAt = nil
 	self.DecayStartProgress = 0
-	self.CapturePoint:StopSound("ControlPoint.Move")
-	self.CapturePoint:StopSound("ControlPoint.Malfunction")
+	self.LastCaptureSoundState = "idle"
+	StopControlPointCaptureSounds(self.CapturePoint)
 
 	for ply in pairs(self.Occupants or {}) do
 		if not (IsValid(ply) and ply:IsPlayer()) then continue end
@@ -803,6 +965,7 @@ function ENT:Think()
 		elseif IsHalloweenBossTruceActive() then
 			self:AbortControlPointCaptureForTruce()
 		else
+			self:ReconcileControlPointCaptureState(false)
 			if not self.CappingTeam and self.DecayStartedAt then
 				local p = self:GetCurrentCaptureProgress()
 				self.CaptureBaseProgress = p
@@ -812,7 +975,6 @@ function ENT:Think()
 					self.CaptureBaseProgress = 0
 				end
 			end
-			self:BroadcastHudCapState(false)
 		end
 	end
 

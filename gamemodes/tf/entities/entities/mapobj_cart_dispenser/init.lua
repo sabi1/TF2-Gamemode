@@ -274,7 +274,7 @@ function ENT:OnDoneBuilding()
 	self.Clients = {}
 	self.NumClients = 0
 	
-	self:SetNoDraw(false)
+	self:SetNoDraw(true)
 	
 	self:SetMetalAmount(1000000000)
 	self.NextGenerate = CurTime() + 5
@@ -290,8 +290,14 @@ function ENT:OnDoneBuilding()
 			self.UpgradeRate = 0
 		end
 		timer.Simple(0.05, function()
+			if not IsValid(self) then return end
 			self:SetModel("models/buildables/mdispenser_light.mdl")
-			self.Model:SetModel("models/buildables/mdispenser_light.mdl")
+			self:SetNoDraw(true)
+			if IsValid(self.Model) then
+				self.Model:SetModel("models/buildables/mdispenser_light.mdl")
+				self.Model:SetNoDraw(true)
+				self.Model:DrawShadow(false)
+			end
 		end)
 	elseif self:GetBuildingType() == 2 then 
 		
@@ -304,8 +310,14 @@ function ENT:OnDoneBuilding()
 			self.UpgradeRate = 15
 		end
 		timer.Simple(0.05, function()
+			if not IsValid(self) then return end
 			self:SetModel("models/buildables/dispenser_light.mdl")
-			self.Model:SetModel("models/buildables/repair_level1.mdl")
+			self:SetNoDraw(true)
+			if IsValid(self.Model) then
+				self.Model:SetModel("models/buildables/repair_level1.mdl")
+				self.Model:SetNoDraw(true)
+				self.Model:DrawShadow(false)
+			end
 		end)
 	end
 end
@@ -355,7 +367,13 @@ function ENT:OnThinkActive()
 	end
 	self:SetHealth(1000000000)
 	self:SetModelScale(0.01)
-	self.Model:SetModelScale(0.01)
+	self:SetNoDraw(true)
+	self:DrawShadow(false)
+	if IsValid(self.Model) then
+		self.Model:SetModelScale(0.01)
+		self.Model:SetNoDraw(true)
+		self.Model:DrawShadow(false)
+	end
 	local rf = RecipientFilter()
 	rf:AddAllPlayers()
 		if !self.Idle_Sound and self:GetState()==3 || self.Idle_Sound and !self.Idle_Sound:IsPlaying() and self:GetState()==3 then

@@ -11,10 +11,14 @@ ENT.RespawnTime = 90
 local function playerBlockedFromTempPowerup(ply)
 	if not IsValid(ply) or not ply:IsPlayer() or not ply:Alive() then return true end
 	if not TF_IsMannpowerMode or not TF_IsMannpowerMode() then return true end
-	if ply:IsTaunting() then return true end
+	if ply.IsTaunting and ply:IsTaunting() then return true end
+	if ply.IsStealthed and ply:IsStealthed() then return true end
+	if isnumber(TF_COND_STEALTHED_BLINK) and ply.InCond and ply:InCond(TF_COND_STEALTHED_BLINK) then return true end
+	if ply.GetPercentInvisible and ply:GetPercentInvisible() > 0.25 then return true end
 	if ply:InCond(TF_COND_RUNE_IMBALANCE) then return true end
 	if ply:InCond(TF_COND_CRITBOOSTED_RUNE_TEMP) then return true end
 	if ply:InCond(TF_COND_INVULNERABLE_USER_BUFF) then return true end
+	if ply:GetNWBool("InRespawnRoom", false) then return true end
 	return ply:IsCritBoosted()
 end
 

@@ -351,15 +351,22 @@ function ParseGameItems(data, silent)
 	numreg = 0
 	
 	for k,v in pairs(util.KeyValuesToTable(data_attribs)) do
-		Attributes.n = Attributes.n + 1
-		v.id = tonumber(k)
-		v.name = string.lower(tostring(v.name or ""))
-		if v.name == "" then
-			v.name = "attribute_" .. tostring(v.id or Attributes.n)
+		if istable(v) then
+			local attributeID = tonumber(k)
+			if attributeID then
+				Attributes.n = Attributes.n + 1
+				v.id = attributeID
+				v.name = string.lower(tostring(v.name or ""))
+				if v.name == "" then
+					v.name = "attribute_" .. tostring(v.id or Attributes.n)
+				end
+				Attributes[v.name] = v
+				AttributesByID[v.id] = v
+				numreg = numreg + 1
+			elseif not silent then
+				ErrorNoHalt("ITEM SCRIPT ERROR: Ignoring attribute with non-numeric id '" .. tostring(k) .. "'\n")
+			end
 		end
-		Attributes[v.name] = v
-		AttributesByID[v.id] = v
-		numreg = numreg + 1
 	end
 	ConvertStringsToNumbers(Attributes)
 	if not silent then Msg(numreg.." attributes registered.\n") end
@@ -421,13 +428,20 @@ function ParseGameItems(data, silent)
 	end
 	
 	local data_particles = string.sub(data, smin, smax)
+	local parsedParticles = util.KeyValuesToTable(data_particles)
+	if istable(parsedParticles) and istable(parsedParticles.attribute_controlled_attached_particles) then
+		parsedParticles = parsedParticles.attribute_controlled_attached_particles
+	end
 	numreg = 0
 	
-	for k,v in pairs(util.KeyValuesToTable(data_particles)) do
-		Particles.n = Particles.n + 1
-		Particles[tonumber(k)] = v
-		TryPrecacheParticleSystem(v.system)
-		numreg = numreg + 1
+	for k,v in pairs(parsedParticles or {}) do
+		local particleID = tonumber(k)
+		if particleID and istable(v) then
+			Particles.n = Particles.n + 1
+			Particles[particleID] = v
+			TryPrecacheParticleSystem(v.system)
+			numreg = numreg + 1
+		end
 	end
 	if not silent then Msg(numreg.." particles registered.\n") end
 	

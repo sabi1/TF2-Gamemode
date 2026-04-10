@@ -60,7 +60,9 @@ include("cl_lightwarp.lua")
 
 include("cl_pac.lua")
 
+include("cl_notifications.lua")
 include("cl_loadout.lua")
+include("cl_itempickup.lua")
 
 include("proxies/itemtintcolor.lua")
 
@@ -946,56 +948,15 @@ net.Receive("TFRagdollCreate", function()
 	gamemode.Call("SetupPlayerRagdoll", ply, ragdoll)
 end)
 
-local TFGargoyleNotifyPanel = nil
-local TFGargoyleNotifyCloseDown = false
-
-local function CloseTFGargoyleNotification()
-	if IsValid(TFGargoyleNotifyPanel) then
-		TFGargoyleNotifyPanel:Remove()
-	end
-	TFGargoyleNotifyPanel = nil
-	TFGargoyleNotifyCloseDown = false
-end
-
 local function ShowTFGargoyleNotification(message)
-	CloseTFGargoyleNotification()
-
-	local width, height = 360, 106
-	local panel = vgui.Create("DPanel")
-	panel:SetSize(width, height)
-	panel:SetPos(ScrW() - width - 22, math.floor((ScrH() * 0.5) - (height * 0.5)))
-	panel.Message = message
-	panel.ExpireAt = CurTime() + 8
-	panel.Paint = function(self, w, h)
-		draw.RoundedBox(10, 0, 0, w, h, Color(44, 40, 41, 240))
-		surface.SetDrawColor(219, 197, 157, 255)
-		surface.DrawOutlinedRect(0, 0, w, h, 2)
-
-		draw.DrawText(self.Message or "", "Trebuchet18", 12, 10, Color(243, 241, 232, 255), TEXT_ALIGN_LEFT)
-
-		draw.SimpleText("Press [ K ] to", "Trebuchet18", 12, h - 28, Color(235, 73, 73, 255), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
-		draw.SimpleText("CLOSE.", "Trebuchet18", 128, h - 28, Color(148, 220, 106, 255), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
-	end
-
-	TFGargoyleNotifyPanel = panel
+	NotificationQueue_Add({
+		key = "gargoyle_notification",
+		title = "Merasmus's Gargoyle",
+		text = message,
+		lifetime = 8,
+		type = "basic",
+	})
 end
-
-hook.Add("Think", "TF_GargoyleNotificationCloseKey", function()
-	if not IsValid(TFGargoyleNotifyPanel) then return end
-
-	if CurTime() >= (TFGargoyleNotifyPanel.ExpireAt or 0) then
-		CloseTFGargoyleNotification()
-		return
-	end
-
-	local isDown = input.IsKeyDown(KEY_K)
-	if isDown and not TFGargoyleNotifyCloseDown then
-		CloseTFGargoyleNotification()
-		return
-	end
-
-	TFGargoyleNotifyCloseDown = isDown
-end)
 
 net.Receive("TF_HalloweenGargoyleNotify", function()
 	local _eventName = net.ReadString()
@@ -1013,6 +974,59 @@ net.Receive("TF_HalloweenGargoyleNotify", function()
 	end
 
 	ShowTFGargoyleNotification(message)
+end)
+
+local function ShowTFPasstimeNotification(token, resPath)
+	local title = token
+	if tf_lang and tf_lang.GetRaw then
+		title = tf_lang.GetRaw(token, true) or token
+	end
+
+	NotificationQueue_Remove(function(notification)
+		return notification.key == "passtime_notify_" .. tostring(token or "")
+	end)
+
+	NotificationQueue_Add({
+		key = "passtime_notify_" .. tostring(token or ""),
+		title = title,
+		text = "",
+		resPath = resPath,
+		lifetime = 3.0,
+		type = "basic",
+		hideHelp = true,
+		sound = false,
+	})
+end
+
+net.Receive("TF_PasstimeNotify", function()
+	local token = net.ReadString()
+	local resPath = net.ReadString()
+	if token == "" then return end
+	ShowTFPasstimeNotification(token, resPath)
+end)
+
+local function ShowTFCTFNotification(resPath, title)
+	NotificationQueue_Remove(function(notification)
+		return notification.key == "ctf_notification_" .. tostring(resPath or "")
+	end)
+
+	NotificationQueue_Add({
+		key = "ctf_notification_" .. tostring(resPath or ""),
+		title = title or "",
+		text = "",
+		resPath = resPath,
+		lifetime = 3.0,
+		type = "basic",
+		hideHelp = true,
+		sound = false,
+	})
+end
+
+net.Receive("TF_CTFNotify", function()
+	local resPath = net.ReadString()
+	local title = net.ReadString()
+	if resPath == "" then return end
+	ShowTFCTFNotification(resPath, title)
 end)
 
 local TFHalloweenSoulBursts = {}
@@ -1092,6 +1106,13 @@ local function TF2GM_LocalPlayerCanProcessRomevisionOffer()
 	return tostring(lp:GetPlayerClass() or "") ~= ""
 end
 
+local function TF2GM_LocalPlayerCanProcessNotifications()
+	local lp = LocalPlayer()
+	if not IsValid(lp) then return false end
+	if not lp.GetPlayerClass then return false end
+	return tostring(lp:GetPlayerClass() or "") ~= ""
+end
+
 local function TF2GM_ShowRomevisionPrompt()
 	local cvOptIn = GetConVar("tf_romevision_opt_in")
 	local cvSkip = GetConVar("tf_romevision_skip_prompt")
@@ -1118,6 +1139,84 @@ local function TF2GM_ShowRomevisionPrompt()
 		end
 	)
 end
+
+CreateClientConVar("tf_grapplinghook_skip_prompt", "0", true, false, "Never prompt to equip the grappling hook automatically.")
+local grapplingHookPromptOpen = false
+local grapplingHookPromptNextAt = 0
+local grapplingHookPromptedThisLife = false
+
+local function TF2GM_LocalizeGrapplingHookText(token, fallback)
+	if tf_lang and tf_lang.GetRaw then
+		local text = tf_lang.GetRaw(token, true)
+		if isstring(text) and text ~= "" and text ~= token then
+			return text
+		end
+	end
+	return fallback
+end
+
+local function ShowTFGrapplingHookNotification(className)
+	local cvSkip = GetConVar("tf_grapplinghook_skip_prompt")
+	if not cvSkip or cvSkip:GetBool() or grapplingHookPromptOpen then return end
+
+	grapplingHookPromptOpen = true
+
+	NotificationQueue_Remove(function(notification)
+		return notification.key == "equip_grappling_hook"
+	end)
+
+	NotificationQueue_Add({
+		key = "equip_grappling_hook",
+		title = TF2GM_LocalizeGrapplingHookText("#TF_Weapon_GrapplingHook", "Grappling Hook"),
+		text = TF2GM_LocalizeGrapplingHookText("#TF_GrapplingHook_EquipAction", "Grappling Hook not equipped. Accept to equip your Grappling Hook in the Action slot to use it."),
+		resPath = "resource/ui/notifications/notify_grappling_hook.res",
+		lifetime = 10,
+		type = "accept_decline",
+		ClassName = className,
+		OnAccept = function(notification)
+			grapplingHookPromptOpen = false
+			grapplingHookPromptNextAt = CurTime() + 1
+			TF2GM_EquipStockGrapplingHookForClass(tostring(notification.ClassName or ""))
+		end,
+		OnDecline = function()
+			grapplingHookPromptOpen = false
+			grapplingHookPromptNextAt = CurTime() + 10
+		end,
+		OnExpire = function()
+			grapplingHookPromptOpen = false
+			grapplingHookPromptNextAt = CurTime() + 1
+		end,
+	})
+end
+
+hook.Add("ShutDown", "TF2GM_ClearGrapplingHookNotification", function()
+	NotificationQueue_Remove(function(notification)
+		return notification.key == "equip_grappling_hook"
+	end)
+	grapplingHookPromptOpen = false
+end)
+
+hook.Add("Think", "TF2GM_GrapplingHookEquipPrompt", function()
+	if grapplingHookPromptOpen or grapplingHookPromptNextAt > CurTime() then return end
+	if not TF_IsGrapplingHookEnabled or not TF_IsGrapplingHookEnabled() then return end
+	if not TF2GM_LocalPlayerCanProcessNotifications() then return end
+
+	local lp = LocalPlayer()
+	if not IsValid(lp) or not lp.GetPlayerClass then return end
+	if not lp:Alive() then
+		grapplingHookPromptedThisLife = false
+		return
+	end
+
+	local className = string.lower(tostring(lp:GetPlayerClass() or ""))
+	if className == "" then return end
+	if TF2GM_IsGrapplingHookEquippedInLoadout and TF2GM_IsGrapplingHookEquippedInLoadout(className) then return end
+	if grapplingHookPromptedThisLife then return end
+
+	grapplingHookPromptedThisLife = true
+	grapplingHookPromptNextAt = CurTime() + 1
+	ShowTFGrapplingHookNotification(className)
+end)
 
 local function TF2GM_PrintRomevisionOfferChat(playerName)
 	playerName = tostring(playerName or "")
@@ -1888,13 +1987,86 @@ local function getPropertyAttributeByClass(properties, className, fallback)
 	return fallback
 end
 
-local function decodeItemTintColor(raw)
+local function decodePackedFloat32Integer(raw)
+	local n = tonumber(raw)
+	if not n then return nil end
+
+	n = bit.band(math.floor(n), 0xFFFFFFFF)
+
+	local sign = bit.band(bit.rshift(n, 31), 0x1)
+	local exponent = bit.band(bit.rshift(n, 23), 0xFF)
+	local mantissa = bit.band(n, 0x7FFFFF)
+
+	if exponent == 0xFF then
+		return nil
+	end
+
+	local value
+	if exponent == 0 then
+		if mantissa == 0 then
+			value = 0
+		else
+			value = (mantissa / 8388608) * (2 ^ -126)
+		end
+	else
+		value = (1 + mantissa / 8388608) * (2 ^ (exponent - 127))
+	end
+
+	if sign == 1 then
+		value = -value
+	end
+
+	return value
+end
+
+local function normalizeItemTintValue(raw)
 	local n = tonumber(raw)
 	if not n or n <= 0 then return nil end
+
 	n = math.floor(n)
-	if n > 0xFFFFFF then
-		n = bit.band(n, 0xFFFFFF)
+	if n <= 0xFFFFFF then
+		return n
 	end
+
+	local decoded = decodePackedFloat32Integer(n)
+	if decoded and decoded > 0 and decoded <= 0xFFFFFF then
+		local rounded = math.floor(decoded + 0.5)
+		if rounded > 0 and rounded <= 0xFFFFFF then
+			return rounded
+		end
+	end
+
+	return bit.band(n, 0xFFFFFF)
+end
+
+local function isTintAttributeClass(attrClass)
+	return attrClass == "set_item_tint_rgb"
+		or attrClass == "set_item_tint_rgb_2"
+		or attrClass == "set_item_tint_rgb_override"
+end
+
+normalizeTintAttributesInProperties = function(properties)
+	if not istable(properties) or not istable(properties.attributes) then return properties end
+
+	for _, pair in ipairs(properties.attributes) do
+		local attrID = istable(pair) and tonumber(pair[1]) or nil
+		local def = attrID and tf_items and tf_items.AttributesByID and tf_items.AttributesByID[attrID] or nil
+		if def and isTintAttributeClass(def.attribute_class) then
+			local normalized = normalizeItemTintValue(pair[2])
+			if normalized then
+				pair[2] = normalized
+			end
+		end
+	end
+
+	return properties
+end
+
+_G.normalizeTintAttributesInProperties = normalizeTintAttributesInProperties
+
+local function decodeItemTintColor(raw)
+	local n = normalizeItemTintValue(raw)
+	if not n then return nil end
 	return Color(
 		bit.band(bit.rshift(n, 16), 0xFF),
 		bit.band(bit.rshift(n, 8), 0xFF),
@@ -4260,6 +4432,16 @@ local function FindAttrInPairList(pairsList, attrId)
 	return nil
 end
 
+local function GetConfiguredInventoryServiceURL()
+	local urlConVar = GetConVar("tf_inventory_service_url")
+	local url = urlConVar and urlConVar:GetString() or ""
+	url = isstring(url) and string.Trim(url) or ""
+	if url == "" then
+		return nil
+	end
+	return url
+end
+
 local function DecodeSteamInventoryJSON(raw)
 	if not isstring(raw) then return nil, nil end
 	raw = string.gsub(raw, "^\239\187\191", "")
@@ -4280,6 +4462,218 @@ local function DecodeSteamInventoryJSON(raw)
 	end
 
 	return nil, nil
+end
+
+local function BuildInventoryCacheJSON(payload)
+	if not istable(payload) then return nil end
+
+	local cache = table.Copy(payload)
+	cache.result = cache.result or {}
+	cache.result.status = tonumber(cache.steam_status) or (cache.steam_ok == false and 15 or 1)
+	cache.result.statusDetail = tostring(cache.steam_status_detail or cache.steam_error or (cache.steam_ok == false and "Steam inventory unavailable." or "OK"))
+	cache.result.items = istable(cache.backpack) and table.Copy(cache.backpack) or {}
+
+	local encoded = util.TableToJSON(cache, true)
+	if not isstring(encoded) or encoded == "" then
+		return nil
+	end
+
+	return encoded
+end
+
+local function DecodeInventoryBackpackFromRaw(raw)
+	local decoded = util.JSONToTable(tostring(raw or ""))
+	if not istable(decoded) then
+		decoded = DecodeSteamInventoryJSON(raw)
+	end
+	if istable(decoded) and istable(decoded.result) and istable(decoded.result.items) then
+		return decoded.result.items
+	end
+	if istable(decoded) and istable(decoded.backpack) then
+		return decoded.backpack
+	end
+	return nil
+end
+
+local function GetInventoryItemIdentity(item)
+	if not istable(item) then return nil end
+
+	local source = string.lower(tostring(item.source or item.item_origin or (item.properties and item.properties.item_origin) or ""))
+	local id = tostring(item.id or "")
+	if id ~= "" then
+		return source .. "|id|" .. id
+	end
+
+	local originalID = tostring(item.original_id or "")
+	if originalID ~= "" then
+		return source .. "|orig|" .. originalID
+	end
+
+	local defindex = tonumber(item.defindex or (item.properties and item.properties.defindex)) or 0
+	if defindex <= 0 then
+		return nil
+	end
+
+	local quality = tonumber(item.quality or (item.properties and item.properties.quality)) or 0
+	local customName = tostring(item.custom_name or (item.properties and item.properties.custom_name) or "")
+	return string.format("%s|def=%d|q=%d|name=%s", source, defindex, quality, customName)
+end
+
+local function ShouldNotifyForInventoryItem(item)
+	if not istable(item) then return false end
+
+	local source = string.lower(tostring(item.source or ""))
+	if source == "stock" or source == "default" or source == "base" then
+		return false
+	end
+
+	local itemOrigin = string.lower(tostring(item.item_origin or (item.properties and item.properties.item_origin) or ""))
+	if itemOrigin == "stock" or itemOrigin == "default" or itemOrigin == "base" then
+		return false
+	end
+
+	return tonumber(item.defindex or (item.properties and item.properties.defindex)) ~= nil
+end
+
+local function DetectNewInventoryItems(previousBackpack, currentBackpack)
+	if not istable(previousBackpack) or not istable(currentBackpack) then
+		return {}
+	end
+
+	local seen = {}
+	for _, item in ipairs(previousBackpack) do
+		local key = GetInventoryItemIdentity(item)
+		if key then
+			seen[key] = true
+		end
+	end
+
+	local newItems = {}
+	for _, item in ipairs(currentBackpack) do
+		local key = GetInventoryItemIdentity(item)
+		if key and not seen[key] and ShouldNotifyForInventoryItem(item) then
+			newItems[#newItems + 1] = item
+		end
+	end
+
+	return newItems
+end
+
+local function NotifyInventoryItemsAdded(previousRaw, payload)
+	if not isfunction(TF2GM_ShowNewItemsNotification) then return end
+	if not istable(payload) or not istable(payload.backpack) then return end
+	if not isstring(previousRaw) or string.Trim(previousRaw) == "" then return end
+
+	local previousBackpack = DecodeInventoryBackpackFromRaw(previousRaw)
+	local newItems = DetectNewInventoryItems(previousBackpack, payload.backpack)
+	if #newItems <= 0 then return end
+
+	timer.Simple(0.1, function()
+		TF2GM_ShowNewItemsNotification(newItems, {})
+	end)
+end
+
+local function NormalizeResolvedLoadoutProperties(props)
+	local normalized = table.Copy(istable(props) and props or {})
+	for _, classProps in pairs(normalized) do
+		if istable(classProps) then
+			for slot, slotProps in pairs(classProps) do
+				classProps[slot] = (_G.normalizeTintAttributesInProperties or normalizeTintAttributesInProperties or function(v) return v end)(slotProps)
+			end
+		end
+	end
+	return normalized
+end
+
+local function HasResolvedLoadoutChanged(payload)
+	if not istable(payload) then return false end
+
+	local outputOrder = {"scout", "soldier", "pyro", "demoman", "heavy", "engineer", "medic", "sniper", "spy"}
+	for _, className in ipairs(outputOrder) do
+		local convar = GetConVar("loadout_" .. className)
+		if convar then
+			local loadoutValues = istable(payload.loadouts) and istable(payload.loadouts[className]) and payload.loadouts[className] or {}
+			local split = {}
+			for i = 1, #loadoutValues do
+				split[i] = tonumber(loadoutValues[i]) or -1
+			end
+			if convar:GetString() ~= table.concat(split, ",") then
+				return true
+			end
+		end
+
+		local tauntConvar = GetConVar("loadout_taunts_" .. className)
+		if tauntConvar then
+			local tauntValues = istable(payload.taunt_loadouts) and istable(payload.taunt_loadouts[className]) and payload.taunt_loadouts[className] or {}
+			local tauntSplit = {}
+			for i = 1, 8 do
+				tauntSplit[i] = tonumber(tauntValues[i]) or -1
+			end
+			if tauntConvar:GetString() ~= table.concat(tauntSplit, ",") then
+				return true
+			end
+		end
+	end
+
+	local currentProps = util.TableToJSON(NormalizeResolvedLoadoutProperties(TFClientLoadoutProperties or {}), false)
+	local nextProps = util.TableToJSON(NormalizeResolvedLoadoutProperties(payload.loadout_properties or {}), false)
+	return currentProps ~= nextProps
+end
+
+local function ApplyResolvedInventoryPayload(payload, options)
+	if not istable(payload) or not istable(payload.loadouts) then
+		return false, "invalid_payload"
+	end
+
+	options = options or {}
+	local shouldApplyLoadoutUpdate = HasResolvedLoadoutChanged(payload)
+
+	local outputOrder = {"scout", "soldier", "pyro", "demoman", "heavy", "engineer", "medic", "sniper", "spy"}
+	for _, className in ipairs(outputOrder) do
+		local convar = GetConVar("loadout_" .. className)
+		local loadoutValues = istable(payload.loadouts[className]) and payload.loadouts[className] or {}
+		if convar then
+			local split = {}
+			for i = 1, #loadoutValues do
+				split[i] = tonumber(loadoutValues[i]) or -1
+			end
+			convar:SetString(table.concat(split, ","))
+		end
+
+		local tauntConvar = GetConVar("loadout_taunts_" .. className)
+		if tauntConvar then
+			local tauntValues = istable(payload.taunt_loadouts) and istable(payload.taunt_loadouts[className]) and payload.taunt_loadouts[className] or {}
+			local tauntSplit = {}
+			for i = 1, 8 do
+				tauntSplit[i] = tonumber(tauntValues[i]) or -1
+			end
+			tauntConvar:SetString(table.concat(tauntSplit, ","))
+		end
+	end
+
+	TFClientLoadoutProperties = table.Copy(istable(payload.loadout_properties) and payload.loadout_properties or {})
+	for _, classProps in pairs(TFClientLoadoutProperties) do
+		if istable(classProps) then
+			for slot, props in pairs(classProps) do
+				classProps[slot] = (_G.normalizeTintAttributesInProperties or normalizeTintAttributesInProperties or function(v) return v end)(props)
+			end
+		end
+	end
+
+	if shouldApplyLoadoutUpdate and not options.suppressServerPropertySync then
+		net.Start("TF_UpdateLoadoutProperties")
+			net.WriteTable(TFClientLoadoutProperties)
+		net.SendToServer()
+	end
+
+	if shouldApplyLoadoutUpdate and not options.suppressRespawn then
+		timer.Simple(0.15, function()
+			RunConsoleCommand("loadout_update")
+		end)
+	end
+
+	hook.Run("TFInventoryCacheUpdated")
+	return true
 end
 
 	local function BuildSteamItemProperties(itemData)
@@ -4307,6 +4701,13 @@ end
 		props.custom_desc = itemData.custom_desc
 	end
 
+	for _, key in ipairs({"pickup_method", "acquisition_method", "item_origin", "origin"}) do
+		local value = itemData[key]
+		if value ~= nil then
+			props[key] = value
+		end
+	end
+
 		if istable(itemData.attributes) then
 			local attrs = {}
 			for _, att in ipairs(itemData.attributes) do
@@ -4317,9 +4718,13 @@ end
 					local rawValue = tonumber(att.value)
 					local value = nil
 
+					-- Steam/backend paint attrs can arrive as packed float bit-patterns
+					-- even though the effective value is a TF2 RGB integer.
+					if attrDef and isTintAttributeClass(attrDef.attribute_class) then
+						value = normalizeItemTintValue(rawValue or rawFloat)
 					-- Use schema metadata when available; Steam's float_value is unreliable
 					-- for integer-backed item attrs such as paintkit ids and seeds.
-					if attrDef and tonumber(attrDef.stored_as_integer) == 1 then
+					elseif attrDef and tonumber(attrDef.stored_as_integer) == 1 then
 						value = rawValue
 					elseif attrDef and attrDef.attribute_type == "string" then
 						value = att.value
@@ -4357,7 +4762,7 @@ end
 	return props
 end
 
-local function MergeSteamInventory(ply)
+local function MergeSteamInventoryDirect(ply)
 	if not IsValid(ply) then
 		ply = LocalPlayer()
 	end
@@ -4389,6 +4794,7 @@ local function MergeSteamInventory(ply)
 		, steamAPIKey
 	), 
 	function(body)
+		local previousInventoryRaw = file.Read("tf_loadout.json", "DATA")
 		local decoded, normalizedJSON = DecodeSteamInventoryJSON(body)
 		if not istable(decoded) then
 			file.Write("tf_loadout_last_response.txt", tostring(body or ""))
@@ -4544,6 +4950,11 @@ local function MergeSteamInventory(ply)
 					end
 
 					timer.Simple(2.0, function()
+						local resolvedPayload = {
+							loadouts = {},
+							taunt_loadouts = {},
+							loadout_properties = {},
+						}
 						local outputOrder = {"scout", "soldier", "pyro", "demoman", "heavy", "engineer", "medic", "sniper", "spy"}
 						local outputSlotMap = {
 							scout = {1, 2, 3, 4, 5, 6, 7},
@@ -4558,43 +4969,56 @@ local function MergeSteamInventory(ply)
 						}
 
 						for _, className in ipairs(outputOrder) do
+							local split = {-1, -1, -1, -1, -1, -1, -1}
+							local propSplit = {}
+							local source = loadouts[className]
+							local propSource = loadoutProperties[className] or {}
+							local mapping = outputSlotMap[className]
+							local slotCount = #mapping
+							for i = 1, slotCount do
+								local sourceIndex = mapping[i]
+								split[i] = source[sourceIndex] or -1
+								propSplit[i] = propSource[sourceIndex]
+							end
+							loadoutProperties[className] = propSplit
+							resolvedPayload.loadouts[className] = table.Copy(split)
+							resolvedPayload.loadout_properties[className] = table.Copy(propSplit)
+
+							local tauntSplit = {-1, -1, -1, -1, -1, -1, -1, -1}
+							local tauntSource = tauntLoadouts[className] or tauntSplit
+							for i = 1, 8 do
+								tauntSplit[i] = tauntSource[i] or -1
+							end
+							resolvedPayload.taunt_loadouts[className] = table.Copy(tauntSplit)
+						end
+
+						local shouldApplyLoadoutUpdate = HasResolvedLoadoutChanged(resolvedPayload)
+						for _, className in ipairs(outputOrder) do
 							local convar = GetConVar("loadout_" .. className)
 							if convar then
-								local split = {-1, -1, -1, -1, -1, -1, -1}
-								local propSplit = {}
-								local source = loadouts[className]
-								local propSource = loadoutProperties[className] or {}
-								local mapping = outputSlotMap[className]
-								local slotCount = #mapping
-								for i = 1, slotCount do
-									local sourceIndex = mapping[i]
-									split[i] = source[sourceIndex] or -1
-									propSplit[i] = propSource[sourceIndex]
-								end
-								convar:SetString(table.concat(split, ","))
-								loadoutProperties[className] = propSplit
+								convar:SetString(table.concat(resolvedPayload.loadouts[className] or {}, ","))
 							end
 							local tauntConvar = GetConVar("loadout_taunts_" .. className)
 							if tauntConvar then
-								local tauntSplit = {-1, -1, -1, -1, -1, -1, -1, -1}
-								local tauntSource = tauntLoadouts[className] or tauntSplit
-								for i = 1, 8 do
-									tauntSplit[i] = tauntSource[i] or -1
-								end
-								tauntConvar:SetString(table.concat(tauntSplit, ","))
+								tauntConvar:SetString(table.concat(resolvedPayload.taunt_loadouts[className] or {}, ","))
 							end
 						end
 
 						TFClientLoadoutProperties = table.Copy(loadoutProperties)
 
-						net.Start("TF_UpdateLoadoutProperties")
-							net.WriteTable(loadoutProperties)
-						net.SendToServer()
+						if shouldApplyLoadoutUpdate then
+							net.Start("TF_UpdateLoadoutProperties")
+								net.WriteTable(loadoutProperties)
+							net.SendToServer()
 
-						timer.Simple(0.15, function()
-							RunConsoleCommand("loadout_update")
-						end)
+							timer.Simple(0.15, function()
+								RunConsoleCommand("loadout_update")
+							end)
+						end
 						hook.Run("TFInventoryCacheUpdated")
+						NotifyInventoryItemsAdded(previousInventoryRaw, {
+							backpack = istable(json.result) and istable(json.result.items) and json.result.items or {},
+						})
 						if TFDebugBridge and TFDebugBridge.Emit then
 							local nItems = 0
 							if istable(json.result) and istable(json.result.items) then
@@ -4629,6 +5053,144 @@ local function MergeSteamInventory(ply)
 	)
 end
 
+local InventoryServiceMergeRequestInFlight = false
+
+local function TF2GM_LocalPlayerCanUseInventoryService()
+	local lp = LocalPlayer()
+	if not IsValid(lp) or not isfunction(lp.SteamID64) then return false end
+	if not lp.GetPlayerClass then return false end
+	if string.Trim(tostring(lp:SteamID64() or "")) == "" then return false end
+	return true
+end
+
+local function TF2GM_LocalPlayerGameplayActive()
+	local lp = LocalPlayer()
+	if not IsValid(lp) then return false end
+	if gui.IsGameUIVisible and gui.IsGameUIVisible() then return false end
+	if not lp.GetPlayerClass or string.Trim(tostring(lp:GetPlayerClass() or "")) == "" then return false end
+	local teamID = lp.Team and lp:Team() or 0
+	return tonumber(teamID) ~= nil and tonumber(teamID) > 1
+end
+
+local function MergeInventoryFromHostedService(ply, forceRefresh, options)
+	if not IsValid(ply) then
+		ply = LocalPlayer()
+	end
+	if not IsValid(ply) or not isfunction(ply.SteamID64) then
+		return false
+	end
+
+	options = options or {}
+
+	local baseURL = GetConfiguredInventoryServiceURL()
+	if not baseURL then
+		return false
+	end
+
+	if InventoryServiceMergeRequestInFlight then
+		return true
+	end
+
+	local requestURL = string.format("%s?action=player&steamid64=%s%s",
+		baseURL,
+		ply:SteamID64(),
+		forceRefresh and "&refresh=1" or ""
+	)
+
+	if TFDebugBridge and TFDebugBridge.Emit then
+		TFDebugBridge.Emit("merge_start", {
+			source = "hosted_service",
+			steamid64 = ply:SteamID64(),
+		}, true)
+	end
+
+	InventoryServiceMergeRequestInFlight = true
+	http.Fetch(requestURL,
+		function(body)
+			local previousInventoryRaw = file.Read("tf_loadout.json", "DATA")
+			InventoryServiceMergeRequestInFlight = false
+			local decoded, normalizedJSON = DecodeSteamInventoryJSON(body)
+			if not istable(decoded) or decoded.ok == false then
+				file.Write("tf_loadout_last_response.txt", tostring(body or ""))
+				chat.AddText(Color(220, 120, 80), "[TF2-Gamemode] Hosted inventory service returned an invalid response. Saved raw response to data/tf_loadout_last_response.txt")
+				if TFDebugBridge and TFDebugBridge.Emit then
+					TFDebugBridge.Emit("merge_error", {
+						error = "hosted_service_invalid_response",
+					}, true)
+				end
+				if options.allowDirectFallback ~= false and GetConfiguredSteamAPIKey() then
+					chat.AddText(Color(220, 120, 80), "[TF2-Gamemode] Falling back to direct Steam inventory sync.")
+					MergeSteamInventoryDirect(ply)
+				end
+				return
+			end
+
+			local ok, err = ApplyResolvedInventoryPayload(decoded, options)
+			if not ok then
+				chat.AddText(Color(220, 120, 80), "[TF2-Gamemode] Hosted inventory service payload is incomplete: " .. tostring(err))
+				if TFDebugBridge and TFDebugBridge.Emit then
+					TFDebugBridge.Emit("merge_error", {
+						error = "hosted_service_invalid_payload",
+					}, true)
+				end
+				if options.allowDirectFallback ~= false and GetConfiguredSteamAPIKey() then
+					chat.AddText(Color(220, 120, 80), "[TF2-Gamemode] Falling back to direct Steam inventory sync.")
+					MergeSteamInventoryDirect(ply)
+				end
+				return
+			end
+
+			local cacheJSON = BuildInventoryCacheJSON(decoded)
+			if isstring(cacheJSON) and cacheJSON ~= "" then
+				file.Write("tf_loadout.json", cacheJSON)
+			elseif isstring(normalizedJSON) and normalizedJSON ~= "" then
+				file.Write("tf_loadout.json", normalizedJSON)
+			elseif isstring(body) and body ~= "" then
+				file.Write("tf_loadout.json", body)
+			end
+
+			if decoded.steam_ok == false then
+				local msg = isstring(decoded.steam_error) and decoded.steam_error or "Steam inventory unavailable."
+				chat.AddText(Color(220, 120, 80), "[TF2-Gamemode] Hosted inventory service loaded fallback data: " .. msg)
+			end
+
+			NotifyInventoryItemsAdded(previousInventoryRaw, decoded)
+
+			if TFDebugBridge and TFDebugBridge.Emit then
+				TFDebugBridge.Emit("merge_done", {
+					source = "hosted_service",
+					items = tonumber(decoded.raw_item_count) or 0,
+					steam_ok = decoded.steam_ok ~= false,
+				}, true)
+			end
+		end,
+		function(code)
+			InventoryServiceMergeRequestInFlight = false
+			chat.AddText(Color(220, 120, 80), "[TF2-Gamemode] Hosted inventory service request failed: " .. tostring(code))
+			if TFDebugBridge and TFDebugBridge.Emit then
+				TFDebugBridge.Emit("merge_error", {
+					error = "hosted_service_http_failed",
+					code = tostring(code),
+				}, true)
+			end
+			if options.allowDirectFallback ~= false and GetConfiguredSteamAPIKey() then
+				chat.AddText(Color(220, 120, 80), "[TF2-Gamemode] Falling back to direct Steam inventory sync.")
+				MergeSteamInventoryDirect(ply)
+			end
+		end
+	)
+
+	return true
+end
+
+local function MergeSteamInventory(ply, forceRefresh)
+	if MergeInventoryFromHostedService(ply, forceRefresh) then
+		return
+	end
+
+	MergeSteamInventoryDirect(ply)
+end
+
 concommand.Add("tf_merge_loadout_ask", function(ply)
 	if CLIENT then
 		local conflict_help_frame = vgui.Create( "DFrame" )
@@ -4659,18 +5221,24 @@ concommand.Add("tf_merge_loadout_ask", function(ply)
 end)
 
 concommand.Add("tf_merge_loadout", function(ply)
-	MergeSteamInventory(ply)
+	MergeSteamInventory(ply, true)
 end)
 
 concommand.Add("merge_tf2_loadout", function(ply)
-	MergeSteamInventory(ply)
+	MergeSteamInventory(ply, true)
 end)
 
 concommand.Add("mergetf2loadout", function(ply)
-	MergeSteamInventory(ply)
+	MergeSteamInventory(ply, true)
 end)
 
 CreateClientConVar("tf_steam_api_key", "", true, false, "Steam Web API key used for TF2 inventory merge.")
+CreateClientConVar("tf_inventory_service_url", "https://se8.eu/tf_item_server/api.php", true, false, "Hosted TF2 inventory service endpoint used before direct Steam fetch.")
+CreateClientConVar("tf_inventory_service_last_status", "unknown", true, false, "Last TF inventory service health result.")
+CreateClientConVar("tf_inventory_service_background", "1", true, false, "Enable low-frequency background polling for the hosted inventory service.")
+CreateClientConVar("tf_inventory_service_sync_interval", "180", true, false, "Seconds between cached hosted inventory sync polls.")
+CreateClientConVar("tf_inventory_service_drop_interval", "60", true, false, "Seconds between hosted random drop heartbeat ticks.")
+CreateClientConVar("tf_inventory_service_startup_delay", "45", true, false, "Seconds after map load before the hosted inventory heartbeat starts.")
 CreateClientConVar("tf_debug_item_visuals", "0", true, false, "Debug Steam->loadout->item visual attribute flow.")
 
 local function MigrateAndHideSteamAPIKeyConVar()
@@ -4702,15 +5270,180 @@ concommand.Add("tf_set_steam_api_key", function(_, _, args)
 	chat.AddText(Color(120, 220, 140), "[TF2-Gamemode] Steam API key saved to data/tf_steam_api_key.txt")
 end)
 
+concommand.Add("tf_check_inventory_service", function()
+	local baseURL = GetConfiguredInventoryServiceURL()
+	if not baseURL then
+		chat.AddText(Color(220, 120, 80), "[TF2-Gamemode] No hosted inventory service configured. Set tf_inventory_service_url first.")
+		RunConsoleCommand("tf_inventory_service_last_status", "missing_url")
+		return
+	end
+
+	local healthURL = string.match(baseURL, "(.*/)api%.php$") and string.gsub(baseURL, "api%.php$", "api.php?action=health")
+		or (baseURL .. "?action=health")
+
+	chat.AddText(Color(180, 210, 240), "[TF2-Gamemode] Checking hosted inventory service...")
+	http.Fetch(healthURL,
+		function(body)
+			local decoded = util.JSONToTable(body or "")
+			if istable(decoded) and decoded.ok then
+				RunConsoleCommand("tf_inventory_service_last_status", "ok")
+				chat.AddText(Color(120, 220, 140), string.format("[TF2-Gamemode] Inventory service reachable: %s (%s)", tostring(decoded.service or "service"), tostring(decoded.database_driver or "db")))
+			else
+				RunConsoleCommand("tf_inventory_service_last_status", "invalid_response")
+				chat.AddText(Color(220, 120, 80), "[TF2-Gamemode] Inventory service responded, but health JSON was invalid.")
+			end
+		end,
+		function(code)
+			RunConsoleCommand("tf_inventory_service_last_status", "http_" .. tostring(code))
+			chat.AddText(Color(220, 120, 80), "[TF2-Gamemode] Inventory service health check failed: " .. tostring(code))
+		end
+	)
+end)
+
+local InventoryServiceDropTickInFlight = false
+local InventoryServiceHeartbeatState = {
+	mapStartedAt = RealTime(),
+	lastSchedulerAt = 0,
+	lastInventorySyncAt = 0,
+	lastDropTickAt = 0,
+	accruedActiveSeconds = 0,
+}
+
+local function TF2GM_RequestInventoryServiceJSON(action, payload, onSuccess, onFailure)
+	local baseURL = GetConfiguredInventoryServiceURL()
+	if not baseURL then
+		return false
+	end
+
+	local body = util.TableToJSON(payload or {}, false)
+	if not isstring(body) or body == "" then
+		body = "{}"
+	end
+
+	HTTP({
+		url = string.format("%s?action=%s", baseURL, tostring(action or "")),
+		method = "post",
+		headers = {
+			["Content-Type"] = "application/json; charset=utf-8",
+		},
+		body = body,
+		success = function(code, responseBody)
+			local decoded = util.JSONToTable(responseBody or "")
+			if not istable(decoded) then
+				if onFailure then
+					onFailure("invalid_json", code, responseBody)
+				end
+				return
+			end
+			if onSuccess then
+				onSuccess(decoded, code, responseBody)
+			end
+		end,
+		failed = function(err)
+			if onFailure then
+				onFailure(err)
+			end
+		end
+	})
+
+	return true
+end
+
+local function TF2GM_RunBackgroundInventorySync()
+	if InventoryServiceMergeRequestInFlight then return false end
+	if not TF2GM_LocalPlayerCanUseInventoryService() then return false end
+	return MergeInventoryFromHostedService(LocalPlayer(), false, {
+		suppressRespawn = true,
+		allowDirectFallback = false,
+	})
+end
+
+local function TF2GM_RunRandomDropHeartbeat(activeSeconds)
+	if InventoryServiceDropTickInFlight then return false end
+	if not TF2GM_LocalPlayerCanUseInventoryService() then return false end
+
+	local lp = LocalPlayer()
+	if not IsValid(lp) then return false end
+
+	InventoryServiceDropTickInFlight = true
+	return TF2GM_RequestInventoryServiceJSON("client-random-drop-tick", {
+		steamid64 = lp:SteamID64(),
+		map_name = game.GetMap(),
+		gameplay_active = TF2GM_LocalPlayerGameplayActive(),
+		active_seconds = math.max(0, math.floor(tonumber(activeSeconds) or 0)),
+	}, function(decoded)
+		InventoryServiceDropTickInFlight = false
+		if decoded.ok ~= true then return end
+		if decoded.dropped then
+			timer.Simple(0, function()
+				TF2GM_RunBackgroundInventorySync()
+			end)
+		end
+	end, function(err)
+		InventoryServiceDropTickInFlight = false
+		if TFDebugBridge and TFDebugBridge.Emit then
+			TFDebugBridge.Emit("merge_error", {
+				error = "hosted_service_drop_tick_failed",
+				code = tostring(err),
+			}, true)
+		end
+	end)
+end
+
+timer.Create("TF2GM_InventoryServiceHeartbeat", 15, 0, function()
+	local enabled = GetConVar("tf_inventory_service_background")
+	if not enabled or not enabled:GetBool() then return end
+	if not TF2GM_LocalPlayerCanUseInventoryService() then return end
+	if not GetConfiguredInventoryServiceURL() then return end
+
+	local now = RealTime()
+	local startupDelay = math.max(5, (GetConVar("tf_inventory_service_startup_delay") and GetConVar("tf_inventory_service_startup_delay"):GetInt()) or 45)
+	if (InventoryServiceHeartbeatState.mapStartedAt or now) + startupDelay > now then
+		InventoryServiceHeartbeatState.lastSchedulerAt = now
+		return
+	end
+
+	local delta = 0
+	if (InventoryServiceHeartbeatState.lastSchedulerAt or 0) > 0 then
+		delta = math.Clamp(now - InventoryServiceHeartbeatState.lastSchedulerAt, 0, 120)
+	end
+	InventoryServiceHeartbeatState.lastSchedulerAt = now
+
+	if TF2GM_LocalPlayerGameplayActive() then
+		InventoryServiceHeartbeatState.accruedActiveSeconds = math.Clamp((InventoryServiceHeartbeatState.accruedActiveSeconds or 0) + delta, 0, 600)
+	end
+
+	local dropInterval = math.max(30, (GetConVar("tf_inventory_service_drop_interval") and GetConVar("tf_inventory_service_drop_interval"):GetInt()) or 60)
+	local ranDropHeartbeat = false
+	if now - (InventoryServiceHeartbeatState.lastDropTickAt or 0) >= dropInterval then
+		local activeSeconds = math.max(1, math.floor(InventoryServiceHeartbeatState.accruedActiveSeconds or 0))
+		InventoryServiceHeartbeatState.lastDropTickAt = now
+		InventoryServiceHeartbeatState.accruedActiveSeconds = 0
+		ranDropHeartbeat = TF2GM_RunRandomDropHeartbeat(activeSeconds) == true
+	end
+
+	local syncInterval = math.max(60, (GetConVar("tf_inventory_service_sync_interval") and GetConVar("tf_inventory_service_sync_interval"):GetInt()) or 180)
+	if not ranDropHeartbeat and now - (InventoryServiceHeartbeatState.lastInventorySyncAt or 0) >= syncInterval then
+		InventoryServiceHeartbeatState.lastInventorySyncAt = now
+		TF2GM_RunBackgroundInventorySync()
+	end
+end)
+
 CreateClientConVar("tf_auto_merge_loadout", "1", true, false, "Automatically refresh TF2 Steam inventory cache on map load.")
 hook.Add("InitPostEntity", "TFAutoMergeLoadoutOnMapStart", function()
 	timer.Simple(2, function()
 		if not IsValid(LocalPlayer()) then return end
+		InventoryServiceHeartbeatState.mapStartedAt = RealTime()
+		InventoryServiceHeartbeatState.lastSchedulerAt = RealTime()
+		InventoryServiceHeartbeatState.lastInventorySyncAt = 0
+		InventoryServiceHeartbeatState.lastDropTickAt = 0
+		InventoryServiceHeartbeatState.accruedActiveSeconds = 0
 		MigrateAndHideSteamAPIKeyConVar()
 		local c = GetConVar("tf_auto_merge_loadout")
+		local serviceURL = GetConfiguredInventoryServiceURL()
 		local keyFile = file.Read("tf_steam_api_key.txt", "DATA")
 		local hasKey = isstring(keyFile) and string.Trim(keyFile) ~= ""
-		if c and c:GetBool() and hasKey then
+		if c and c:GetBool() and (serviceURL or hasKey) then
 			MergeSteamInventory(LocalPlayer())
 		end
 	end)

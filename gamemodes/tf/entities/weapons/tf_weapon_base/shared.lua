@@ -527,6 +527,7 @@ CreateClientConVar("tf_righthand", "1", true, true)
 CreateClientConVar("tf_sprintinspect", "0", true, true)
 CreateClientConVar("tf_reloadinspect", "1", true, true)
 CreateClientConVar("tf_use_min_viewmodels", "0", true, false)
+CreateClientConVar("tf_viewmodels_offset_override", "", true, false)
 local cvar_bob = CreateClientConVar("tf_cl_bob", "0.005", false, false)
 local cvar_bobup = CreateClientConVar("tf_cl_bobup", "0.5", false, false)
 local cvar_bobcycle = CreateClientConVar("tf_cl_bobcycle", "0.8", false, false)
@@ -547,132 +548,67 @@ function SWEP:StopTimers()
 	inspecting_post = false
 end 
 
-local bobtime = 0
-local lastbobtime = 0
-local lastspeed = 0
-local cycle = 0
-local speed = 0
-local flmaxSpeedDelta = 0
-local bob_offset = 0
-
 local BobStates = {}
 
-local function CalcViewModelBobHelper(self)
-	local cl_bob = cvar_bob:GetFloat()
-	local cl_bobcycle = math.max(cvar_bobcycle:GetFloat(), 0.1)
-	local cl_bobup = cvar_bobup:GetFloat()
-	
-	local ply = self.Owner
-	
-	if ply:ShouldDrawLocalPlayer() then return 0 end
-
-	local cltime = CurTime()
-	local cycle = cltime - math.floor(cltime/cl_bobcycle)*cl_bobcycle
-	cycle = cycle / (cl_bobcycle)
-	if (cycle < cl_bobup) then
-		cycle = math.pi * cycle / cl_bobup
-	else
-		cycle = math.pi + math.pi*(cycle-cl_bobup)/(1.0 - cl_bobup)
-	end
-
-	local velocity = ply:GetVelocity()
-
-	//Find the speed of the player
-	local speed = ply:GetVelocity():Length2D();
-	local flmaxSpeedDelta = math.max( 0, (CurTime() - cycle ) * 320.0 );
-
-	// don't allow too big speed changes
-	speed = math.Clamp( speed, speed-flmaxSpeedDelta, speed+flmaxSpeedDelta );
-	speed = math.Clamp( speed, -320, 320 );
-
-	self.g_verticalBob = speed * cl_bob
-	self.g_verticalBob = self.g_verticalBob*0.3 + self.g_verticalBob*0.7*math.sin(cycle)
-	if (self.g_verticalBob > 4) then
-		self.g_verticalBob = 4
-	elseif (self.g_verticalBob < -7) then
-		self.g_verticalBob = -7
-	end
-	
-	local cycle2 = cltime - math.floor(cltime/(cl_bobcycle*2))*(cl_bobcycle*2)
-	cycle2 = cycle2 / (cl_bobcycle*2)
-	if (cycle2 < cl_bobup) then
-		cycle2 = math.pi * cycle2 / cl_bobup
-	else
-		cycle2 = math.pi + math.pi*(cycle2-cl_bobup)/(1.0 - cl_bobup)
-	end
-
-	self.g_lateralBob = speed * cl_bob
-	self.g_lateralBob = self.g_lateralBob*0.3 + self.g_lateralBob*0.7*math.sin(cycle2)
-	if (self.g_lateralBob > 4) then
-		self.g_lateralBob = 4
-	elseif (self.g_lateralBob < -7) then
-		self.g_lateralBob = -7
-	end
-	return 0.0
-end
-
 function SWEP:CalcViewModelBobHelper(ply)
-    if not IsValid(ply) then return end
-	local cl_bob = cvar_bob
-	local cl_bobcycle = cvar_bobcycle
-	local cl_bobup = cvar_bobup
+	if not IsValid(ply) then return 0 end
 
-    local state = BobStates[ply] or {
-        m_flBobTime = 0,
-        m_flLastBobTime = CurTime(),
-        m_flLastSpeed = 0,
-        m_flVerticalBob = 0,
-        m_flLateralBob = 0
-    }
+	local state = BobStates[ply]
+	if not state then
+		state = {
+			m_flBobTime = 0,
+			m_flLastBobTime = 0,
+			m_flLastSpeed = 0,
+			m_flVerticalBob = 0,
+			m_flLateralBob = 0,
+		}
+		BobStates[ply] = state
+	end
 
-    local curtime = CurTime()
-    local frametime = FrameTime()
-    if frametime <= 0 then return end
+	local curtime = CurTime()
+	if FrameTime() <= 0 then
+		return 0
+	end
 
-    local flBobup = math.max(cl_bobup:GetFloat(), 0.01)
-    local flBobCycle = math.max(cl_bobcycle:GetFloat(), 0.01)
+	local flBobup = math.max(cvar_bobup:GetFloat(), 0.01)
+	local flBobCycle = math.max(cvar_bobcycle:GetFloat(), 0.01)
 
-    local velocity = ply:GetVelocity()
-    local speed = velocity:Length2D()
+	local speed = ply:GetVelocity():Length2D()
+	local flmaxSpeedDelta = math.max(0, (curtime - state.m_flLastBobTime) * 320.0)
 
-    local deltaTime = curtime - state.m_flLastBobTime
-    local flmaxSpeedDelta = math.max(0, deltaTime * 320)
+	speed = math.Clamp(speed, state.m_flLastSpeed - flmaxSpeedDelta, state.m_flLastSpeed + flmaxSpeedDelta)
+	speed = math.Clamp(speed, -320, 320)
+	state.m_flLastSpeed = speed
 
-    -- Smooth the speed change, just like in C++
-    speed = math.Clamp(speed, state.m_flLastSpeed - flmaxSpeedDelta, state.m_flLastSpeed + flmaxSpeedDelta)
-    speed = math.Clamp(speed, -320, 320)
-    state.m_flLastSpeed = speed
+	local bobOffset = math.Remap(speed, 0, 320, 0.0, 1.0)
+	state.m_flBobTime = state.m_flBobTime + (curtime - state.m_flLastBobTime) * bobOffset
+	state.m_flLastBobTime = curtime
 
-    local bob_offset = math.Remap(speed, 0, 320, 0.0, 1.0)
+	local cycle = state.m_flBobTime - math.floor(state.m_flBobTime / flBobCycle) * flBobCycle
+	cycle = cycle / flBobCycle
+	if cycle < flBobup then
+		cycle = math.pi * cycle / flBobup
+	else
+		cycle = math.pi + math.pi * (cycle - flBobup) / (1.0 - flBobup)
+	end
 
-    state.m_flBobTime = state.m_flBobTime + deltaTime * bob_offset
-    state.m_flLastBobTime = curtime
+	state.m_flVerticalBob = speed * 0.005
+	state.m_flVerticalBob = state.m_flVerticalBob * 0.3 + state.m_flVerticalBob * 0.7 * math.sin(cycle)
+	state.m_flVerticalBob = math.Clamp(state.m_flVerticalBob, -7.0, 4.0)
 
-    -- VERTICAL BOB
-    local cycle = (state.m_flBobTime % flBobCycle) / flBobCycle
-    if cycle < flBobup then
-        cycle = math.pi * cycle / flBobup
-    else
-        cycle = math.pi + math.pi * (cycle - flBobup) / (1 - flBobup)
-    end
+	cycle = state.m_flBobTime - math.floor(state.m_flBobTime / (flBobCycle * 2)) * flBobCycle * 2
+	cycle = cycle / (flBobCycle * 2)
+	if cycle < flBobup then
+		cycle = math.pi * cycle / flBobup
+	else
+		cycle = math.pi + math.pi * (cycle - flBobup) / (1.0 - flBobup)
+	end
 
-    local verticalBob = speed * 0.005
-    verticalBob = verticalBob * 0.3 + verticalBob * 0.7 * math.sin(cycle)
-    state.m_flVerticalBob = math.Clamp(verticalBob, -7.0, 4.0)
+	state.m_flLateralBob = speed * 0.005
+	state.m_flLateralBob = state.m_flLateralBob * 0.3 + state.m_flLateralBob * 0.7 * math.sin(cycle)
+	state.m_flLateralBob = math.Clamp(state.m_flLateralBob, -7.0, 4.0)
 
-    -- LATERAL BOB
-    local cycle2 = (state.m_flBobTime % (flBobCycle * 2)) / (flBobCycle * 2)
-    if cycle2 < flBobup then
-        cycle2 = math.pi * cycle2 / flBobup
-    else
-        cycle2 = math.pi + math.pi * (cycle2 - flBobup) / (1 - flBobup)
-    end
-
-    local lateralBob = speed * 0.005
-    lateralBob = lateralBob * 0.3 + lateralBob * 0.7 * math.sin(cycle2)
-    state.m_flLateralBob = math.Clamp(lateralBob, -7.0, 4.0)
-
-    BobStates[ply] = state
+	return 0
 end
 
 function SWEP:VectorMA( start, scale, direction, dest )
@@ -693,60 +629,6 @@ local function VectorMA( start, scale, direction, dest )
 	return Vector(start.x + scale * direction.x,start.y + scale * direction.y,start.z + scale * direction.z)
 end
 
-hook.Add("CalcViewModelView","TFViewmodelBob",function(wep, vm, oldpos, oldang, newpos, newang)
-	if (IsValid(wep.Owner)) then
-		if (!wep.Owner:IsHL2() and !string.find(wep:GetClass(),"tf_weapon")) then
-			wep.BobScale = 0
-			local self = wep
-				-- actual code, for reference
-				--[[
-				
-				Vector	forward, right;
-				AngleVectors( angles, &forward, &right, NULL );
-
-				CalcViewmodelBob();
-
-				// Apply bob, but scaled down to 40%
-				VectorMA( origin, g_verticalBob * 0.4f, forward, origin );
-
-				// Z bob a bit more
-				origin[2] += g_verticalBob * 0.1f;
-
-				// bob the angles
-				angles[ ROLL ]	+= g_verticalBob * 0.5f;
-				angles[ PITCH ]	-= g_verticalBob * 0.4f;
-
-				angles[ YAW ]	-= g_lateralBob  * 0.3f;
-
-			//	VectorMA( origin, g_lateralBob * 0.2f, right, origin );
-
-				]]
-				if CLIENT then
-					local forward = wep.Owner:GetForward()
-					local right = wep.Owner:GetRight()
-					local origin = oldpos
-					local angles = oldang
-					local state = BobStates[ply]
-					if not state then return newpos, newang end
-
-					// Apply bob, but scaled down to 40%
-					origin = VectorMA( origin, state.m_flVerticalBob * 0.4, forward, origin );
-
-					// Z bob a bit more
-					origin.z = origin.z + state.m_flVerticalBob * 0.1;
-
-					// bob the angles
-					angles.r	= angles.r + state.m_flVerticalBob * 0.5;
-					angles.p	= angles.p - state.m_flVerticalBob * 0.4;
-					angles.y = angles.y - state.m_flLateralBob  * 0.3;
-
-					origin = VectorMA( origin, state.m_flLateralBob * 0.2, right, origin );
-					return origin, angles
-				end
-		end
-	end
-end)
-
 function SWEP:CalcViewModelView(vm, oldpos, oldang, newpos, newang)
 	if not self.VMMinOffset and self:GetItemData() then
 		local data = self:GetItemData()
@@ -754,64 +636,55 @@ function SWEP:CalcViewModelView(vm, oldpos, oldang, newpos, newang)
 			self.VMMinOffset = Vector(data.static_attrs.min_viewmodel_offset)
 		end
 	end
- 
 
-	if GetConVar("tf_use_min_viewmodels"):GetBool() then -- TODO: Check for inspecting
-		oldpos = oldpos + (newang:Forward() * self.VMMinOffset.x)
-		oldpos = oldpos + (newang:Right() * self.VMMinOffset.y)
-		oldpos = oldpos + (newang:Up() * self.VMMinOffset.z)
-	end
-	if (IsValid(self.Owner) and string.StartWith(self.Owner:GetModel(),"models/infected/")) then
+	if not CLIENT then
 		return oldpos, oldang
-	else
-		-- actual code, for reference
-		--[[
-		
-		Vector	forward, right;
-		AngleVectors( angles, &forward, &right, NULL );
-
-		CalcViewmodelBob();
-
-		// Apply bob, but scaled down to 40%
-		VectorMA( origin, g_verticalBob * 0.4f, forward, origin );
-
-		// Z bob a bit more
-		origin[2] += g_verticalBob * 0.1f;
-
-		// bob the angles
-		angles[ ROLL ]	+= g_verticalBob * 0.5f;
-		angles[ PITCH ]	-= g_verticalBob * 0.4f;
-
-		angles[ YAW ]	-= g_lateralBob  * 0.3f;
-
-	//	VectorMA( origin, g_lateralBob * 0.2f, right, origin );
-
-		]]
-		if CLIENT then
-			local forward = oldang:Forward()
-			local right = oldang:Right()
-			local origin = oldpos
-			local angles = oldang
-
-			local state = BobStates[self.Owner]
-			if not state then return pos, ang end
-			// Apply bob, but scaled down to 40%
-			origin = self:VectorMA( origin, state.m_flVerticalBob * 0.4, forward, origin );
-
-			// Z bob a bit more
-			origin.z = origin.z + state.m_flVerticalBob * 0.1;
-
-			// bob the angles
-			angles.r	= angles.r + state.m_flVerticalBob * 0.5;
-			angles.p	= angles.p - state.m_flVerticalBob * 0.4;
-			angles.y = angles.y - state.m_flLateralBob  * 0.3;
-
-			origin = self:VectorMA( origin, state.m_flLateralBob * 0.2, right, origin );
-			return origin, angles
-		else
-			return oldpos, oldang
-		end
 	end
+
+	if not IsValid(self.Owner) then
+		return oldpos, oldang
+	end
+
+	if string.StartWith(self.Owner:GetModel(), "models/infected/") then
+		return oldpos, oldang
+	end
+
+	local origin = oldpos
+	local angles = Angle(oldang.p, oldang.y, oldang.r)
+
+	local offset = nil
+	local override = GetConVar("tf_viewmodels_offset_override")
+	local overrideValue = override and string.Trim(override:GetString() or "") or ""
+	if overrideValue ~= "" then
+		offset = Vector(overrideValue)
+	elseif GetConVar("tf_use_min_viewmodels"):GetBool() then
+		offset = self.VMMinOffset
+	end
+
+	if offset then
+		origin = origin + angles:Forward() * offset.x
+		origin = origin + angles:Right() * offset.y
+		origin = origin + angles:Up() * offset.z
+	end
+
+	self:CalcViewModelBobHelper(self.Owner)
+
+	local state = BobStates[self.Owner]
+	if not state then
+		return origin, angles
+	end
+
+	local forward = angles:Forward()
+	local right = angles:Right()
+
+	origin = self:VectorMA(origin, state.m_flVerticalBob * 0.4, forward, origin)
+	origin.z = origin.z + state.m_flVerticalBob * 0.1
+	angles.r = angles.r + state.m_flVerticalBob * 0.5
+	angles.p = angles.p - state.m_flVerticalBob * 0.4
+	angles.y = angles.y - state.m_flLateralBob * 0.3
+	origin = self:VectorMA(origin, state.m_flLateralBob * 0.2, right, origin)
+
+	return origin, angles
 end
 
 

@@ -702,6 +702,9 @@ end
 
 function SWEP:Holster()
 	-- Mirror TF2: block manual holstering while carrying, but allow restore once the ball is gone.
+	if self.Ball == 1 and SERVER and IsValid(self.Owner) and TF_PasstimeNotifyDenied then
+		TF_PasstimeNotifyDenied(self.Owner, "#TF_Passtime_No_Holster")
+	end
 	return self.Ball ~= 1
 end
 

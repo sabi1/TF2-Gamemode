@@ -1,5 +1,7 @@
 ENT.Type = "point"
 
+local TF_FLAGTYPE_ROBOT_DESTRUCTION_ID = rawget(_G, "TF_FLAGTYPE_ROBOT_DESTRUCTION") or 5
+
 local TEAM_OUTPUTS = {
 	[TEAM_RED] = {
 		hitMax = "OnRedHitMaxPoints",
@@ -26,6 +28,12 @@ local TEAM_OUTPUTS = {
 local function ClampTeam(team)
 	if team == TEAM_RED then return TEAM_RED end
 	return TEAM_BLU
+end
+
+local function IsRobotDestructionFlag(flag)
+	if not IsValid(flag) then return false end
+	local gameType = flag.GetNWInt and flag:GetNWInt("FlagGameType", flag.GameType or 0) or (flag.GameType or 0)
+	return tonumber(gameType) == TF_FLAGTYPE_ROBOT_DESTRUCTION_ID
 end
 
 local function UpdateGlobals(logic)
@@ -154,11 +162,25 @@ function ENT:OnRemove()
 end
 
 function ENT:AcceptInput(name, activator, caller, data)
+	name = string.lower(tostring(name or ""))
+
+	if name == "roundactivate" then
+		self:ReloadProperties()
+		for _, group in ipairs(ents.FindByClass("tf_robot_destruction_spawn_group")) do
+			if IsValid(group) and group.RespawnRobots then
+				group:RespawnRobots()
+			end
+		end
+		UpdateGlobals(self)
+		return true
+	end
+
 	return false
 end
 
 hook.Add("TF_MapFlagPickedUp", "TF_RDLogic_FlagPickedUpOutputs", function(flag, carrier)
 	if not IsValid(flag) or not IsValid(carrier) then return end
+	if not IsRobotDestructionFlag(flag) then return end
 	local ownerTeam = ClampTeam(flag.TeamNum)
 	if carrier.Team and carrier:Team() == ownerTeam then return end
 
@@ -171,6 +193,7 @@ end)
 
 hook.Add("TF_MapFlagReturned", "TF_RDLogic_FlagReturnedOutputs", function(flag)
 	if not IsValid(flag) then return end
+	if not IsRobotDestructionFlag(flag) then return end
 	local ownerTeam = ClampTeam(flag.TeamNum)
 	for _, logic in ipairs(ents.FindByClass("tf_logic_robot_destruction")) do
 		if IsValid(logic) then
@@ -181,6 +204,7 @@ end)
 
 hook.Add("TF_MapFlagCaptured", "TF_RDLogic_FlagCapturedOutputs", function(flag, activator)
 	if not IsValid(flag) then return end
+	if not IsRobotDestructionFlag(flag) then return end
 	local ownerTeam = ClampTeam(flag.TeamNum)
 	local capturedPoints = math.max(tonumber(flag.StoredVaultPoints) or 0, 0)
 	for _, logic in ipairs(ents.FindByClass("tf_logic_robot_destruction")) do

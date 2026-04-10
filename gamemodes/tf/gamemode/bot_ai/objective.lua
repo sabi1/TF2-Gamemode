@@ -172,6 +172,388 @@ local function passtimeGoalPos(goal)
 	return getPos(goal)
 end
 
+local function getObjectivePos(ent)
+	local pos = getPos(ent)
+	if not isvector(pos) then return nil end
+	if navmesh and navmesh.GetNearestNavArea then
+		local area = navmesh.GetNearestNavArea(pos)
+		if IsValid(area) then
+			return area:GetCenter()
+		end
+	end
+	return pos
+end
+
+local function getEnemyTeam(teamNum)
+	if teamNum == TEAM_RED then return TEAM_BLU end
+	if teamNum == TEAM_BLU then return TEAM_RED end
+	if teamNum == TF_TEAM_PVE_INVADERS then return TEAM_RED end
+	return TEAM_RED
+end
+
+local function countTeamOccupantsNear(ent, teamNum, fallbackPos)
+	if not IsValid(ent) then return 0 end
+	if istable(ent.Occupants) then
+		local count = 0
+		for ply in pairs(ent.Occupants) do
+			if IsValid(ply) and ply:IsPlayer() and ply:Alive() and ply:Team() == teamNum then
+				count = count + 1
+			end
+		end
+		return count
+	end
+
+	local pos = fallbackPos or getObjectivePos(ent)
+	if not isvector(pos) then return 0 end
+
+	local count = 0
+	for _, ply in ipairs(player.GetAll()) do
+		if IsValid(ply) and ply:IsPlayer() and ply:Alive() and ply:Team() == teamNum then
+			if ply:GetPos():DistToSqr(pos) <= (420 * 420) then
+				count = count + 1
+			end
+		end
+	end
+	return count
+end
+
+local function getPayloadWatcher()
+	if GAMEMODE and GAMEMODE.GetActivePayloadWatcher then
+		local watcher = GAMEMODE:GetActivePayloadWatcher()
+		if IsValid(watcher) then
+			return watcher
+		end
+	end
+	for _, watcher in ipairs(ents.FindByClass("team_train_watcher")) do
+		if IsValid(watcher) then
+			return watcher
+		end
+	end
+	return nil
+end
+
+local function getPayloadState(watcher)
+	if not IsValid(watcher) then return nil end
+	if watcher.GetState then
+		local ok, state = pcall(watcher.GetState, watcher)
+		if ok and istable(state) then
+			return state
+		end
+	end
+	return watcher.PayloadState
+end
+
+local function getPayloadTeam(state, key, fallback)
+	if not istable(state) then return fallback end
+	local teamNum = tonumber(state[key] or fallback)
+	if teamNum == TEAM_RED or teamNum == TEAM_BLU then
+		return teamNum
+	end
+	return fallback
+end
+
+local function getPayloadCart(watcher)
+	if not IsValid(watcher) then return nil end
+	if IsValid(watcher.Train) then
+		return watcher.Train
+	end
+	if watcher.GetTrainEntity then
+		local ok, cart = pcall(watcher.GetTrainEntity, watcher)
+		if ok and IsValid(cart) then
+			return cart
+		end
+	end
+	return nil
+end
+
+local function getPayloadCartPosition(watcher)
+	local cart = getPayloadCart(watcher)
+	if IsValid(cart) then
+		return getObjectivePos(cart)
+	end
+	if IsValid(watcher) and watcher.GetCartPosition then
+		local ok, pos = pcall(watcher.GetCartPosition, watcher)
+		if ok and isvector(pos) then
+			return getObjectivePos(watcher) or pos
+		end
+	end
+	return getObjectivePos(watcher)
+end
+
+local function getPayloadDefendPosition(watcher)
+	if not IsValid(watcher) then return nil end
+	if watcher.GetDefendPosition then
+		local ok, pos = pcall(watcher.GetDefendPosition, watcher)
+		if ok and isvector(pos) then
+			if navmesh and navmesh.GetNearestNavArea then
+				local area = navmesh.GetNearestNavArea(pos)
+				if IsValid(area) then
+					return area:GetCenter()
+				end
+			end
+			return pos
+		end
+	end
+	return getPayloadCartPosition(watcher)
+end
+
+local function getFlagCarrier(flag)
+	if not IsValid(flag) then return nil end
+	if IsValid(flag.Carrier) then
+		return flag.Carrier
+	end
+	if flag.GetCarrier then
+		local ok, carrier = pcall(flag.GetCarrier, flag)
+		if ok and IsValid(carrier) then
+			return carrier
+		end
+	end
+	if flag.GetOwner then
+		local ok, owner = pcall(flag.GetOwner, flag)
+		if ok and IsValid(owner) then
+			return owner
+		end
+	end
+	return nil
+end
+
+local function isFlagDropped(flag)
+	if not IsValid(flag) then return false end
+	if flag.IsDropped then
+		local ok, dropped = pcall(flag.IsDropped, flag)
+		if ok then return dropped == true end
+	end
+	return getFlagCarrier(flag) == nil and (flag.Dropped == true or tonumber(flag.State or -1) == 2)
+end
+
+local function isFlagHome(flag)
+	if not IsValid(flag) then return false end
+	if flag.IsHome then
+		local ok, home = pcall(flag.IsHome, flag)
+		if ok then return home == true end
+	end
+	return getFlagCarrier(flag) == nil and not isFlagDropped(flag)
+end
+
+local function getFriendlyCaptureZone(bot)
+	if not IsValid(bot) then return nil end
+	local best, bestDist
+	for _, zone in ipairs(ents.FindByClass("func_capturezone")) do
+		if not IsValid(zone) then continue end
+		local teamNum = tonumber(zone.TeamNum or zone.Team or 0) or 0
+		if teamNum ~= 0 and teamNum ~= bot:Team() then continue end
+		local pos = getObjectivePos(zone)
+		if not isvector(pos) then continue end
+		local d2 = bot:GetPos():DistToSqr(pos)
+		if not bestDist or d2 < bestDist then
+			bestDist = d2
+			best = zone
+		end
+	end
+	return best
+end
+
+local function getTeamFlag(teamNum)
+	for _, flag in ipairs(ents.FindByClass("item_teamflag")) do
+		if IsValid(flag) and tonumber(flag.TeamNum or flag.Team or 0) == teamNum then
+			return flag
+		end
+	end
+	return nil
+end
+
+local function teamCanCaptureControlPoint(cp, teamNum)
+	if not IsValid(cp) or not teamNum then return false end
+	if cp.Locked == true then return false end
+	if istable(cp.TeamCanCap) and cp.TeamCanCap[teamNum] ~= nil then
+		return cp.TeamCanCap[teamNum] and true or false
+	end
+	local owner = tonumber((cp.GetOwnerTeam and cp:GetOwnerTeam()) or cp.OwnerTeam or (cp.Properties and cp.Properties.point_default_owner) or 0) or 0
+	return owner ~= teamNum
+end
+
+local function getControlPointOwnerTeam(cp)
+	if not IsValid(cp) then return 0 end
+	return tonumber((cp.GetOwnerTeam and cp:GetOwnerTeam()) or cp.OwnerTeam or (cp.Properties and cp.Properties.point_default_owner) or 0) or 0
+end
+
+local function isPointThreatened(trigger, cp, bot)
+	if not IsValid(trigger) or not IsValid(cp) or not IsValid(bot) then return false end
+	local enemyTeam = getEnemyTeam(bot:Team())
+	local objectivePos = getObjectivePos(cp) or getObjectivePos(trigger)
+	if countTeamOccupantsNear(trigger, enemyTeam, objectivePos) > 0 then
+		return true
+	end
+	if cp.LastContestedAt and (CurTime() - tonumber(cp:LastContestedAt() or 0)) < 5 then
+		return true
+	end
+	if cp.HasBeenContested and cp:HasBeenContested() and cp.LastContestedAt and (CurTime() - tonumber(cp:LastContestedAt() or 0)) < 5 then
+		return true
+	end
+	return false
+end
+
+local function selectControlPointDecision(bot)
+	if not IsValid(bot) then return nil end
+
+	local teamNum = bot:Team()
+	if teamNum ~= TEAM_RED and teamNum ~= TEAM_BLU then
+		return nil
+	end
+
+	local enemyTeam = getEnemyTeam(teamNum)
+	local best, bestScore
+
+	for _, trigger in ipairs(ents.FindByClass("trigger_capture_area")) do
+		if not IsValid(trigger) then continue end
+		local cp = trigger.CapturePoint
+		if not IsValid(cp) then continue end
+		if cp.Locked == true then continue end
+
+		local ownerTeam = getControlPointOwnerTeam(cp)
+		local canWeCap = teamCanCaptureControlPoint(cp, teamNum)
+		local canEnemyCap = teamCanCaptureControlPoint(cp, enemyTeam)
+		local objectivePos = getObjectivePos(cp) or getObjectivePos(trigger)
+		if not isvector(objectivePos) then continue end
+
+		local defend = ownerTeam == teamNum and canEnemyCap
+		local attack = ownerTeam ~= teamNum and canWeCap
+		if not defend and not attack then continue end
+
+		local defenders = countTeamOccupantsNear(trigger, teamNum, objectivePos)
+		local attackers = countTeamOccupantsNear(trigger, enemyTeam, objectivePos)
+		local score = bot:GetPos():DistToSqr(objectivePos)
+
+		if defend then
+			if isPointThreatened(trigger, cp, bot) then
+				score = score * 0.25
+			else
+				score = score * 0.75
+			end
+			score = score - (attackers * 90000)
+		else
+			score = score - (defenders * 20000)
+		end
+
+		if not bestScore or score < bestScore then
+			bestScore = score
+			best = {
+				mode = defend and (isPointThreatened(trigger, cp, bot) and "block_capture_point" or "defend_point") or "capture_point",
+				targetEnt = cp,
+				targetPos = objectivePos,
+				routeType = defend and "default" or "safest",
+			}
+		end
+	end
+
+	return best
+end
+
+local function selectPayloadDecision(bot)
+	local watcher = getPayloadWatcher()
+	if not IsValid(watcher) then return nil end
+
+	local state = getPayloadState(watcher)
+	if istable(state) and state.goalReached then return nil end
+
+	local attackTeam = getPayloadTeam(state, "attackTeam", TEAM_BLU)
+	local defendTeam = getPayloadTeam(state, "defendTeam", TEAM_RED)
+	local cart = getPayloadCart(watcher)
+	local cartPos = getPayloadCartPosition(watcher)
+	if not isvector(cartPos) then return nil end
+
+	if bot:Team() == attackTeam then
+		local pushPos = cartPos
+		if IsValid(cart) then
+			local forward = cart:GetForward()
+			if isvector(forward) and forward:LengthSqr() > 0 then
+				pushPos = cartPos - forward:GetNormalized() * 60
+			end
+		end
+		return {
+			mode = "payload_push",
+			targetEnt = cart,
+			targetPos = pushPos,
+			routeType = "default",
+		}
+	end
+
+	if bot:Team() == defendTeam then
+		local contested = false
+		if istable(state) then
+			local cappers = tonumber(state.cappers) or 0
+			contested = cappers > 0 or state.blocked == true or tonumber(state.trainState or -1) == 1
+		end
+		return {
+			mode = contested and "payload_block" or "payload_guard",
+			targetEnt = cart,
+			targetPos = contested and cartPos or (getPayloadDefendPosition(watcher) or cartPos),
+			routeType = "default",
+		}
+	end
+
+	return nil
+end
+
+local function selectCTFDecision(bot)
+	if not IsValid(bot) then return nil end
+
+	local enemyTeam = getEnemyTeam(bot:Team())
+	local enemyFlag = getTeamFlag(enemyTeam)
+	local myFlag = getTeamFlag(bot:Team())
+	local capZone = getFriendlyCaptureZone(bot)
+	local myCarrier = getFlagCarrier(enemyFlag)
+	local enemyCarrier = getFlagCarrier(myFlag)
+
+	if IsValid(myCarrier) and myCarrier == bot and IsValid(capZone) then
+		return {
+			mode = "deliver_flag",
+			targetEnt = capZone,
+			targetPos = getObjectivePos(capZone),
+			routeType = "fastest",
+		}
+	end
+
+	if IsValid(enemyCarrier) and enemyCarrier:Team() ~= bot:Team() then
+		return {
+			mode = "defend_flag",
+			targetEnt = enemyCarrier,
+			targetPos = enemyCarrier:GetPos(),
+			routeType = "default",
+		}
+	end
+
+	if IsValid(myCarrier) and myCarrier:Team() == bot:Team() then
+		local supportPos = IsValid(capZone) and computeSupportSpot(myCarrier, capZone, bot) or myCarrier:GetPos()
+		return {
+			mode = "escort_flag_carrier",
+			targetEnt = myCarrier,
+			targetPos = supportPos,
+			routeType = "default",
+		}
+	end
+
+	if IsValid(enemyFlag) and (isFlagDropped(enemyFlag) or not isFlagHome(enemyFlag)) then
+		return {
+			mode = "fetch_flag",
+			targetEnt = enemyFlag,
+			targetPos = getObjectivePos(enemyFlag),
+			routeType = "fastest",
+		}
+	end
+
+	if IsValid(enemyFlag) then
+		return {
+			mode = "fetch_flag",
+			targetEnt = enemyFlag,
+			targetPos = getObjectivePos(enemyFlag),
+			routeType = "fastest",
+		}
+	end
+
+	return nil
+end
+
 local function getPasstimeGoalForTeam(bot, teamNum)
 	if not IsValid(bot) then return nil end
 	local best, bestDist
@@ -501,25 +883,32 @@ function M:Select(bot, state)
 		bot.TF_MVM_IgnoreCombat = false
 	end
 
-	local origin = bot:GetPos()
-	local flagClass = (bot:Team() == TEAM_RED) and "item_teamflag_blu" or "item_teamflag_red"
+	local payloadDecision = selectPayloadDecision(bot)
+	if payloadDecision then
+		state.objective.mode = payloadDecision.mode
+		state.objective.targetEnt = payloadDecision.targetEnt
+		state.objective.targetPos = payloadDecision.targetPos
+		bot.routeType = payloadDecision.routeType or "default"
+		return
+	end
+
 	if not bot.TF_MVM_IgnoreFlag then
-		local flags = ents.FindByClass(flagClass)
-		local flag = nearest(flags, origin)
-		if IsValid(flag) then
-			state.objective.mode = "fetch_flag"
-			state.objective.targetEnt = flag
-			state.objective.targetPos = getPos(flag)
+		local ctfDecision = selectCTFDecision(bot)
+		if ctfDecision then
+			state.objective.mode = ctfDecision.mode
+			state.objective.targetEnt = ctfDecision.targetEnt
+			state.objective.targetPos = ctfDecision.targetPos
+			bot.routeType = ctfDecision.routeType or "default"
 			return
 		end
 	end
 
-	local capZones = ents.FindByClass("func_capturezone")
-	local zone = nearest(capZones, origin)
-	if IsValid(zone) then
-		state.objective.mode = "capture_zone"
-		state.objective.targetEnt = zone
-		state.objective.targetPos = getPos(zone)
+	local cpDecision = selectControlPointDecision(bot)
+	if cpDecision then
+		state.objective.mode = cpDecision.mode
+		state.objective.targetEnt = cpDecision.targetEnt
+		state.objective.targetPos = cpDecision.targetPos
+		bot.routeType = cpDecision.routeType or "default"
 		return
 	end
 
@@ -527,6 +916,7 @@ function M:Select(bot, state)
 		state.objective.mode = "chase_target"
 		state.objective.targetEnt = state.vision.currentThreat
 		state.objective.targetPos = state.vision.currentThreat:GetPos()
+		bot.routeType = "default"
 		return
 	end
 
@@ -537,6 +927,7 @@ function M:Select(bot, state)
 		state.objective.targetPos = bot:GetPos()
 	end
 	state.objective.targetEnt = nil
+	bot.routeType = "default"
 end
 
 return M

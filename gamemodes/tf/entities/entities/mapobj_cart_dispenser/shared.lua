@@ -18,6 +18,18 @@ ENT.Sound_Heal = Sound("Building_Dispenser.Heal")
 ENT.ObjectName = "#TF_Object_Dispenser"
 ENT.TouchTriggerName = ""
 
+function ENT:ShouldHideTargetID()
+	return true
+end
+
+function ENT:GetTargetIDName(nolocalize)
+	return ""
+end
+
+function ENT:GetTargetIDSubText()
+	return ""
+end
+
 function ENT:SetAutomaticFrameAdvance(bUsingAnim)
 	self.AutomaticFrameAdvance = bUsingAnim
 end

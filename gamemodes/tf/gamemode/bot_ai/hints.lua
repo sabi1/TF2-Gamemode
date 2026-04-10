@@ -34,10 +34,16 @@ end
 
 local function isHintEnabled(ent)
 	if not IsValid(ent) then return false end
+	if ent.IsEnabled then
+		return ent:IsEnabled()
+	end
 	return not boolProp(ent, "startdisabled", false)
 end
 
 local function inTeam(ent, bot)
+	if ent.IsForTeam then
+		return ent:IsForTeam(bot:Team())
+	end
 	local hintTeam = numProp(ent, "team", 0)
 	if hintTeam <= 0 then return true end
 	return bot:Team() == hintTeam
@@ -93,28 +99,45 @@ function M:IsSentryHintAvailable(hint, bot)
 
 	-- Mirror the C++ rule loosely: available if no effective owner and not in use.
 	local owner = hint._tfbotOwner
+	if hint.GetPlayerOwner then
+		owner = hint:GetPlayerOwner()
+	end
 	if IsValid(owner) and owner ~= bot then
 		local ownerClass = string.lower(tostring((owner.GetPlayerClass and owner:GetPlayerClass()) or owner.playerclass or ""))
 		if ownerClass == "engineer" or ownerClass == "giantengineer" then
 			return false
 		end
 	end
-	local inUse = (hint._tfbotUseCount or 0) > 0
+	local inUse = hint.IsInUse and hint:IsInUse() or (hint._tfbotUseCount or 0) > 0
 	return not inUse
 end
 
 function M:ReserveSentryHint(hint, bot)
 	if not IsValid(hint) or not IsValid(bot) then return end
-	hint._tfbotOwner = bot
-	hint._tfbotUseCount = (hint._tfbotUseCount or 0) + 1
+	if hint.SetPlayerOwner then
+		hint:SetPlayerOwner(bot)
+	else
+		hint._tfbotOwner = bot
+	end
+	if hint.IncrementUseCount then
+		hint:IncrementUseCount()
+	else
+		hint._tfbotUseCount = (hint._tfbotUseCount or 0) + 1
+	end
 end
 
 function M:ReleaseSentryHint(hint, bot)
 	if not IsValid(hint) then return end
-	if hint._tfbotOwner == bot then
+	if hint.GetPlayerOwner and hint:SetPlayerOwner and hint:GetPlayerOwner() == bot then
+		hint:SetPlayerOwner(nil)
+	elseif hint._tfbotOwner == bot then
 		hint._tfbotOwner = nil
 	end
-	hint._tfbotUseCount = math.max((hint._tfbotUseCount or 1) - 1, 0)
+	if hint.DecrementUseCount then
+		hint:DecrementUseCount()
+	else
+		hint._tfbotUseCount = math.max((hint._tfbotUseCount or 1) - 1, 0)
+	end
 end
 
 function M:SelectEngineerSentryHint(bot)

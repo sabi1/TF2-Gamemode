@@ -298,9 +298,28 @@ end
 
 function GM:PlayerBindPress(pl, cmd, down)
 	local bind = string.lower(string.Trim(tostring(cmd or "")))
+	local isJumpBind = string.find(bind, "^%+jump") ~= nil
+	local isTauntBind = string.find(bind, "^%+taunt") ~= nil or string.find(bind, "^taunt$") ~= nil or string.find(bind, "^impulse%s+201$") ~= nil
+	local isWeaponTauntBind = string.find(bind, "^weapon_taunt$") ~= nil
+	local isTaunting = false
+
+	if IsValid(pl) then
+		if pl.InCond and pl:InCond(TF_COND_TAUNTING) then
+			isTaunting = true
+		elseif pl:GetNWBool("Taunting", false) then
+			isTaunting = true
+		end
+	end
 
 	-- TF2 parity: +taunt opens the taunt HUD; while open, +taunt performs weapon taunt.
-	if down and (string.find(bind, "^%+taunt") or string.find(bind, "^taunt$") or string.find(bind, "^impulse%s+201$")) then
+	if down and isTaunting and (isJumpBind or isTauntBind or isWeaponTauntBind) then
+		if not pl:InCond(TF_COND_HALLOWEEN_KART) then
+			RunConsoleCommand("stop_taunt")
+			return true
+		end
+	end
+
+	if down and isTauntBind then
 		if IsValid(HudTauntMenu) then
 			if HudTauntMenu:IsOpen() then
 				HudTauntMenu:DoWeaponTaunt()
@@ -331,8 +350,13 @@ function GM:PlayerBindPress(pl, cmd, down)
 	if not down then return end
 
 	if IsValid(HudTauntMenu) and HudTauntMenu:IsOpen() then
-		if string.find(bind, "^lastinv") then
+		if string.find(bind, "^lastinv") or string.find(bind, "^invnext") or string.find(bind, "^invprev") or string.find(bind, "^%+attack$") then
 			HudTauntMenu:Close()
+			return true
+		end
+
+		if isWeaponTauntBind then
+			HudTauntMenu:DoWeaponTaunt()
 			return true
 		end
 
@@ -523,6 +547,7 @@ local function targetid_trace_condition(tr,ply)
 	ply = ply or LocalPlayer()
 	if TFIsHL2Player(ply) then return false end
 	if not IsValid(tr.Entity) or not tr.Entity:IsTFPlayer() then return false end
+	if tr.Entity.ShouldHideTargetID and tr.Entity:ShouldHideTargetID() then return false end
 
 	local targetTeam = GAMEMODE.GetEntityVisibleTeamForViewer and GAMEMODE:GetEntityVisibleTeamForViewer(tr.Entity, ply) or GAMEMODE:EntityTeam(tr.Entity)
 	return targetTeam == ply:Team() and tr.Entity:GetMaterial() != "color" and tr.Entity:GetMaterial() != "models/shadertest/shader3" and tr.Entity:GetMaterial() != "models/props_combine/tprings_globe"

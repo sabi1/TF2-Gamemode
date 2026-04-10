@@ -1392,7 +1392,7 @@ function meta:DestroyBuilding(number1, number2)
 
 	if group == 2 and sub == 0 then
 		for _, v in pairs(ents.FindByClass("obj_sentrygun")) do
-			if IsOwnedEngineerBuilding(v, self) then
+			if TF_IsOwnedEngineerBuilding(v, self) then
 				v:Explode()
 				destroyed = true
 			end
@@ -1400,7 +1400,7 @@ function meta:DestroyBuilding(number1, number2)
 	end
 	if group == 0 and sub == 0 then
 		for _, v in pairs(ents.FindByClass("obj_dispenser")) do
-			if IsOwnedEngineerBuilding(v, self) then
+			if TF_IsOwnedEngineerBuilding(v, self) then
 				v:Explode()
 				destroyed = true
 			end
@@ -1408,7 +1408,7 @@ function meta:DestroyBuilding(number1, number2)
 	end
 	if group == 1 and sub == 0 then
 		for _, v in pairs(ents.FindByClass("obj_teleporter")) do
-			if IsOwnedEngineerBuilding(v, self) and v:IsExit() ~= true then
+			if TF_IsOwnedEngineerBuilding(v, self) and v:IsExit() ~= true then
 				v:Explode()
 				destroyed = true
 			end
@@ -1416,7 +1416,7 @@ function meta:DestroyBuilding(number1, number2)
 	end
 	if group == 1 and sub == 1 then
 		for _, v in pairs(ents.FindByClass("obj_teleporter")) do
-			if IsOwnedEngineerBuilding(v, self) and v:IsExit() ~= false then
+			if TF_IsOwnedEngineerBuilding(v, self) and v:IsExit() ~= false then
 				v:Explode()
 				destroyed = true
 			end

@@ -1391,9 +1391,12 @@ local function ApplyWeaponRestrictionSelection(bot, restriction)
     end
 end
 
-local function BuildAppliedDef(baseDef, defaultEventDef)
-    if istable(defaultEventDef) then
-        return defaultEventDef
+local function BuildAppliedDef(baseDef, runtimeDefaultEventDef, popDefaultEventDef)
+    if istable(runtimeDefaultEventDef) then
+        return runtimeDefaultEventDef
+    end
+    if istable(popDefaultEventDef) then
+        return popDefaultEventDef
     end
     return baseDef
 end
@@ -1429,7 +1432,9 @@ end
 function SPAWNER:SpawnTFBot(runtime, rawDef, spawnState, whereOverride, missionId, fixedSpawnEnt, selectorState, randomSpawn)
     local def = self:BuildBotDef(runtime, rawDef)
     local eventDefs = ParseEventChangeAttributes(def.EventChangeAttributes or def.eventchangeattributes)
-    local appliedDef = BuildAppliedDef(def, eventDefs["default"])
+    local runtimeDefaultEventName = runtime and runtime.GetDefaultEventChangeAttributesName and runtime:GetDefaultEventChangeAttributesName() or nil
+    local runtimeDefaultEventDef = runtimeDefaultEventName and eventDefs[string.Trim(string.lower(tostring(runtimeDefaultEventName)))] or nil
+    local appliedDef = BuildAppliedDef(def, runtimeDefaultEventDef, eventDefs["default"])
 
     local botClass = NormalizeClass(def.Class or "scout")
     local displayName = NormalizeDisplayBotName(def.Name or def.Class or "MvM Bot")

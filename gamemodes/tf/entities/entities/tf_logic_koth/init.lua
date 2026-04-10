@@ -9,6 +9,10 @@ function ENT:Initialize()
 	self.ActiveTeam = 0
 end
 
+local function UnlockTimerName(logicEnt, suffix)
+	return "TF_KOTH_" .. tostring(suffix or "unlock") .. "_" .. tostring(logicEnt:EntIndex())
+end
+
 function ENT:KeyValue(key, value)
 	key = string.lower(key)
 	self.Properties = self.Properties or {}
@@ -84,6 +88,83 @@ function ENT:EnsureTeamTimers()
 	end
 end
 
+function ENT:GetTeamTimers()
+	self:EnsureTeamTimers()
+	return self.RedTimer, self.BlueTimer
+end
+
+function ENT:ConfigureTeamTimerForSetup(timerEnt, setupDuration)
+	if not IsValid(timerEnt) then return end
+
+	timerEnt.IsSetupPhase = true
+	if timerEnt.SetAndPauseTimer then
+		timerEnt:SetAndPauseTimer(setupDuration, true)
+	elseif timerEnt.SetTime then
+		timerEnt:SetTime(setupDuration)
+		timerEnt:PauseTimer()
+	end
+end
+
+function ENT:ConfigureTeamTimerForRound(timerEnt)
+	if not IsValid(timerEnt) then return end
+
+	local duration = math.max(1, ToNumber(self.TimerInitialLength, 180))
+	timerEnt.IsSetupPhase = false
+	if timerEnt.SetAndPauseTimer then
+		timerEnt:SetAndPauseTimer(duration, true)
+	elseif timerEnt.SetTime then
+		timerEnt:SetTime(duration)
+		timerEnt:PauseTimer()
+	end
+end
+
+function ENT:BeginSetupLockWindow()
+	local redTimer, blueTimer = self:GetTeamTimers()
+	local setupDuration = math.max(0, ToNumber(self.TimeToUnlockPoint, 30))
+
+	if setupDuration <= 0 then
+		self:EndSetupLockWindow()
+		return
+	end
+
+	self.ActiveTeam = 0
+	if IsValid(redTimer) then
+		self:ConfigureTeamTimerForSetup(redTimer, setupDuration)
+	end
+	if IsValid(blueTimer) then
+		self:ConfigureTeamTimerForSetup(blueTimer, setupDuration)
+	end
+
+	timer.Remove(UnlockTimerName(self, "point_unlock"))
+	timer.Create(UnlockTimerName(self, "point_unlock"), setupDuration, 1, function()
+		if not IsValid(self) then return end
+		self:EndSetupLockWindow()
+	end)
+end
+
+function ENT:EndSetupLockWindow()
+	timer.Remove(UnlockTimerName(self, "point_unlock"))
+
+	local redTimer, blueTimer = self:GetTeamTimers()
+	if IsValid(redTimer) then
+		self:ConfigureTeamTimerForRound(redTimer)
+	end
+	if IsValid(blueTimer) then
+		self:ConfigureTeamTimerForRound(blueTimer)
+	end
+
+	local points = ents.FindByClass("team_control_point")
+	if #points == 0 then
+		points = ents.FindByClass("tf_team_control_point")
+	end
+
+	for _, point in ipairs(points) do
+		if IsValid(point) and point.SetLocked then
+			point:SetLocked(false)
+		end
+	end
+end
+
 function ENT:SetActiveTeamClock(teamNum)
 	self:EnsureTeamTimers()
 	if not IsValid(self.RedTimer) or not IsValid(self.BlueTimer) then return end
@@ -124,6 +205,7 @@ function ENT:Input_RoundSpawn()
 	self.TimeToUnlockPoint = math.max(0, ToNumber(self.Properties.unlock_point, self.TimeToUnlockPoint or 30))
 	self:EnsureTeamTimers()
 	self:SetActiveTeamClock(0)
+	timer.Remove(UnlockTimerName(self, "point_unlock"))
 end
 
 function ENT:Input_RoundActivate()
@@ -135,17 +217,10 @@ function ENT:Input_RoundActivate()
 	for _, point in ipairs(points) do
 		if IsValid(point) and point.SetLocked then
 			point:SetLocked(true)
-			if self.TimeToUnlockPoint <= 0 then
-				point:SetLocked(false)
-			else
-				timer.Simple(self.TimeToUnlockPoint, function()
-					if IsValid(point) then
-						point:SetLocked(false)
-					end
-				end)
-			end
 		end
 	end
+
+	self:BeginSetupLockWindow()
 end
 
 function ENT:Input_SetRedTimer(_, _, data)
@@ -227,4 +302,8 @@ function ENT:AcceptInput(name, activator, caller, data)
 		fn(self, activator, caller, data)
 		return true
 	end
+end
+
+function ENT:OnRemove()
+	timer.Remove(UnlockTimerName(self, "point_unlock"))
 end

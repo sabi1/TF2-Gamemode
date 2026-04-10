@@ -1,5 +1,7 @@
 include('shared.lua')
-     
+local HOOK_MODEL_PATH = "models/weapons/c_models/c_grapple_proj/c_grapple_proj.mdl"
+local RED_BEAM = Material("cable/cable_red")
+local BLU_BEAM = Material("cable/cable_blue")
 
      
 function ENT:Initialize()              
@@ -11,7 +13,12 @@ function ENT:Initialize()
 		self.speed = 5000
 		self.startTime = CurTime()
 		self.endTime = CurTime() + self.speed
-		self.dt = -1   
+		self.dt = -1
+	self.HookModel = ClientsideModel(HOOK_MODEL_PATH, RENDERGROUP_TRANSLUCENT)
+	if IsValid(self.HookModel) then
+		self.HookModel:SetNoDraw(true)
+		self.HookModel:SetRenderMode(RENDERMODE_NORMAL)
+	end
 end
      
 function ENT:Think()
@@ -37,6 +44,9 @@ function ENT:Draw()
      
 		local Owner = self.Entity:GetOwner()
 		if (!Owner || Owner == NULL) then return end
+
+		local ownerTeam = Owner.EntityTeam and Owner:EntityTeam() or Owner:Team()
+		self.matBeam = (ownerTeam == TEAM_BLU or ownerTeam == TF_TEAM_PVE_INVADERS) and BLU_BEAM or RED_BEAM
      
 		local StartPos          = self.Entity:GetPos()
 		local EndPos            = self:GetEndPos()
@@ -78,8 +88,26 @@ function ENT:Draw()
 	local Normal    = gbAngle:Forward()
      
 	self:DrawMainBeam( StartPos, StartPos + Normal * Distance, self.dt, Distance )
+
+	if IsValid(self.HookModel) then
+		local hookAng = (StartPos - EndPos):Angle()
+		self.HookModel:SetPos(EndPos)
+		self.HookModel:SetAngles(hookAng)
+		self.HookModel:DrawModel()
+	end
+end
+
+function ENT:DrawTranslucent()
+	self:Draw()
 end
 function ENT:IsTranslucent()
 	return true
+end
+
+function ENT:OnRemove()
+	if IsValid(self.HookModel) then
+		self.HookModel:Remove()
+		self.HookModel = nil
+	end
 end
 

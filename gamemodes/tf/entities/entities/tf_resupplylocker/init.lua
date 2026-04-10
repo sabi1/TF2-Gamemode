@@ -1,3 +1,7 @@
+AddCSLuaFile("cl_init.lua")
+AddCSLuaFile("shared.lua")
+include("shared.lua")
+
 function ENT:Initialize()
 	self:SetModel( "models/props_gameplay/resupply_locker.mdl" )
 	self:PhysicsInit( SOLID_VPHYSICS )
@@ -16,6 +20,10 @@ end
 
 local PreserveResupplyWeapons = {
 	["tf_weapon_jar_gas"] = true,
+}
+
+local RefillResupplyWeapons = {
+	["tf_weapon_jar_milk"] = true,
 }
 
 local function PreserveMeterAmmo(pl, fn)
@@ -57,11 +65,54 @@ local function PreserveMeterAmmo(pl, fn)
 		end
 	end
 end
+
+local function RefillResupplyThrowables(pl)
+	if not IsValid(pl) then return end
+
+	for class,_ in pairs(RefillResupplyWeapons) do
+		local wep = pl:GetWeapon(class)
+		if IsValid(wep) and wep.Primary and wep.Primary.Ammo then
+			local maxcarry = math.max(0, wep.MaxCarry or 1)
+			if maxcarry > 0 then
+				pl:SetAmmoCount(maxcarry, wep.Primary.Ammo)
+				wep.LastTrackedAmmo = maxcarry
+			end
+
+			if pl.NextGiveAmmoType == wep.Primary.Ammo then
+				pl.NextGiveAmmo = nil
+				pl.NextGiveAmmoType = nil
+			end
+		end
+	end
+end
  
 function ENT:Use( activator, caller )
     return
 end
  
+function ENT:ResolveAnimationTarget()
+	if IsValid(self.ResupplyLockerTarget) then
+		return self.ResupplyLockerTarget
+	end
+
+	if self.ResupplyLockerName and self.ResupplyLockerName ~= "" then
+		self.ResupplyLockerTarget = ents.FindByName(self.ResupplyLockerName)[1]
+	end
+
+	if IsValid(self.ResupplyLockerTarget) then
+		return self.ResupplyLockerTarget
+	end
+
+	return self
+end
+
+function ENT:SetLockerAnimation(sequence)
+	local target = self:ResolveAnimationTarget()
+	if IsValid(target) then
+		target:Fire("SetAnimation", sequence)
+	end
+end
+
 
 function ENT:KeyValue(key,value)
 	key = string.lower(key)
@@ -69,7 +120,7 @@ function ENT:KeyValue(key,value)
 	if key=="teamnum" then
 		self.Team = tonumber(value)
 	elseif key=="associatedmodel" then
-		selfName = value
+		self.ResupplyLockerName = value
 	end
 end
 
@@ -95,6 +146,7 @@ function ENT:Think()
 				GAMEMODE:GiveHealthPercent(pl, 100)
 				GAMEMODE:GiveAmmoPercent(pl, 100)
 			end)
+			RefillResupplyThrowables(pl)
 			if self.Opened then
 				self:EmitSound("AmmoPack.Touch", 100, 100)
 			end
@@ -104,30 +156,15 @@ function ENT:Think()
 	
 	if resupplied and not self.Opened then
 		self:EmitSound("Regenerate.Touch", 100, 100)
-		
-		if not self and selfName then
-			self = ents.FindByName(selfName)[1]
-			----print("associatedmodel : "..selfName.." : "..tostring(self))
-		end
-		
-		if self and self:IsValid(self.WModel2) then
-			--self:ResetSequence(self:LookupSequence("open"))
-			self:Fire("SetAnimation", "open")
-		end
+		self:SetLockerAnimation("open")
 		
 		self.Opened = true
 		self.NextClose = CurTime() + 1.5
 	end
 	
 	if self.NextClose and CurTime()>=self.NextClose then
-		if self and self:IsValid(self.WModel2) then
-			--self:ResetSequence(self:LookupSequence("close"))
-			--self.NextIdle = CurTime() + self:SequenceDuration() - 0.2
-			self:Fire("SetAnimation", "close")
-			self.NextIdle = CurTime() + 1.5
-		else
-			self.NextIdle = CurTime() + 1.5
-		end
+		self:SetLockerAnimation("close")
+		self.NextIdle = CurTime() + 1.5
 		self.NextClose = nil
 	end
 	

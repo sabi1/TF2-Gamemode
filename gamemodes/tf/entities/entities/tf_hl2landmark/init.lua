@@ -173,8 +173,8 @@ function ENT:SaveLevelData(caller)
 	
 	self:Clear()
 	
-	self.Map = caller.map
-	self.Landmark = caller.landmark
+	self.Map = caller and caller.map or nil
+	self.Landmark = caller and caller.landmark or nil
 	
 	self:GetLandmarkEntity()
 	
@@ -183,7 +183,7 @@ function ENT:SaveLevelData(caller)
 		return
 	end
 	
-	Msg("Changing level to "..self.Map.."\n")
+	Msg("Changing level to "..tostring(self.Map or "unknown").."\n")
 	for _,v in pairs(player.GetAll()) do
 		self:SavePlayerData(v)
 	end

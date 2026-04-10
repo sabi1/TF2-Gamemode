@@ -242,12 +242,88 @@ local function handlePasstimeCarrier(bot, cmd, state)
 	return true
 end
 
-local function chooseWeapon(bot, threat)
+local function tryHandleMedicHealing(bot, cmd, state)
+	local cls = string.lower(tostring((bot.GetPlayerClass and bot:GetPlayerClass()) or bot.playerclass or ""))
+	if cls ~= "medic" and cls ~= "giantmedic" then return false end
+
+	local healTarget = state and state.class and state.class.healTarget or nil
+	if not IsValid(healTarget) or not healTarget:Alive() or healTarget:IsFriendly(bot) ~= true then
+		return false
+	end
+
+	local medigun = bot:GetWeapon("tf_weapon_medigun")
+		or bot:GetWeapon("tf_weapon_medigun_merc")
+		or bot:GetWeapon("tf_weapon_medigun_qf")
+		or bot:GetWeapon("tf_weapon_medigun_vaccinator")
+		or bot:GetWeapon("tf_weapon_medigun_machinery")
+	if not IsValid(medigun) then
+		for _, wep in ipairs(bot:GetWeapons() or {}) do
+			if IsValid(wep) and string.find(string.lower(wep:GetClass() or ""), "medigun", 1, true) then
+				medigun = wep
+				break
+			end
+		end
+	end
+	if not IsValid(medigun) then
+		return false
+	end
+
+	if bot:GetActiveWeapon() ~= medigun then
+		bot:SelectWeapon(medigun:GetClass())
+	end
+
+	if medigun.SetHealTarget and medigun.Target ~= healTarget then
+		medigun:SetHealTarget(healTarget)
+	end
+
+	local aimPos = healTarget.WorldSpaceCenter and healTarget:WorldSpaceCenter() or healTarget:GetPos()
+	local lookAng = (aimPos - bot:GetShootPos()):Angle()
+	cmd:SetViewAngles(lookAng)
+	bot:SetEyeAngles(lookAng)
+
+	local dist = bot:GetPos():Distance(healTarget:GetPos())
+	local inRange = dist <= math.max(cv_melee_engage_dist:GetFloat(), 600)
+	if inRange and bot:Visible(healTarget) then
+		cmd:SetButtons(bit.bor(cmd:GetButtons(), IN_ATTACK))
+	else
+		cmd:RemoveKey(IN_ATTACK)
+	end
+
+	local threat = state and state.vision and state.vision.currentThreat or nil
+	local patientLow = (tonumber(healTarget:Health()) or 0) / math.max(tonumber(healTarget:GetMaxHealth()) or 1, 1) <= 0.45
+	local threatNear = IsValid(threat) and healTarget:GetPos():DistToSqr(threat:GetPos()) <= (550 * 550)
+	local charge = tonumber(bot:GetNWInt("Ubercharge", 0) or 0)
+	if charge >= 100 and (patientLow or threatNear) then
+		cmd:SetButtons(bit.bor(cmd:GetButtons(), IN_ATTACK2))
+	end
+
+	return true
+end
+
+local function chooseWeapon(bot, threat, state)
 	if not IsValid(bot) then return nil, {} end
 	local weapons = bot:GetWeapons()
 	if not weapons or #weapons == 0 then return nil, {} end
 	local dist = IsValid(threat) and bot:GetPos():Distance(threat:GetPos()) or 99999
 	local restriction = string.lower(tostring(bot.TF_MVM_WeaponRestriction or ""))
+
+	local medicTarget = state and state.class and state.class.healTarget or nil
+	local botClass = string.lower(tostring((bot.GetPlayerClass and bot:GetPlayerClass()) or bot.playerclass or ""))
+	if (botClass == "medic" or botClass == "giantmedic") and IsValid(medicTarget) then
+		for _, wep in ipairs(weapons) do
+			if not wepValid(wep) then continue end
+			local wc = string.lower(tostring(wepClass(wep) or ""))
+			if string.find(wc, "medigun", 1, true) then
+				bot:SelectWeapon(wep:GetClass())
+				return wep, {
+					melee = nil,
+					rangedWithAmmo = wep,
+					rangedNoAmmo = nil,
+					outOfRangedAmmo = false,
+				}
+			end
+		end
+	end
 
 	local function allowed(wep)
 		if not wepValid(wep) then return false end
@@ -291,7 +367,8 @@ local function chooseWeapon(bot, threat)
 		if wep.ZoomStatus and dist > 700 then
 			preferred = wep
 		end
-		if wepClass(wep) == "tf_weapon_medigun" then
+		local wc = string.lower(tostring(wepClass(wep) or ""))
+		if string.find(wc, "medigun", 1, true) then
 			preferred = wep
 		end
 	end
@@ -326,6 +403,9 @@ function M:Update(bot, cmd, state)
 	if handlePasstimeCarrier(bot, cmd, state) then
 		return
 	end
+	if tryHandleMedicHealing(bot, cmd, state) then
+		return
+	end
 	if bot.TF_MVM_IgnoreEnemies then
 		return
 	end
@@ -358,7 +438,7 @@ function M:Update(bot, cmd, state)
 		return
 	end
 
-	local selected, ctx = chooseWeapon(bot, threat)
+	local selected, ctx = chooseWeapon(bot, threat, state)
 	local active = bot:GetActiveWeapon()
 	if not IsValid(active) and wepValid(selected) then
 		active = selected

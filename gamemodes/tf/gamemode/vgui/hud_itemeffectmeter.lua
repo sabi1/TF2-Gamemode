@@ -3,6 +3,7 @@ local H = ScrH()
 local Scale = H / 480
 
 local DEFAULT_METER_RES = "resource/ui/huditemeffectmeter.res"
+local RUNE_METER_RES = "resource/ui/hudpowerupeffectmeter.res"
 local MAX_VISIBLE_METER_SLOTS = 3
 local REFRESH_INTERVAL = 0.15
 
@@ -29,6 +30,74 @@ local MeterLabel = {
 }
 
 local MeterResCache = {}
+local RUNE_METER_LABELS = {
+	[TF_RUNE_STRENGTH] = "Strength",
+	[TF_RUNE_HASTE] = "Haste",
+	[TF_RUNE_REGEN] = "Regen",
+	[TF_RUNE_RESIST] = "Resist",
+	[TF_RUNE_VAMPIRE] = "Vampire",
+	[TF_RUNE_REFLECT] = "Reflect",
+	[TF_RUNE_PRECISION] = "Precision",
+	[TF_RUNE_AGILITY] = "Agility",
+	[TF_RUNE_KNOCKOUT] = "Knockout",
+	[TF_RUNE_KING] = "King",
+	[TF_RUNE_PLAGUE] = "Plague",
+	[TF_RUNE_SUPERNOVA] = "Supernova",
+}
+local RUNE_METER_ICONS = {
+	[TF_RUNE_STRENGTH] = "effects/powerup_strength_hud",
+	[TF_RUNE_HASTE] = "effects/powerup_haste_hud",
+	[TF_RUNE_REGEN] = "effects/powerup_regen_hud",
+	[TF_RUNE_RESIST] = "effects/powerup_resist_hud",
+	[TF_RUNE_VAMPIRE] = "effects/powerup_vampire_hud",
+	[TF_RUNE_REFLECT] = "effects/powerup_reflect_hud",
+	[TF_RUNE_PRECISION] = "effects/powerup_precision_hud",
+	[TF_RUNE_AGILITY] = "effects/powerup_agility_hud",
+	[TF_RUNE_KNOCKOUT] = "effects/powerup_knockout_hud",
+	[TF_RUNE_KING] = "effects/powerup_king_hud",
+	[TF_RUNE_PLAGUE] = "effects/powerup_plague_hud",
+	[TF_RUNE_SUPERNOVA] = "effects/powerup_supernova_hud",
+}
+
+local function isMeterSourceValid(item)
+	return IsValid(item) or (istable(item) and item.IsVirtualHUDMeter == true)
+end
+
+local function createRuneMeterSource(pl)
+	return {
+		IsVirtualHUDMeter = true,
+		GlobalCustomHUD = { HudItemEffectMeter = true },
+		Slot = 99,
+		SlotPos = 0,
+		EntIndex = function()
+			return -1000
+		end,
+		GetClass = function()
+			return "tf_mannpower_rune"
+		end,
+		GetHUDMeterName = function()
+			local runeType = pl.GetCarryingRuneType and pl:GetCarryingRuneType() or TF_RUNE_NONE
+			return RUNE_METER_LABELS[runeType] or "Rune"
+		end,
+		GetHUDMeterValue = function()
+			local charge = pl.GetRuneCharge and pl:GetRuneCharge() or 0
+			return math.Clamp((tonumber(charge) or 0) / 100, 0, 1)
+		end,
+		GetHUDMeterShouldFlash = function()
+			return pl.IsRuneCharged and pl:IsRuneCharged() or false
+		end,
+		GetHUDMeterResFile = function()
+			return RUNE_METER_RES
+		end,
+		GetHUDMeterIcon = function()
+			local runeType = pl.GetCarryingRuneType and pl:GetCarryingRuneType() or TF_RUNE_NONE
+			return RUNE_METER_ICONS[runeType] or ""
+		end,
+		GetHUDMeterBarColor = function()
+			return Colors.Yellow
+		end,
+	}
+end
 
 local function resolveHudCoord(raw, axisSize, axisScale, fallback)
 	if not isstring(raw) then
@@ -174,7 +243,7 @@ local function evalHudFlag(item, name, active)
 end
 
 local function getItemMeterRes(item)
-	if not IsValid(item) then
+	if not isMeterSourceValid(item) then
 		return DEFAULT_METER_RES
 	end
 	if item.GetHUDMeterResFile then
@@ -193,7 +262,7 @@ local function getMeterFlashColor()
 end
 
 local function shouldFlashMeter(item, progress)
-	if not IsValid(item) then return false end
+	if not isMeterSourceValid(item) then return false end
 	if (progress or 0) < 0.999 then return false end
 
 	if isfunction(item.GetHUDMeterShouldFlash) then
@@ -205,7 +274,7 @@ local function shouldFlashMeter(item, progress)
 end
 
 local function getWeaponSlot(item)
-	if not IsValid(item) then return 99 end
+	if not isMeterSourceValid(item) then return 99 end
 	if isnumber(item.Slot) then return item.Slot end
 	if isfunction(item.GetSlot) then
 		local v = item:GetSlot()
@@ -215,7 +284,7 @@ local function getWeaponSlot(item)
 end
 
 local function getWeaponSlotPos(item)
-	if not IsValid(item) then return 99 end
+	if not isMeterSourceValid(item) then return 99 end
 	if isnumber(item.SlotPos) then return item.SlotPos end
 	if isfunction(item.GetSlotPos) then
 		local v = item:GetSlotPos()
@@ -244,7 +313,7 @@ function METER:SetSource(item)
 end
 
 function METER:IsEnabledForPlayer(pl, active)
-	if not IsValid(pl) or not IsValid(self.Item) then
+	if not IsValid(pl) or not isMeterSourceValid(self.Item) then
 		return false
 	end
 	if not self.Item.GetHUDMeterName or not self.Item.GetHUDMeterValue then
@@ -254,7 +323,7 @@ function METER:IsEnabledForPlayer(pl, active)
 end
 
 local function getMeterLabelText(item)
-	if not IsValid(item) then return "" end
+	if not isMeterSourceValid(item) then return "" end
 
 	-- TF2 quirk: Mutated Milk meter title is shown as "Jar".
 	local className = string.lower(tostring(item.GetClass and item:GetClass() or ""))
@@ -281,7 +350,7 @@ function METER:GetSortData(active)
 		slot = getWeaponSlot(item),
 		slotPos = getWeaponSlotPos(item),
 		isActive = (item == active),
-		entIndex = IsValid(item) and item:EntIndex() or 0,
+		entIndex = isMeterSourceValid(item) and item:EntIndex() or 0,
 	}
 end
 
@@ -295,7 +364,7 @@ function METER:SetMeterLayout(x, y, scale, team)
 end
 
 function METER:Think()
-	if not IsValid(self.Item) then
+	if not isMeterSourceValid(self.Item) then
 		self:SetVisible(false)
 		return
 	end
@@ -304,21 +373,21 @@ function METER:Think()
 end
 
 local function getMeterBarColor(item)
-	if IsValid(item) and isfunction(item.GetHUDMeterBarColor) then
+	if isMeterSourceValid(item) and isfunction(item.GetHUDMeterBarColor) then
 		return item:GetHUDMeterBarColor() or Colors.Yellow
 	end
 	return Colors.Yellow
 end
 
 local function getMeterLabelColor(item, res)
-	if IsValid(item) and isfunction(item.GetHUDMeterLabelColor) then
+	if isMeterSourceValid(item) and isfunction(item.GetHUDMeterLabelColor) then
 		return item:GetHUDMeterLabelColor() or (res and res.labelColor) or color_white
 	end
 	return (res and res.labelColor) or color_white
 end
 
 local function getMeterIconTexture(item, res)
-	if IsValid(item) and isfunction(item.GetHUDMeterIcon) then
+	if isMeterSourceValid(item) and isfunction(item.GetHUDMeterIcon) then
 		local path = item:GetHUDMeterIcon()
 		if isstring(path) and path ~= "" then
 			local normalized = TF2Res and TF2Res.NormalizeImagePath and TF2Res.NormalizeImagePath(path) or path
@@ -339,7 +408,7 @@ local function drawMeterBar(x, y, w, h, color, fill)
 end
 
 function METER:Paint(w, h)
-	if not IsValid(self.Item) or not self.Res then return end
+	if not isMeterSourceValid(self.Item) or not self.Res then return end
 
 	local scale = Scale
 	local res = self.Res
@@ -423,13 +492,17 @@ end
 
 function MANAGER:BuildInventorySignature(pl)
 	local items = pl.GetTFItems and pl:GetTFItems() or nil
-	if not istable(items) then return "" end
+	items = istable(items) and items or {}
 
 	local parts = {}
 	for _, item in pairs(items) do
 		if IsValid(item) and item.GetHUDMeterName and item.GetHUDMeterValue then
 			parts[#parts + 1] = tostring(item:EntIndex()) .. ":" .. tostring(item:GetClass())
 		end
+	end
+	if pl.CanRuneCharge and pl:CanRuneCharge() then
+		local runeType = pl.GetCarryingRuneType and pl:GetCarryingRuneType() or TF_RUNE_NONE
+		parts[#parts + 1] = "rune:" .. tostring(runeType)
 	end
 	table.sort(parts)
 
@@ -441,12 +514,7 @@ end
 function MANAGER:RefreshMeters(pl)
 	local active = pl:GetActiveWeapon()
 	local items = pl.GetTFItems and pl:GetTFItems() or nil
-	if not istable(items) then
-		for _, panel in pairs(self.MeterPanels) do
-			if IsValid(panel) then panel:SetVisible(false) end
-		end
-		return
-	end
+	items = istable(items) and items or {}
 
 	local seen = {}
 	for _, item in pairs(items) do
@@ -460,6 +528,16 @@ function MANAGER:RefreshMeters(pl)
 			end
 			panel:SetSource(item)
 		end
+	end
+
+	if pl.CanRuneCharge and pl:CanRuneCharge() then
+		seen.rune = true
+		local panel = self.MeterPanels.rune
+		if not IsValid(panel) then
+			panel = vgui.Create("TFHudItemEffectMeterPanel", self)
+			self.MeterPanels.rune = panel
+		end
+		panel:SetSource(createRuneMeterSource(pl))
 	end
 
 	for entIndex, panel in pairs(self.MeterPanels) do

@@ -17,14 +17,61 @@ function ENT:GetItemTint(t)
 	return self.dt.ItemTint
 end
 
-local function DecodeItemTintVector(raw)
+local function DecodePackedFloat32Integer(raw)
+	local n = tonumber(raw)
+	if not n then return nil end
+
+	n = bit.band(math.floor(n), 0xFFFFFFFF)
+
+	local sign = bit.band(bit.rshift(n, 31), 0x1)
+	local exponent = bit.band(bit.rshift(n, 23), 0xFF)
+	local mantissa = bit.band(n, 0x7FFFFF)
+
+	if exponent == 0xFF then
+		return nil
+	end
+
+	local value
+	if exponent == 0 then
+		if mantissa == 0 then
+			value = 0
+		else
+			value = (mantissa / 8388608) * (2 ^ -126)
+		end
+	else
+		value = (1 + mantissa / 8388608) * (2 ^ (exponent - 127))
+	end
+
+	if sign == 1 then
+		value = -value
+	end
+
+	return value
+end
+
+local function NormalizeItemTintValue(raw)
 	local n = tonumber(raw)
 	if not n or n <= 0 then return nil end
 
 	n = math.floor(n)
-	if n > 0xFFFFFF then
-		n = bit.band(n, 0xFFFFFF)
+	if n <= 0xFFFFFF then
+		return n
 	end
+
+	local decoded = DecodePackedFloat32Integer(n)
+	if decoded and decoded > 0 and decoded <= 0xFFFFFF then
+		local rounded = math.floor(decoded + 0.5)
+		if rounded > 0 and rounded <= 0xFFFFFF then
+			return rounded
+		end
+	end
+
+	return bit.band(n, 0xFFFFFF)
+end
+
+local function DecodeItemTintVector(raw)
+	local n = NormalizeItemTintValue(raw)
+	if not n then return nil end
 
 	return Vector(
 		bit.band(bit.rshift(n, 16), 0xFF) / 255,
@@ -45,7 +92,7 @@ function ENT:GetConfiguredPaintData()
 	local attrRaw = self.GetAttributeValue and self:GetAttributeValue("set_item_tint_rgb", nil) or nil
 	local attrTint = DecodeItemTintVector(attrRaw)
 	if attrTint then
-		return tonumber(attrRaw) or 0, attrTint
+		return NormalizeItemTintValue(attrRaw) or 0, attrTint
 	end
 
 	local owner = self:GetOwner()
@@ -95,7 +142,7 @@ if SERVER then
 AddCSLuaFile("shared.lua")
 
 function ENT:SetItemTint(t)
-	self.dt.ItemTint = t
+	self.dt.ItemTint = NormalizeItemTintValue(t) or 0
 end
 
 end

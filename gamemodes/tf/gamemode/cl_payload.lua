@@ -18,6 +18,15 @@ local function BuildDefaultPayloadState()
 	}
 end
 
+local function BuildDefaultPayloadStateCollection()
+	return {
+		list = {},
+		byAttackTeam = {},
+		primary = BuildDefaultPayloadState(),
+		multiple = false,
+	}
+end
+
 local function GetGamemodeTable()
 	return rawget(_G, "GAMEMODE") or rawget(_G, "GM")
 end
@@ -27,6 +36,7 @@ local function EnsurePayloadClientState()
 	if not gm then return nil end
 
 	gm.PayloadState = gm.PayloadState or BuildDefaultPayloadState()
+	gm.PayloadStates = gm.PayloadStates or BuildDefaultPayloadStateCollection()
 	if gm.PayloadHUDActive == nil then
 		gm.PayloadHUDActive = false
 	end
@@ -59,15 +69,37 @@ local function ReadPayloadSnapshot()
 	return snapshot
 end
 
-local function ApplyPayloadSnapshot(snapshot)
+local function ReadPayloadSnapshotCollection()
+	local snapshots = BuildDefaultPayloadStateCollection()
+	local count = net.ReadUInt(4)
+
+	for i = 1, count do
+		local snapshot = ReadPayloadSnapshot()
+		table.insert(snapshots.list, snapshot)
+		snapshots.byAttackTeam[tonumber(snapshot.attackTeam) or 0] = snapshot
+	end
+
+	snapshots.multiple = #snapshots.list > 1
+	snapshots.primary = snapshots.list[1] or BuildDefaultPayloadState()
+	return snapshots
+end
+
+local function ApplyPayloadSnapshotCollection(snapshots)
 	local gm = EnsurePayloadClientState()
 	if not gm then
-		PENDING_SNAPSHOT = snapshot
+		PENDING_SNAPSHOT = snapshots
 		return
 	end
 
-	gm.PayloadState = snapshot
-	gm.PayloadHUDActive = snapshot.active and true or false
+	gm.PayloadStates = snapshots
+	gm.PayloadState = snapshots.primary or BuildDefaultPayloadState()
+	gm.PayloadHUDActive = false
+	for _, snapshot in ipairs(snapshots.list or {}) do
+		if snapshot.active then
+			gm.PayloadHUDActive = true
+			break
+		end
+	end
 	gm.PayloadStateLastUpdate = CurTime()
 end
 
@@ -82,15 +114,15 @@ hook.Add("Think", "TF_PayloadClientBootstrap", function()
 	end
 
 	if not EnsurePayloadClientState() then return end
-	ApplyPayloadSnapshot(PENDING_SNAPSHOT)
+	ApplyPayloadSnapshotCollection(PENDING_SNAPSHOT)
 	PENDING_SNAPSHOT = nil
 	hook.Remove("Think", "TF_PayloadClientBootstrap")
 end)
 
 net.Receive("TF_PayloadSyncFull", function()
-	ApplyPayloadSnapshot(ReadPayloadSnapshot())
+	ApplyPayloadSnapshotCollection(ReadPayloadSnapshotCollection())
 end)
 
 net.Receive("TF_PayloadSyncDelta", function()
-	ApplyPayloadSnapshot(ReadPayloadSnapshot())
+	ApplyPayloadSnapshotCollection(ReadPayloadSnapshotCollection())
 end)

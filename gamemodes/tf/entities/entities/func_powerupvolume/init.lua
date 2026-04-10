@@ -34,9 +34,10 @@ function ENT:StartTouch(ent)
 	if self.Disabled then return end
 	if not TF_IsMannpowerMode or not TF_IsMannpowerMode() then return end
 	if not IsValid(ent) or not ent:IsTFPlayer() or not ent:Alive() then return end
-	if ent:IsTaunting() then return end
+	if ent.IsTaunting and ent:IsTaunting() then return end
 	if ent:InCond(TF_COND_RUNE_IMBALANCE) then return end
 	if GAMEMODE and GAMEMODE.RoundHasWinner then return end
+	if GetGlobalBool("TF_RoundStalemate", false) then return end
 	if self.TeamNum ~= TEAM_UNASSIGNED and ent:Team() ~= self.TeamNum then return end
 
 	ent:AddCond(TF_COND_RUNE_IMBALANCE, 20, ent)

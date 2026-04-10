@@ -56,6 +56,11 @@ local KothTimerState = {
 	[TEAM_BLU_ID] = {},
 }
 
+local KothHudAnim = {
+	ActiveTeam = TEAM_UNASSIGNED_ID,
+	PulseStart = 0,
+}
+
 do
 	local timerResPath = (TF_GetHudResPath and TF_GetHudResPath((TF_GetHudGameMode and TF_GetHudGameMode()) or "cp", "roundTimer", "resource/ui/hudobjectivetimepanel.res")) or "resource/ui/hudobjectivetimepanel.res"
 	local kothResPath = (TF_GetHudResPath and TF_GetHudResPath("koth", "kothTimer", "resource/ui/hudobjectivekothtimepanel.res")) or "resource/ui/hudobjectivekothtimepanel.res"
@@ -325,11 +330,21 @@ end
 function PANEL:DrawSingleTimer(state, teamIndex, xOffset, active)
 	if not state or state.Reference == nil then return end
 
+	local stateTime = self:GetStateTime(state)
+	local lowTimePulse = 1
+	if not state.IsSetup and not state.IsWaiting and stateTime > 0 and stateTime <= 10 then
+		lowTimePulse = 0.72 + math.abs(math.sin(CurTime() * 8)) * 0.28
+	end
+
 	surface.SetDrawColor(255, 255, 255, 255)
 
 	if active then
+		local pulseElapsed = CurTime() - (KothHudAnim.PulseStart or 0)
+		local pulseAlpha = 210 + math.max(0, 1 - math.min(pulseElapsed / 0.45, 1)) * 45
 		surface.SetTexture(objectives_timepanel_active_bg)
+		surface.SetDrawColor(255, 255, 255, pulseAlpha)
 		surface.DrawTexturedRect(xOffset * Scale, KOTHRes.activeY * Scale, KOTHRes.activeW * Scale, KOTHRes.activeH * Scale)
+		surface.SetDrawColor(255, 255, 255, 255)
 	end
 
 	self:DrawTimerStateLabel(state, xOffset, active or not IsKothMap())
@@ -342,7 +357,7 @@ function PANEL:DrawSingleTimer(state, teamIndex, xOffset, active)
 		text = self:GetFormattedTimeFromState(state),
 		font = "HudFontMediumSmall",
 		pos = {(xOffset + TimerRes.timeX) * Scale, TimerRes.timeY * Scale},
-		color = Colors.TanLight,
+		color = Color(Colors.TanLight.r, Colors.TanLight.g, Colors.TanLight.b, math.floor(255 * lowTimePulse)),
 		xalign = TEXT_ALIGN_CENTER,
 		yalign = TEXT_ALIGN_CENTER,
 	}
@@ -357,6 +372,7 @@ function PANEL:DrawSingleTimer(state, teamIndex, xOffset, active)
 	if progress < 0.25 then
 		fgcolor = Colors.HudTimerProgressWarning
 	end
+	fgcolor = Color(fgcolor.r, fgcolor.g, fgcolor.b, math.floor(255 * lowTimePulse))
 
 	tf_draw.CircularProgressBar((xOffset + TimerRes.progressX) * Scale, TimerRes.progressY * Scale, TimerRes.progressW * Scale, TimerRes.progressH * Scale,
 		objectives_timepanel_progressbar, objectives_timepanel_progressbar,
@@ -381,6 +397,10 @@ function PANEL:Paint()
 			end
 			if hasRed and not red.Paused then
 				activeTeam = TEAM_RED_ID
+			end
+			if activeTeam ~= KothHudAnim.ActiveTeam then
+				KothHudAnim.ActiveTeam = activeTeam
+				KothHudAnim.PulseStart = CurTime()
 			end
 
 			self:DrawSingleTimer(blu, TEAM_BLU_ID, KOTHRes.blueX, activeTeam == TEAM_BLU_ID)

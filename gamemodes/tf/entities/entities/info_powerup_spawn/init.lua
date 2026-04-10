@@ -11,6 +11,11 @@ function ENT:Initialize()
 	elseif teamNum == 3 then
 		self.TeamNum = TEAM_BLU
 	end
+
+	if SERVER then
+		GAMEMODE.PowerupSpawnPoints = GAMEMODE.PowerupSpawnPoints or {}
+		GAMEMODE.PowerupSpawnPoints[self] = true
+	end
 end
 
 function ENT:KeyValue(key, value)
@@ -45,4 +50,42 @@ function ENT:AcceptInput(name)
 		return true
 	end
 	return false
+end
+
+function ENT:OnRemove()
+	if SERVER and GAMEMODE.PowerupSpawnPoints then
+		GAMEMODE.PowerupSpawnPoints[self] = nil
+	end
+end
+
+function ENT:IsDisabled()
+	return self.Disabled and true or false
+end
+
+function ENT:GetTeamNumber()
+	return self.TeamNum or TEAM_UNASSIGNED
+end
+
+function ENT:HasRune()
+	return IsValid(self.ActiveRune)
+end
+
+function ENT:SetRune(rune)
+	self.ActiveRune = IsValid(rune) and rune or nil
+	if IsValid(rune) then
+		rune.SpawnPoint = self
+	end
+end
+
+function TF_GetPowerupSpawnPoints(teamNum)
+	local out = {}
+	for spawn in pairs(GAMEMODE.PowerupSpawnPoints or {}) do
+		if IsValid(spawn) and not spawn:IsDisabled() then
+			local ownerTeam = spawn:GetTeamNumber()
+			if teamNum == nil or ownerTeam == TEAM_UNASSIGNED or ownerTeam == teamNum then
+				out[#out + 1] = spawn
+			end
+		end
+	end
+	return out
 end

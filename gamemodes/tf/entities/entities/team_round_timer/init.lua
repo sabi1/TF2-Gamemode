@@ -459,6 +459,38 @@ function ENT:GetPayloadDefenderTeam(state)
 	return TEAM_RED
 end
 
+function ENT:GetPayloadAttackerTeam(state)
+	if istable(state) then
+		local attack = tonumber(state.attackTeam)
+		if attack == TEAM_RED or attack == TEAM_BLU then
+			return attack
+		end
+
+		local defend = tonumber(state.defendTeam)
+		if defend == TEAM_RED then
+			return TEAM_BLU
+		elseif defend == TEAM_BLU then
+			return TEAM_RED
+		end
+	end
+
+	return TEAM_BLU
+end
+
+function ENT:IsPayloadTimer()
+	local watcher = self:GetPayloadWatcher()
+	if IsValid(watcher) then
+		return true
+	end
+
+	if TF_MAPTYPES and TF_MAPTYPES.IsPayload then
+		return TF_MAPTYPES.IsPayload()
+	end
+
+	local mapName = string.lower(game.GetMap() or "")
+	return string.StartWith(mapName, "pl_") or string.StartWith(mapName, "plr_")
+end
+
 function ENT:TryStartPayloadOvertime()
 	if self.PayloadOvertime then return true end
 
@@ -521,6 +553,10 @@ function ENT:Think()
 			if state and state.goalReached then
 				self:StopPayloadOvertime()
 				self.RoundFinished = true
+				self:TriggerOutput("OnFinished")
+				if not GAMEMODE.RoundHasWinner then
+					GAMEMODE:RoundWin(self:GetPayloadAttackerTeam(state))
+				end
 				return
 			end
 
@@ -540,11 +576,14 @@ function ENT:Think()
 				return
 			end
 
+			local _, payloadState = self:GetPayloadWatcherState()
 			self.RoundFinished = true
 			self:TriggerOutput("OnFinished")
-			if !self.IsSetupPhase then
-				if (string.find(game.GetMap(),"pl_")) then
-					GAMEMODE:RoundWin(2)
+			if not self.IsSetupPhase and self:IsPayloadTimer() and not GAMEMODE.RoundHasWinner then
+				if payloadState and payloadState.goalReached then
+					GAMEMODE:RoundWin(self:GetPayloadAttackerTeam(payloadState))
+				else
+					GAMEMODE:RoundWin(self:GetPayloadDefenderTeam(payloadState))
 				end
 			end
 		end

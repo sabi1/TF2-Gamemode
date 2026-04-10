@@ -6,6 +6,8 @@ ENT.Base = "item_base"
 ENT.Model = "models/flag/briefcase.mdl"
 
 local FlagReturnTime = 60
+local FlagPoisonDelay = 90
+local TF_FLAGTYPE_PLAYER_DESTRUCTION_ID = rawget(_G, "TF_FLAGTYPE_PLAYER_DESTRUCTION") or 6
 
 local function OutputTeamNum(ent)
 	if not IsValid(ent) then return nil end
@@ -13,6 +15,29 @@ local function OutputTeamNum(ent)
 		return ent:Team()
 	end
 	return GAMEMODE and GAMEMODE.EntityTeam and GAMEMODE:EntityTeam(ent) or nil
+end
+
+local function IsPowerupFlagPoisonEnabled(flag)
+	if not TF_IsMannpowerMode or not TF_IsMannpowerMode() then
+		return false
+	end
+
+	if not IsValid(flag) then
+		return false
+	end
+
+	return flag:GetNWInt("FlagGameType", flag.GameType or 0) ~= TF_FLAGTYPE_PLAYER_DESTRUCTION_ID
+end
+
+local function ClearPoisonCarrierMark(flag)
+	local carrier = IsValid(flag) and flag.Carrier or nil
+	if not IsValid(carrier) or not carrier.RemoveCond or not carrier.InCond or not TF_COND_MARKEDFORDEATH then
+		return
+	end
+
+	if carrier:InCond(TF_COND_MARKEDFORDEATH) then
+		carrier:RemoveCond(TF_COND_MARKEDFORDEATH, true)
+	end
 end
 
 if SERVER then
@@ -77,6 +102,7 @@ function ENT:Initialize()
 	end
 	
 	self.State = 0
+	self:SetNWInt("FlagStatus", self.State)
 	
 	
 	self.Trail = ents.Create("info_particle_system")
@@ -88,10 +114,16 @@ function ENT:Initialize()
 	
 	self.PickupLock = {}
 	self.Disabled = tonumber((self.Properties or {}).startdisabled or 0) == 1
+	self.VisibleWhenDisabled = tonumber((self.Properties or {}).visiblewhendisabled or 0) == 1
 	self.ReturnTime = FlagReturnTime
+	self.PoisonTime = 0
 	self.ShowingTimerUntil = nil
 	self:SetNWFloat("ReturnTimeLength", self.ReturnTime)
 	self:SetNWBool("FlagGlowDisabled", false)
+	self:SetNWBool("FlagDisabled", self.Disabled or false)
+	self:SetNWBool("FlagVisibleWhenDisabled", self.VisibleWhenDisabled or false)
+	self:SetNWInt("FlagGameType", self.GameType or 0)
+	self:SetNWFloat("FlagPoisonTime", self.PoisonTime)
 	timer.Simple(0.1, function()
 		if (string.find(game.GetMap(),"mvm_")) then
 		
@@ -122,6 +154,7 @@ function ENT:KeyValue(key, value)
 	
 	if key=="gametype" then
 		self.GameType = tonumber(value)
+		self:SetNWInt("FlagGameType", self.GameType or 0)
 	elseif key=="teamnum" then
 		self.te = tonumber(value)
 		local t = tonumber(value)
@@ -137,6 +170,40 @@ function ENT:KeyValue(key, value)
 		self:SetNWInt("FlagTeamNum",self.TeamNum)
 	elseif key=="startdisabled" then
 		self.Disabled = tonumber(value) == 1
+	elseif key=="visiblewhendisabled" then
+		self.VisibleWhenDisabled = tonumber(value) == 1
+	end
+end
+
+function ENT:IsPoisonous()
+	return (self.PoisonTime or 0) > 0 and CurTime() >= (self.PoisonTime or 0)
+end
+
+function ENT:SetPoisonTime(timeValue)
+	self.PoisonTime = tonumber(timeValue) or 0
+	self:SetNWFloat("FlagPoisonTime", self.PoisonTime)
+end
+
+function ENT:UpdatePoisonState()
+	if not IsPowerupFlagPoisonEnabled(self) then
+		if (self.PoisonTime or 0) ~= 0 then
+			self:SetPoisonTime(0)
+		end
+		ClearPoisonCarrierMark(self)
+		return
+	end
+
+	if self.State ~= 1 or not IsValid(self.Carrier) then
+		ClearPoisonCarrierMark(self)
+		return
+	end
+
+	if self:IsPoisonous() then
+		if self.Carrier.AddCond and self.Carrier.InCond and not self.Carrier:InCond(TF_COND_MARKEDFORDEATH) then
+			self.Carrier:AddCond(TF_COND_MARKEDFORDEATH, PERMANENT_CONDITION or -1, self.Carrier)
+		end
+	else
+		ClearPoisonCarrierMark(self)
 	end
 end
 
@@ -153,6 +220,12 @@ function ENT:Think()
 	end
 
 	self:SetNWEntity("carrier", self.Carrier)
+	self:SetNWInt("FlagStatus", self.State or 0)
+	self:SetNWBool("FlagDisabled", self.Disabled or false)
+	self:SetNWBool("FlagVisibleWhenDisabled", self.VisibleWhenDisabled or false)
+	self:SetNWInt("FlagGameType", self.GameType or 0)
+	self:SetNWFloat("FlagPoisonTime", self.PoisonTime or 0)
+	self:UpdatePoisonState()
 
 	for k, v in pairs(player.GetAll()) do
 				local trace = util.QuickTrace(self:GetPos(), v:EyePos() - self:GetPos(), self.Prop)
@@ -280,7 +353,9 @@ end
 function ENT:Return(nosound)
 	if self.State~=0 then
 		self:Drop(true)
+		self:SetPoisonTime(0)
 		self.State = 0
+		self:SetNWInt("FlagStatus", self.State)
 		self:SetNWBool("TimerActive", false)
 		self.NextReturn = nil
 		self:SetPos(self.HomePosition)
@@ -315,8 +390,15 @@ function ENT:Pickup(ply)
 		self.ShowingTimerUntil = nil
 		
 		self.State = 1
+		self:SetNWInt("FlagStatus", self.State)
+		if IsPowerupFlagPoisonEnabled(self) then
+			self:SetPoisonTime(CurTime() + FlagPoisonDelay)
+		else
+			self:SetPoisonTime(0)
+		end
 		self.Trail:Fire("Start")
 		self.Carrier = ply
+		self:SetNWEntity("carrier", self.Carrier)
 		self.Prop:ResetSequence(self.Prop:LookupSequence("idle"))
 		self.Prop:SetPlaybackRate(1)
 		self.Prop:SetCycle(1)
@@ -349,6 +431,8 @@ end
 
 function ENT:Drop(nosound)
 	if self.State==1 and IsValid(self.Carrier) then
+		ClearPoisonCarrierMark(self)
+		self:SetPoisonTime(0)
 		self:SetNWBool("TimerActive", true)
 		self:SetNWFloat("TimeRemaining", self.ReturnTime)
 		self:SetNWFloat("ReturnTimeLength", self.ReturnTime)
@@ -358,8 +442,10 @@ function ENT:Drop(nosound)
 		local ply = self.Carrier
 		self.PickupLock[ply] = 1 -- Prevent the player who dropped it to pick it up immediately again
 		self.State = 2
+		self:SetNWInt("FlagStatus", self.State)
 		self.Trail:Fire("Stop")
 		self.Carrier = nil
+		self:SetNWEntity("carrier", self.Carrier)
 		self.Prop:ResetSequence(self.Prop:LookupSequence("spin"))
 		self.Prop:SetPlaybackRate(1)
 		self.Prop:SetCycle(1)
@@ -392,8 +478,10 @@ function ENT:AcceptInput(name, activator, caller, value)
 		self:SetSkin(tonumber(value) or 0)
 	elseif name=="enable" then
 		self.Disabled = false
+		self:SetNWBool("FlagDisabled", false)
 	elseif name=="disable" then
 		self.Disabled = true
+		self:SetNWBool("FlagDisabled", true)
 	elseif name=="forcedrop" then
 		self:Drop()
 	elseif name=="forcereset" then
@@ -402,6 +490,7 @@ function ENT:AcceptInput(name, activator, caller, value)
 		self:Return(true)
 	elseif name=="forceresetanddisablesilent" then
 		self.Disabled = true
+		self:SetNWBool("FlagDisabled", true)
 		self:Return(true)
 	elseif name=="setreturntime" then
 		self.ReturnTime = math.max(tonumber(value) or FlagReturnTime, 0)
@@ -421,6 +510,9 @@ function ENT:AcceptInput(name, activator, caller, value)
 		end
 	elseif name=="forceglowdisabled" then
 		self:SetNWBool("FlagGlowDisabled", (tonumber(value) or 0) ~= 0)
+	elseif name=="setvisiblewhendisabled" then
+		self.VisibleWhenDisabled = (tonumber(value) or 0) ~= 0
+		self:SetNWBool("FlagVisibleWhenDisabled", self.VisibleWhenDisabled)
 	elseif name=="setteam" then
 		local t = tonumber(value)
 		
@@ -452,6 +544,10 @@ local colors = {
 	[1]=Color(0,0,255,255),
 	[2]=Color(255,255,255,255),
 }
+
+local function EmitClientFlagStatusUpdate(flag, owner)
+	hook.Run("TF_FlagStatusUpdate", flag, owner)
+end
 
 function ENT:Initialize()
 	self.Progress = vgui.Create("CircularProgressBar")
@@ -510,6 +606,29 @@ function ENT:Think()
 	if (self:GetNWInt("FlagTeamNum",0) ~= nil and self.TeamNum == nil) then
 		self.TeamNum = self:GetNWInt("FlagTeamNum")
 	end
+
+	local status = self:GetNWInt("FlagStatus", 0)
+	local carrier = self:GetNWEntity("carrier")
+	local disabled = self:GetNWBool("FlagDisabled", false)
+	local visibleWhenDisabled = self:GetNWBool("FlagVisibleWhenDisabled", false)
+	local teamNum = self:GetNWInt("FlagTeamNum", self.TeamNum or 0)
+	local gameType = self:GetNWInt("FlagGameType", self.GameType or 0)
+
+	if self.LastHudFlagStatus ~= status
+		or self.LastHudCarrier ~= carrier
+		or self.LastHudFlagDisabled ~= disabled
+		or self.LastHudFlagVisibleWhenDisabled ~= visibleWhenDisabled
+		or self.LastHudFlagTeam ~= teamNum
+		or self.LastHudFlagGameType ~= gameType then
+		EmitClientFlagStatusUpdate(self, carrier)
+		self.LastHudFlagStatus = status
+		self.LastHudCarrier = carrier
+		self.LastHudFlagDisabled = disabled
+		self.LastHudFlagVisibleWhenDisabled = visibleWhenDisabled
+		self.LastHudFlagTeam = teamNum
+		self.LastHudFlagGameType = gameType
+	end
+
 	if self:GetNWBool("TimerActive") then
 		if not self.NextReturn or self.OldTimeRemaining~=self:GetNWFloat("TimeRemaining") then
 			self.OldTimeRemaining = self:GetNWFloat("TimeRemaining")

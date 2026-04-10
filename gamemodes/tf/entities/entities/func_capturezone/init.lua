@@ -2,6 +2,42 @@ ENT.Base = "base_brush"
 ENT.Type = "brush"
 local DEPLOY_ALERT_COOLDOWN = 5.0
 TF_MVM_NextDeployingAlertAt = TF_MVM_NextDeployingAlertAt or 0
+util.AddNetworkString("TF_CTFNotify")
+
+local function getTouchingEnemyCapResPath(teamNum)
+	if teamNum == TEAM_BLU then
+		return "resource/ui/notifications/notify_touching_enemy_ctf_cap_blue.res"
+	end
+	return "resource/ui/notifications/notify_touching_enemy_ctf_cap_red.res"
+end
+
+local function notifyTouchingEnemyCap(ply)
+	if not IsValid(ply) or not ply:IsPlayer() then return end
+
+	local now = CurTime()
+	local nextAt = tonumber(ply._tfNextEnemyCapNotifyAt) or 0
+	if nextAt > now then
+		return
+	end
+	ply._tfNextEnemyCapNotifyAt = now + 5.0
+
+	net.Start("TF_CTFNotify")
+	net.WriteString(getTouchingEnemyCapResPath(ply:Team()))
+	net.WriteString("")
+	net.Send(ply)
+end
+
+local function isHomeFlagAvailableForTeam(teamNum, carriedFlag)
+	for _, flag in ipairs(ents.FindByClass("item_teamflag")) do
+		if not IsValid(flag) then continue end
+		if flag == carriedFlag then continue end
+		if tonumber(flag.TeamNum or -1) ~= teamNum then continue end
+		if tonumber(flag.TeamNum or -1) == 0 then continue end
+		return tonumber(flag.State or 0) == 0
+	end
+
+	return true
+end
 
 local function IsSpecialDeliveryCapture(flagEnt, playerEnt)
 	if not IsValid(flagEnt) or not IsValid(playerEnt) then return false end
@@ -121,11 +157,21 @@ function ENT:StartTouch(ply)
 	for _,v in pairs(ents.FindByClass("item_teamflag")) do
 		----print(self.Team, v.te, self.Pos:Distance(ply) <= 50)
 		----print(self.Team ~= v.te, v.Carrier == ply, v:GetPos():Distance(ply:GetPos()) <= 50)
+		if v.Carrier==ply and self.Team == v.te and v.Prop:GetPos():Distance(ply:GetPos()) <= 100 then
+			notifyTouchingEnemyCap(ply)
+			return
+		end
+
 		if v.Carrier==ply and self.Team ~= v.te and v.Prop:GetPos():Distance(ply:GetPos()) <= 100 then
 			if game.GetMap() == "mvm_terroristmission_v7_1" then
 				RunConsoleCommand("tf_red_wins")
 			end
 			
+			if not IsSpecialDeliveryCapture(v, ply) and not isHomeFlagAvailableForTeam(ply:Team(), v) then
+				ply:PrintMessage(HUD_PRINTCENTER, tf_lang and tf_lang.GetRaw and (tf_lang.GetRaw("TF_CTF_Cannot_Capture") or "Cannot capture - your flag is not at base!") or "Cannot capture - your flag is not at base!")
+				return
+			end
+
 			ply:Speak("TLK_FLAGCAPTURED")
 			v:Capture()
 

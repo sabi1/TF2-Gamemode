@@ -29,6 +29,7 @@ end
 
 function ENT:Initialize()
     self.Team = 0
+    self.Disabled = false
     self.Players = {}
     self:SetTrigger(true)
 end
@@ -37,18 +38,24 @@ function ENT:KeyValue(key, value)
     key = string.lower(tostring(key or ""))
     if key == "teamnum" then
         self.Team = tonumber(value) or 0
+    elseif key == "startdisabled" or key == "start_disabled" then
+        self.Disabled = tonumber(value) == 1
     end
 end
 
 function ENT:StartTouch(ent)
+    if self.Disabled then return end
     if not IsUpgradePlayer(ent) then return end
+    if self.Team ~= 0 and ent:Team() ~= self.Team then return end
     self.Players[ent] = true
     ent:SetNWBool("TF_MVM_InUpgradeStation", true)
     TryOpenUpgradePanel(ent)
 end
 
 function ENT:Touch(ent)
+    if self.Disabled then return end
     if not IsUpgradePlayer(ent) then return end
+    if self.Team ~= 0 and ent:Team() ~= self.Team then return end
     if self.Players[ent] then return end
     self.Players[ent] = true
     ent:SetNWBool("TF_MVM_InUpgradeStation", true)
@@ -78,4 +85,20 @@ function ENT:OnRemove()
         end
     end
     self.Players = {}
+end
+
+function ENT:AcceptInput(name)
+    name = string.lower(tostring(name or ""))
+    if name == "enable" then
+        self.Disabled = false
+        return true
+    elseif name == "disable" then
+        self.Disabled = true
+        for ply in pairs(self.Players) do
+            self:EndTouch(ply)
+        end
+        self.Players = {}
+        return true
+    end
+    return false
 end

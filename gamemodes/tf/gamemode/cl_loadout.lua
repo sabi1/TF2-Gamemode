@@ -25,6 +25,8 @@ CreateConVar("loadout_taunts_spy", "-1,-1,-1,-1,-1,-1,-1,-1", {FCVAR_ARCHIVE,FCV
 
 local nextLoadoutUpdate = 0
 local LOADOUT_SLOT_COUNT = 7
+local ACTION_SLOT_INDEX = 7
+local STOCK_GRAPPLING_HOOK_DEFINDEX = 1152
 
 local function getClassLoadoutSlotCount(className)
     className = string.lower(tostring(className or ""))
@@ -32,6 +34,13 @@ local function getClassLoadoutSlotCount(className)
         return 8
     end
     return LOADOUT_SLOT_COUNT
+end
+
+local function isGrapplingHookDefindex(defindex)
+	defindex = tonumber(defindex)
+	if not defindex or not tf_items or not tf_items.ItemsByID then return false end
+	local item = tf_items.ItemsByID[defindex]
+	return istable(item) and item.item_class == "tf_weapon_grapplinghook"
 end
 
 local function resolveLoadoutItemImagePath(item, properties)
@@ -114,6 +123,57 @@ local function updateLoadout(type, id, update)
     end
 end
 
+function TF2GM_IsGrapplingHookEquippedInLoadout(className)
+	className = string.lower(tostring(className or ""))
+	if className == "" then return false end
+
+	local convar = GetConVar("loadout_" .. className)
+	if not convar then return false end
+
+	local split = normalizeLoadout(string.Split(convar:GetString(), ","), className)
+	local equippedId = tonumber(split[ACTION_SLOT_INDEX]) or -1
+	if isGrapplingHookDefindex(equippedId) then
+		return true
+	end
+
+	if istable(TFClientLoadoutProperties) and istable(TFClientLoadoutProperties[className]) then
+		local properties = TFClientLoadoutProperties[className][ACTION_SLOT_INDEX]
+		if istable(properties) and isGrapplingHookDefindex(properties.defindex) then
+			return true
+		end
+	end
+
+	return false
+end
+
+function TF2GM_EquipStockGrapplingHookForClass(className)
+	className = string.lower(tostring(className or ""))
+	if className == "" then return false end
+
+	local convar = GetConVar("loadout_" .. className)
+	if not convar then return false end
+
+	local split = normalizeLoadout(string.Split(convar:GetString(), ","), className)
+	split[ACTION_SLOT_INDEX] = tostring(STOCK_GRAPPLING_HOOK_DEFINDEX)
+	convar:SetString(table.concat(split, ","))
+
+	TFClientLoadoutProperties = TFClientLoadoutProperties or {}
+	TFClientLoadoutProperties[className] = TFClientLoadoutProperties[className] or {}
+	TFClientLoadoutProperties[className][ACTION_SLOT_INDEX] = {
+		defindex = STOCK_GRAPPLING_HOOK_DEFINDEX,
+	}
+
+	net.Start("TF_UpdateLoadoutProperties")
+		net.WriteTable(TFClientLoadoutProperties)
+	net.SendToServer()
+
+	timer.Simple(0.15, function()
+		RunConsoleCommand("loadout_update")
+	end)
+
+	return true
+end
+
 local function select(self, i, val, update)
     local type = self.type
     local id = self:GetOptionData(i)
@@ -159,7 +219,7 @@ concommand.Add("open_charinfo_direct", function(ply, _, args)
         if (!GetConVar("tf_competitive"):GetBool()) then
             RunConsoleCommand("loadout_update")
             
-            if (GetConVar("tf_grapplinghook_enable"):GetBool()) then
+            if (TF_IsGrapplingHookEnabled and TF_IsGrapplingHookEnabled()) then
                 ply:ConCommand("__svgiveitem Grappling Hook")
             end
         end

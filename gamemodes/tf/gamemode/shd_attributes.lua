@@ -551,6 +551,36 @@ local ATTRIBUTES = {
 ["set_item_tint_rgb"] = {
 	equip = function(v,weapon,owner)
 		if SERVER then
+			if tonumber(v) and tonumber(v) > 0xFFFFFF then
+				local n = bit.band(math.floor(tonumber(v)), 0xFFFFFFFF)
+				local sign = bit.band(bit.rshift(n, 31), 0x1)
+				local exponent = bit.band(bit.rshift(n, 23), 0xFF)
+				local mantissa = bit.band(n, 0x7FFFFF)
+				local decoded = nil
+
+				if exponent ~= 0xFF then
+					if exponent == 0 then
+						if mantissa == 0 then
+							decoded = 0
+						else
+							decoded = (mantissa / 8388608) * (2 ^ -126)
+						end
+					else
+						decoded = (1 + mantissa / 8388608) * (2 ^ (exponent - 127))
+					end
+				end
+
+				if sign == 1 then
+					decoded = nil
+				end
+
+				if decoded and decoded > 0 and decoded <= 0xFFFFFF then
+					v = math.floor(decoded + 0.5)
+				else
+					v = bit.band(n, 0xFFFFFF)
+				end
+			end
+
 			if weapon.SetItemTint then
 				weapon:SetItemTint(v)
 			else

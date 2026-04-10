@@ -1,5 +1,7 @@
 ENT.Type = "point"
 
+local TF_FLAGTYPE_PLAYER_DESTRUCTION_ID = rawget(_G, "TF_FLAGTYPE_PLAYER_DESTRUCTION") or 6
+
 local TEAM_OUTPUTS = {
 	[TEAM_RED] = {
 		hitMax = "OnRedHitMaxPoints",
@@ -28,6 +30,12 @@ local TEAM_OUTPUTS = {
 local function ClampTeam(team)
 	if team == TEAM_RED then return TEAM_RED end
 	return TEAM_BLU
+end
+
+local function IsPlayerDestructionFlag(flag)
+	if not IsValid(flag) then return false end
+	local gameType = flag.GetNWInt and flag:GetNWInt("FlagGameType", flag.GameType or 0) or (flag.GameType or 0)
+	return tonumber(gameType) == TF_FLAGTYPE_PLAYER_DESTRUCTION_ID
 end
 
 local function UpdateGlobals(logic)
@@ -277,6 +285,7 @@ end)
 
 hook.Add("TF_MapFlagPickedUp", "TF_PDLogic_FlagPickedUpOutputs", function(flag, carrier)
 	if not IsValid(flag) or not IsValid(carrier) then return end
+	if not IsPlayerDestructionFlag(flag) then return end
 	local ownerTeam = ClampTeam(flag.TeamNum)
 	if carrier.Team and carrier:Team() == ownerTeam then return end
 
@@ -289,6 +298,7 @@ end)
 
 hook.Add("TF_MapFlagReturned", "TF_PDLogic_FlagReturnedOutputs", function(flag)
 	if not IsValid(flag) then return end
+	if not IsPlayerDestructionFlag(flag) then return end
 	local ownerTeam = ClampTeam(flag.TeamNum)
 	for _, logic in ipairs(ents.FindByClass("tf_logic_player_destruction")) do
 		if IsValid(logic) then
@@ -299,10 +309,21 @@ end)
 
 hook.Add("TF_MapFlagCaptured", "TF_PDLogic_FlagCapturedOutputs", function(flag, activator)
 	if not IsValid(flag) then return end
+	if not IsPlayerDestructionFlag(flag) then return end
 	local ownerTeam = ClampTeam(flag.TeamNum)
 	for _, logic in ipairs(ents.FindByClass("tf_logic_player_destruction")) do
 		if IsValid(logic) then
 			logic:OnFlagReturned(ownerTeam, activator or flag)
 		end
 	end
+end)
+
+hook.Add("PlayerChangedTeam", "TF_PDLogic_PlayerChangedTeam", function()
+	timer.Simple(0, function()
+		for _, logic in ipairs(ents.FindByClass("tf_logic_player_destruction")) do
+			if IsValid(logic) then
+				logic:EvaluatePlayerCount()
+			end
+		end
+	end)
 end)

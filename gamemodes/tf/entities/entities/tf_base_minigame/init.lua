@@ -30,6 +30,30 @@ local function FindSpawnTarget(name)
 	return ents.FindByName(name)[1] or NULL
 end
 
+local function EmitMiniGameScoreSounds(minigame, scoringTeam)
+	if not IsValid(minigame) then
+		return
+	end
+
+	local yourSound = string.Trim(tostring(minigame.YourTeamScoreSound or ""))
+	local enemySound = string.Trim(tostring(minigame.EnemyTeamScoreSound or ""))
+	if yourSound == "" or enemySound == "" then
+		return
+	end
+
+	for _, ply in ipairs(player.GetAll()) do
+		if not IsValid(ply) or ply:Team() == TEAM_SPECTATOR then
+			continue
+		end
+
+		if ply:Team() == scoringTeam then
+			ply:EmitSound(yourSound, 75, 100)
+		else
+			ply:EmitSound(enemySound, 75, 100)
+		end
+	end
+end
+
 local function ApplyGlobals(minigame)
 	SetGlobalString("tf_minigame_hud_res", tostring(minigame.HudResFile or ""))
 	SetGlobalInt("tf_minigame_red_score", minigame.RedScore or 0)
@@ -88,6 +112,7 @@ end
 
 function ENT:SetScore(team, score, activator)
 	team = ClampTeam(team)
+	local previous = self:GetScore(team)
 	local clamped = math.Clamp(math.floor(tonumber(score) or 0), 0, self.MaxScore)
 	if team == TEAM_RED then
 		self.RedScore = clamped
@@ -96,6 +121,10 @@ function ENT:SetScore(team, score, activator)
 	end
 
 	ApplyGlobals(self)
+
+	if clamped > previous then
+		EmitMiniGameScoreSounds(self, team)
+	end
 
 	if clamped >= self.MaxScore or self.SuddenDeathActive then
 		if team == TEAM_RED then
@@ -140,8 +169,13 @@ function ENT:TeleportAllPlayers()
 	ApplyGlobals(self)
 
 	timer.Remove("tf_minigame_suddendeath_" .. self:EntIndex())
-	if self.SuddenDeathTime and self.SuddenDeathTime >= 0 then
-		timer.Create("tf_minigame_suddendeath_" .. self:EntIndex(), self.SuddenDeathTime, 1, function()
+	local override = GetConVar("tf_minigame_suddendeath_time")
+	local suddenDeathTime = self.SuddenDeathTime
+	if override and override:GetFloat() ~= -1 then
+		suddenDeathTime = override:GetFloat()
+	end
+	if suddenDeathTime and suddenDeathTime >= 0 then
+		timer.Create("tf_minigame_suddendeath_" .. self:EntIndex(), suddenDeathTime, 1, function()
 			if not IsValid(self) or not self.IsActive then return end
 			self.SuddenDeathActive = true
 			self:TriggerOutput("OnSuddenDeathStart", self)

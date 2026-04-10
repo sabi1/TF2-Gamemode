@@ -9,6 +9,26 @@ local function IsMvMMap()
 	return string.find(string.lower(game.GetMap() or ""), "mvm_", 1, true) ~= nil
 end
 
+local function IsFlagCarrier(ent)
+	if not IsValid(ent) or not ent.IsPlayer or not ent:IsPlayer() then
+		return false
+	end
+
+	for _, flag in ipairs(ents.FindByClass("item_teamflag")) do
+		if IsValid(flag) and flag.Carrier == ent then
+			return true
+		end
+	end
+
+	for _, flag in ipairs(ents.FindByClass("item_teamflag_mvm")) do
+		if IsValid(flag) and flag.Carrier == ent then
+			return true
+		end
+	end
+
+	return false
+end
+
 local function GetActiveBombCarrier()
 	for _, flag in ipairs(ents.FindByClass("item_teamflag_mvm")) do
 		if IsValid(flag) and IsValid(flag.Carrier) then
@@ -71,6 +91,8 @@ function ENT:Initialize()
 	self.Team = 0
 	self.Players = {}
 	self.Opened = false
+	self.Disabled = false
+	self.TouchingFlagCarriers = {}
 
 	local mins, maxs = self:WorldSpaceAABB()
 	self.Pos = (mins + maxs) * 0.5
@@ -78,18 +100,59 @@ function ENT:Initialize()
 end
 
 function ENT:KeyValue(key,value)
+	if string.Left(key, 2) == "On" then
+		self:StoreOutput(key, value)
+		return
+	end
+
 	key = string.lower(key)
 	
 	if key=="teamnum" then
 		self.Team = tonumber(value)
 	elseif key=="associatedmodel" then
 		self.ResupplyLockerName = value
+	elseif key=="startdisabled" then
+		self.Disabled = tonumber(value) == 1
 	end
 end
 
+function ENT:FlagDropped(playerEnt)
+	if not IsValid(playerEnt) then return end
+	if not self.TouchingFlagCarriers[playerEnt] then return end
+
+	self:TriggerOutput("OnDroppedFlag", playerEnt, self)
+	self.TouchingFlagCarriers[playerEnt] = nil
+	self:TriggerOutput("OnEndTouchFlag", self, self)
+end
+
+function ENT:FlagPickedUp(playerEnt)
+	if not IsValid(playerEnt) then return end
+	if self.Players[playerEnt] == nil then return end
+	if self.TouchingFlagCarriers[playerEnt] then return end
+
+	self.TouchingFlagCarriers[playerEnt] = true
+	self:TriggerOutput("OnPickedUpFlag", playerEnt, self)
+	self:TriggerOutput("OnStartTouchFlag", playerEnt, self)
+end
+
+function ENT:FlagCaptured(playerEnt)
+	if not IsValid(playerEnt) then return end
+	if not self.TouchingFlagCarriers[playerEnt] then return end
+
+	self.TouchingFlagCarriers[playerEnt] = nil
+	self:TriggerOutput("OnEndTouchFlag", self, self)
+end
+
 function ENT:StartTouch(ent)
+	if self.Disabled then return end
+
 	if ent:IsPlayer() then
 		self.Players[ent] = -1
+		if IsFlagCarrier(ent) and not self.TouchingFlagCarriers[ent] then
+			self.TouchingFlagCarriers[ent] = true
+			self:TriggerOutput("OnStartTouchFlag", ent, self)
+		end
+
 		for k,v in pairs(ents.FindByClass("item_teamflag")) do
 			if v.Carrier == ent then
 				if TF_IsSpecialDeliveryMap and TF_IsSpecialDeliveryMap() then
@@ -111,8 +174,14 @@ function ENT:StartTouch(ent)
 end 
 
 function ENT:EndTouch(ent)
+	if self.Disabled then return end
+
 	if ent:IsPlayer() then
 		self.Players[ent] = nil
+		if self.TouchingFlagCarriers[ent] then
+			self.TouchingFlagCarriers[ent] = nil
+			self:TriggerOutput("OnEndTouchFlag", self, self)
+		end
 		for k,v in pairs(ents.FindByClass("item_teamflag")) do
 			if v.Carrier == ent then
 				if TF_IsSpecialDeliveryMap and TF_IsSpecialDeliveryMap() then
@@ -123,6 +192,34 @@ function ENT:EndTouch(ent)
 			end
 		end
 	end
+end
+
+function ENT:AcceptInput(name, activator, caller, data)
+	name = string.lower(tostring(name or ""))
+
+	if name == "enable" then
+		self.Disabled = false
+		return true
+	elseif name == "disable" then
+		self.Disabled = true
+		return true
+	elseif name == "test" then
+		local foundCarrier = false
+		for ent in pairs(self.Players) do
+			if IsValid(ent) and IsFlagCarrier(ent) then
+				foundCarrier = true
+				self:TriggerOutput("OnStartTouchFlag", ent, self)
+				break
+			end
+		end
+
+		if not foundCarrier then
+			self:TriggerOutput("OnEndTouchFlag", self, self)
+		end
+		return true
+	end
+
+	return false
 end
 
 hook.Add("TF_MVM_MissionStarted", "TF_MVM_ResetGateDetectionZones", function()
@@ -158,4 +255,31 @@ end)
 hook.Add("PostCleanupMap", "TF_MVM_StopBombWarningLoop_Cleanup", function()
 	timer.Remove(WARN_TIMER)
 	TF_MVM_BombWarnNextAnnounceAt = 0
+end)
+
+hook.Add("TF_MapFlagDropped", "TF_FlagDetectionZone_FlagDropped", function(flag, playerEnt)
+	if not IsValid(playerEnt) then return end
+	for _, zone in ipairs(ents.FindByClass("func_flagdetectionzone")) do
+		if IsValid(zone) then
+			zone:FlagDropped(playerEnt)
+		end
+	end
+end)
+
+hook.Add("TF_MapFlagPickedUp", "TF_FlagDetectionZone_FlagPickedUp", function(flag, playerEnt)
+	if not IsValid(playerEnt) then return end
+	for _, zone in ipairs(ents.FindByClass("func_flagdetectionzone")) do
+		if IsValid(zone) then
+			zone:FlagPickedUp(playerEnt)
+		end
+	end
+end)
+
+hook.Add("TF_MapFlagCaptured", "TF_FlagDetectionZone_FlagCaptured", function(flag, playerEnt)
+	if not IsValid(playerEnt) then return end
+	for _, zone in ipairs(ents.FindByClass("func_flagdetectionzone")) do
+		if IsValid(zone) then
+			zone:FlagCaptured(playerEnt)
+		end
+	end
 end)

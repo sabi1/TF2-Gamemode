@@ -78,6 +78,36 @@ local function WritePayloadSnapshot(snapshot)
 	net.WriteBool(snapshot.goal and true or false)
 end
 
+local function SortPayloadSnapshots(a, b)
+	local aAttack = tonumber(a.attackTeam) or TEAM_BLU
+	local bAttack = tonumber(b.attackTeam) or TEAM_BLU
+	if aAttack ~= bAttack then
+		if aAttack == TEAM_BLU then return true end
+		if bAttack == TEAM_BLU then return false end
+		return aAttack < bAttack
+	end
+
+	local aActive = a.active and 1 or 0
+	local bActive = b.active and 1 or 0
+	if aActive ~= bActive then
+		return aActive > bActive
+	end
+
+	local aGoal = a.goal and 1 or 0
+	local bGoal = b.goal and 1 or 0
+	if aGoal ~= bGoal then
+		return aGoal < bGoal
+	end
+
+	local aProgress = tonumber(a.progress) or 0
+	local bProgress = tonumber(b.progress) or 0
+	if aProgress ~= bProgress then
+		return aProgress > bProgress
+	end
+
+	return (tonumber(a.watcher) or 0) < (tonumber(b.watcher) or 0)
+end
+
 local function GetGameModeTable()
 	if GAMEMODE then return GAMEMODE end
 	if GM then return GM end
@@ -172,12 +202,33 @@ local function GM_BuildPayloadSnapshot(self, watcher)
 	return defaultState
 end
 
+local function GM_BuildPayloadSnapshots(self)
+	local snapshots = {}
+
+	if not self.PayloadWatchers then
+		return snapshots
+	end
+
+	for watcher in pairs(self.PayloadWatchers) do
+		if not IsValid(watcher) then
+			self.PayloadWatchers[watcher] = nil
+		else
+			table.insert(snapshots, self:BuildPayloadSnapshot(watcher))
+		end
+	end
+
+	table.sort(snapshots, SortPayloadSnapshots)
+	return snapshots
+end
+
 local function GM_SyncPayloadState(self, forceFull, target)
-	local watcher = self:GetActivePayloadWatcher()
-	local snapshot = self:BuildPayloadSnapshot(watcher)
+	local snapshots = self:BuildPayloadSnapshots()
 
 	net.Start(forceFull and "TF_PayloadSyncFull" or "TF_PayloadSyncDelta")
-	WritePayloadSnapshot(snapshot)
+	net.WriteUInt(math.min(#snapshots, 15), 4)
+	for i = 1, math.min(#snapshots, 15) do
+		WritePayloadSnapshot(snapshots[i])
+	end
 
 	if target then
 		net.Send(target)
@@ -195,6 +246,7 @@ local function InstallPayloadGMMethods()
 	gm.RecomputeActivePayloadWatcher = GM_RecomputeActivePayloadWatcher
 	gm.GetActivePayloadWatcher = GM_GetActivePayloadWatcher
 	gm.BuildPayloadSnapshot = GM_BuildPayloadSnapshot
+	gm.BuildPayloadSnapshots = GM_BuildPayloadSnapshots
 	gm.SyncPayloadState = GM_SyncPayloadState
 end
 
@@ -693,10 +745,6 @@ end
 
 function ENT:MaybeSyncPayloadState()
 	if not GAMEMODE or not GAMEMODE.SyncPayloadState then return end
-
-	if GAMEMODE.GetActivePayloadWatcher and GAMEMODE:GetActivePayloadWatcher() ~= self then
-		return
-	end
 
 	local now = CurTime()
 	if self.StateDirty then

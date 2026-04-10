@@ -1,6 +1,7 @@
 ENT.Type = "point"
 
 util.AddNetworkString("TFPasstimeAskForBall")
+util.AddNetworkString("TF_PasstimeNotify")
 
 local PASSTIME_SCORE_LIMIT = CreateConVar(
 	"tf_passtime_scores_per_round",
@@ -32,14 +33,47 @@ local function resolvePasstimeText(token, fallback)
 	return fallback or token
 end
 
+local function getPasstimeNotificationResPath(token)
+	local map = {
+		["#TF_Passtime_No_Tele"] = "resource/ui/notifications/notify_passtime_no_tele.res",
+		["#TF_Passtime_No_Carry"] = "resource/ui/notifications/notify_passtime_no_carry.res",
+		["#TF_Passtime_No_Invuln"] = "resource/ui/notifications/notify_passtime_no_invuln.res",
+		["#TF_Passtime_No_Disguise"] = "resource/ui/notifications/notify_passtime_no_disguise.res",
+		["#TF_Passtime_No_Cloak"] = "resource/ui/notifications/notify_passtime_no_cloak.res",
+		["#TF_Passtime_No_Oob"] = "resource/ui/notifications/notify_passtime_no_oob.res",
+		["#TF_Passtime_No_Holster"] = "resource/ui/notifications/notify_passtime_no_holster.res",
+		["#TF_Passtime_No_Taunt"] = "resource/ui/notifications/notify_passtime_no_taunt.res",
+	}
+
+	return map[token]
+end
+
 local function notifyPasstimeCarryDenied(ply, token)
 	if not IsValid(ply) or not ply:IsPlayer() then return end
 
+	local now = CurTime()
+	ply._tfPasstimeDeniedNotifyAt = ply._tfPasstimeDeniedNotifyAt or {}
+	local nextAllowedAt = tonumber(ply._tfPasstimeDeniedNotifyAt[token]) or 0
+	if nextAllowedAt > now then
+		return
+	end
+	ply._tfPasstimeDeniedNotifyAt[token] = now + 1.0
+
 	local message = resolvePasstimeText(token, nil)
-	if isstring(message) and message ~= "" then
+	local resPath = getPasstimeNotificationResPath(token)
+	if SERVER and isstring(resPath) and resPath ~= "" then
+		net.Start("TF_PasstimeNotify")
+		net.WriteString(token or "")
+		net.WriteString(resPath)
+		net.Send(ply)
+	elseif isstring(message) and message ~= "" then
 		ply:PrintMessage(HUD_PRINTCENTER, message)
 	end
 	ply:EmitSound("Player.DenyWeaponSelection")
+end
+
+function TF_PasstimeNotifyDenied(ply, token)
+	notifyPasstimeCarryDenied(ply, token)
 end
 
 local function playAskForBallCue(requester, carrier)
@@ -395,13 +429,16 @@ function TF_PasstimeBallPickedUp(ply, weapon)
 	local logic = getActiveLogic()
 	if not IsValid(logic) or not IsValid(ply) then return end
 	if TF_PasstimeEntityInNoBallZone and (TF_PasstimeEntityInNoBallZone(ply) or TF_PasstimeEntityInNoBallZone(weapon)) then
+		notifyPasstimeCarryDenied(ply, "#TF_Passtime_No_Oob")
 		if IsValid(weapon) then
 			weapon:Remove()
 		end
 		logic:ScheduleRespawnBall()
 		return
 	end
-	if not logic:CanPlayerCarryBall(ply) then
+	local canCarry, denyReason = logic:CanPlayerCarryBall(ply, true)
+	if not canCarry then
+		notifyPasstimeCarryDenied(ply, denyReason)
 		if IsValid(weapon) then
 			weapon:Remove()
 		end
@@ -450,8 +487,13 @@ function TF_PasstimeProjectileTouchedPlayer(projectile, ply)
 	if not IsValid(logic) or not IsValid(projectile) or not IsValid(ply) then return false end
 	if projectile:GetClass() ~= "tf_projectile_passtime_ball" then return false end
 	if not ply:IsPlayer() then return false end
-	if not logic:CanPlayerCarryBall(ply) then return false end
+	local canCarry, denyReason = logic:CanPlayerCarryBall(ply, true)
+	if not canCarry then
+		notifyPasstimeCarryDenied(ply, denyReason)
+		return false
+	end
 	if TF_PasstimeEntityInNoBallZone and (TF_PasstimeEntityInNoBallZone(projectile) or TF_PasstimeEntityInNoBallZone(ply)) then
+		notifyPasstimeCarryDenied(ply, "#TF_Passtime_No_Oob")
 		return false
 	end
 	if ply:HasWeapon("tf_weapon_passtime_gun") then return false end

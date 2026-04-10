@@ -362,6 +362,19 @@ concommand.Add("taunt", function(pl)
 	pl:TFTaunt(slot)
 end)
 
+concommand.Add("weapon_taunt", function(pl)
+	if not IsValid(pl) then return end
+	if not pl.TFTaunt then return end
+
+	local slot = "1"
+	local w = pl:GetActiveWeapon()
+	if IsValid(w) and w.GetSlot then
+		slot = tostring((w:GetSlot() or 0) + 1)
+	end
+
+	pl:TFTaunt(slot)
+end)
+
 concommand.Add("select_slot", function(pl, cmd, args)
 	local n = tonumber(args[1] or "")
 	local w = pl:GetActiveWeapon()
@@ -382,27 +395,19 @@ end)
 
  
 hook.Add("PlayerSelectSpawn", "PlayerSelectTeamSpawn", function(pl)
-	if !string.find(game.GetMap(), "mvm_") then
-		for k,v in pairs(ents.FindByClass("info_player_redspawn"), ents.FindByClass("info_player_bluspawn")) do
-			if v:IsValid() then
-				local spawns1 = ents.FindByClass( "info_player_redspawn" )
-				local random_entry = math.random( #spawns1 ) 
-				local spawns2 = ents.FindByClass( "info_player_bluspawn" )
-				local random_entry2 = math.random( #spawns2 )
-				if pl:Team() == TEAM_RED or pl:Team() == TEAM_NEUTRAL then
-					return spawns1[ random_entry ]
-				elseif pl:Team() == TEAM_BLU or pl:Team() == TF_TEAM_PVE_INVADERS then
-					return spawns2[ random_entry2 ]
-				end
-			end
-		end
-	else
-		local redSpawns = ents.FindByClass("info_player_redspawn")
-		local bluSpawns = ents.FindByClass("info_player_bluspawn")
-		if pl:Team() == TEAM_RED and #redSpawns > 0 then
+	local hasTFTeamSpawns = ents.FindByClass("info_player_teamspawn")[1] ~= nil
+	if hasTFTeamSpawns then return end
+
+	local redSpawns = ents.FindByClass("info_player_redspawn")
+	local bluSpawns = ents.FindByClass("info_player_bluspawn")
+	if #redSpawns == 0 and #bluSpawns == 0 then return end
+
+	if pl:Team() == TEAM_RED or pl:Team() == TEAM_NEUTRAL then
+		if #redSpawns > 0 then
 			return redSpawns[math.random(#redSpawns)]
 		end
-		if (pl:Team() == TEAM_BLU or pl:Team() == TF_TEAM_PVE_INVADERS) and #bluSpawns > 0 then
+	elseif pl:Team() == TEAM_BLU or pl:Team() == TF_TEAM_PVE_INVADERS then
+		if #bluSpawns > 0 then
 			return bluSpawns[math.random(#bluSpawns)]
 		end
 	end
@@ -1982,7 +1987,18 @@ function RandomWeapon(ply, wepslot)
 end
 
 -- by hl2 campaign https:--github.com/daunknownfox2010/half-life-2-campaign/blob/master/gamemode/init.lua but edited
+local ParticleSystemKeyvalueRemap = {
+	env_leak_drip_1024 = "env_rain_gutterdrip",
+	env_leak_dripsplash_ripples = "env_rain_ripples",
+}
+
 function GM:EntityKeyValue( ent, key, value )
+	if ent:GetClass() == "info_particle_system" and string.lower(tostring(key or "")) == "effect_name" then
+		local replacement = ParticleSystemKeyvalueRemap[string.lower(tostring(value or ""))]
+		if replacement then
+			return replacement
+		end
+	end
 
 	if ( ( ent:GetClass() == "trigger_changelevel" ) && ( key == "map" ) ) then
 	
@@ -2098,7 +2114,7 @@ hook.Add( "PlayerButtonDown", "PlayerButtonDownTF", function( pl, key )
 			pl:ConCommand("tf_spectate_respawn")
 		end
 	end
-	if key == KEY_H and GetConVar("tf_grapplinghook_enable"):GetBool() then
+	if key == KEY_H and TF_IsGrapplingHookEnabled and TF_IsGrapplingHookEnabled() then
 		pl:SelectWeapon("tf_weapon_grapplinghook")
 		timer.Simple(0.1, function()
 			if (pl:GetActiveWeapon():GetClass() == "tf_weapon_grapplinghook") then
@@ -2161,7 +2177,7 @@ hook.Add("PlayerInitialSpawn", "TF_MVM_ReadyBindF4", function(pl)
 end)
 
 hook.Add( "PlayerButtonUp", "PlayerButtonUpTF", function( pl, key )
-	if key == KEY_H and GetConVar("tf_grapplinghook_enable"):GetBool() then
+	if key == KEY_H and TF_IsGrapplingHookEnabled and TF_IsGrapplingHookEnabled() then
 		if (pl:GetActiveWeapon():GetClass() == "tf_weapon_grapplinghook") then
 			pl:GetActiveWeapon():EndAttack(true)
 		end
@@ -2605,7 +2621,7 @@ function GM:PlayerSpawn(ply)
 			end
 		end
 	end
-	if (GetConVar("tf_grapplinghook_enable"):GetBool()) then
+	if (TF_IsGrapplingHookEnabled and TF_IsGrapplingHookEnabled()) then
 		ply:GiveItem("Grappling Hook")
 	end
 	ply:Speak("TLK_PLAYER_EXPRESSION", true)  
@@ -2842,18 +2858,26 @@ function GM:PlayerSelectSpawn(pl)
 		end
 	end
 
-	if self.MasterSpawn then
-		return self.MasterSpawn
-	end
-
 	local spawnsred = {}
 	local spawnsblu = {}
+	local preferredRed = {}
+	local preferredBlu = {}
 
 	for k, v in pairs(ents.FindByClass("info_player_teamspawn")) do
-		if v.IsAvailableForTeam and v:IsAvailableForTeam(TEAM_BLU, false) then
+		if not IsValid(v) then continue end
+		if not v.IsAvailableForTeam then continue end
+
+		if v:IsAvailableForTeam(TEAM_BLU, false) then
 			table.insert(spawnsblu, v)
-		elseif v.IsAvailableForTeam and v:IsAvailableForTeam(TEAM_RED, false) then
+			if PointInRespawnRoom and PointInRespawnRoom(pl, v:GetPos(), true) then
+				table.insert(preferredBlu, v)
+			end
+		end
+		if v:IsAvailableForTeam(TEAM_RED, false) then
 			table.insert(spawnsred, v)
+			if PointInRespawnRoom and PointInRespawnRoom(pl, v:GetPos(), true) then
+				table.insert(preferredRed, v)
+			end
 		end
 	end
 
@@ -2878,12 +2902,22 @@ function GM:PlayerSelectSpawn(pl)
 	end
 
 
-	if pl:Team() == TEAM_RED and IsValid(spawnsred[1]) then
+	if pl:Team() == TEAM_RED and IsValid(preferredRed[1]) then
+		return table.Random(preferredRed)
+	elseif pl:Team() == TEAM_RED and IsValid(spawnsred[1]) then
 		return table.Random(spawnsred)
+	elseif pl:Team() == TEAM_BLU and IsValid(preferredBlu[1]) then
+		return table.Random(preferredBlu)
 	elseif pl:Team() == TEAM_BLU and IsValid(spawnsblu[1]) then
 		return table.Random(spawnsblu)
+	elseif pl:Team() == TF_TEAM_PVE_INVADERS and IsValid(preferredBlu[1]) then
+		return table.Random(preferredBlu)
 	elseif pl:Team() == TF_TEAM_PVE_INVADERS and IsValid(spawnsblu[1]) then
 		return table.Random(spawnsblu)
+	end
+
+	if self.MasterSpawn then
+		return self.MasterSpawn
 	end
 	
 	return self.BaseClass:PlayerSelectSpawn(pl)
@@ -2896,6 +2930,76 @@ hook.Add( "PlayerGiveSWEP", "BlockPlayerSWEPs", function( ply, class, swep )
 		return false
 	end
 end )   
+
+if SERVER then
+	concommand.Add("tf_dump_spawnstate", function(ply)
+		if IsValid(ply) and not ply:IsAdmin() then return end
+
+		print("[SpawnDebug] info_player_teamspawn:")
+		for _, spawn in ipairs(ents.FindByClass("info_player_teamspawn")) do
+			local kv = spawn.GetKeyValues and spawn:GetKeyValues() or {}
+			local teamNum = spawn.GetSpawnTeamNum and spawn:GetSpawnTeamNum() or tonumber(spawn.TeamNum or kv.TeamNum or kv.teamnum or -1) or -1
+			local redAvail = spawn.IsAvailableForTeam and spawn:IsAvailableForTeam(TEAM_RED, false)
+			local bluAvail = spawn.IsAvailableForTeam and spawn:IsAvailableForTeam(TEAM_BLU, false)
+			local triggered = spawn.IsTriggeredSpawn and spawn:IsTriggeredSpawn() or false
+			local roundRed = spawn.IsRoundEnabledForTeam and spawn:IsRoundEnabledForTeam(TEAM_RED)
+			local roundBlu = spawn.IsRoundEnabledForTeam and spawn:IsRoundEnabledForTeam(TEAM_BLU)
+			local cpRed = spawn.IsControlPointEnabledForTeam and spawn:IsControlPointEnabledForTeam(TEAM_RED)
+			local cpBlu = spawn.IsControlPointEnabledForTeam and spawn:IsControlPointEnabledForTeam(TEAM_BLU)
+			print(string.format(
+				"  spawn #%d name=%s pos=%s team=%s disabled=%s spawnmode=%s triggered=%s redAvail=%s bluAvail=%s roundRed=%s roundBlu=%s cpRed=%s cpBlu=%s controlpoint=%s roundRedName=%s roundBluName=%s rawTeamNum=%s rawteamnum=%s",
+				spawn:EntIndex(),
+				tostring(spawn:GetName() or ""),
+				tostring(spawn:GetPos()),
+				tostring(teamNum),
+				tostring(spawn.IsDisabled and spawn:IsDisabled() or false),
+				tostring(spawn.SpawnMode),
+				tostring(triggered),
+				tostring(redAvail),
+				tostring(bluAvail),
+				tostring(roundRed),
+				tostring(roundBlu),
+				tostring(cpRed),
+				tostring(cpBlu),
+				tostring(kv.controlpoint or kv.ControlPoint),
+				tostring(kv.round_redspawn or kv.RoundRedSpawn),
+				tostring(kv.round_bluespawn or kv.RoundBlueSpawn),
+				tostring(kv.TeamNum),
+				tostring(kv.teamnum)
+			))
+		end
+
+		print("[SpawnDebug] func_respawnroom:")
+		for _, room in ipairs(ents.FindByClass("func_respawnroom")) do
+			local kv = room.GetKeyValues and room:GetKeyValues() or {}
+			print(string.format(
+				"  room #%d name=%s team=%s active=%s rawTeamNum=%s rawteamnum=%s",
+				room:EntIndex(),
+				tostring(room:GetName() or ""),
+				tostring(room.TeamNum),
+				tostring(room.GetActive and room:GetActive() or room.Active),
+				tostring(kv.TeamNum),
+				tostring(kv.teamnum)
+			))
+		end
+
+		print("[SpawnDebug] func_respawnroomvisualizer:")
+		for _, viz in ipairs(ents.FindByClass("func_respawnroomvisualizer")) do
+			local kv = viz.GetKeyValues and viz:GetKeyValues() or {}
+			print(string.format(
+				"  viz #%d name=%s team=%s active=%s roomName=%s boundRoom=%s rawTeamNum=%s rawteamnum=%s",
+				viz:EntIndex(),
+				tostring(viz:GetName() or ""),
+				tostring(viz.TeamNum),
+				tostring(viz.Active),
+				tostring(viz.RespawnRoomName or kv.respawnroomname or ""),
+				IsValid(viz.RespawnRoom) and tostring(viz.RespawnRoom:GetName() or "") or "nil",
+				tostring(kv.TeamNum),
+				tostring(kv.teamnum)
+			))
+		end
+	end)
+end
 
 local function EnsureEngineerCommandBindings()
 	local old_group_translate = {

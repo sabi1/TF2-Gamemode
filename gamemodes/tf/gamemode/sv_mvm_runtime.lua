@@ -23,6 +23,8 @@ RUNTIME.ReadyPlayers = {}
 RUNTIME.SetupInitialDuration = 0
 RUNTIME.SetupWaitingTimerDuration = nil
 RUNTIME.SetupReadyCountdownTotal = nil
+RUNTIME.BotSpawningPaused = false
+RUNTIME.DefaultEventChangeAttributesName = ""
 
 local READY_COUNTDOWN_START = 150
 local READY_COUNTDOWN_PARTIAL_MIN = 30
@@ -546,6 +548,26 @@ end
 
 function RUNTIME:IsManagedActive()
     return self.Active == true
+end
+
+function RUNTIME:IsBotSpawningPaused()
+    return self.BotSpawningPaused == true
+end
+
+function RUNTIME:PauseSpawning()
+    self.BotSpawningPaused = true
+end
+
+function RUNTIME:UnpauseSpawning()
+    self.BotSpawningPaused = false
+end
+
+function RUNTIME:SetDefaultEventChangeAttributesName(name)
+    self.DefaultEventChangeAttributesName = string.Trim(string.lower(tostring(name or "")))
+end
+
+function RUNTIME:GetDefaultEventChangeAttributesName()
+    return self.DefaultEventChangeAttributesName or ""
 end
 
 function RUNTIME:IsSetupPhase()
@@ -1211,6 +1233,8 @@ function RUNTIME:Stop(reason)
     self.LastWaveStatusHash = ""
     self:ResetReadyPlayers()
     self:ResetSentryBusterState()
+    self.BotSpawningPaused = false
+    self.DefaultEventChangeAttributesName = ""
     for _, roundTimer in ipairs(GetRoundTimers()) do
         if IsValid(roundTimer) then
             roundTimer.TF_MVM_Managed = false
@@ -1254,9 +1278,10 @@ function RUNTIME:LoadMission(path, scope)
         return false
     end
 
-    self.Mission = parsed
-    self:SetError("")
-    self:PushState()
+      self.Mission = parsed
+      self.DefaultEventChangeAttributesName = ""
+      self:SetError("")
+      self:PushState()
     if istable(parsed.Warnings) and #parsed.Warnings > 0 then
         for _, warn in ipairs(parsed.Warnings) do
             print("[TF_MVM][POP] warning: " .. tostring(warn))
@@ -1661,6 +1686,10 @@ end
 
 
 function RUNTIME:UpdateSpawnState(st, now)
+    if self:IsBotSpawningPaused() then
+        return
+    end
+
     if st.CompletedSpawned and st.Alive <= 0 and not st.CompletedDead then
         st.CompletedDead = true
         if not st.DoneOutputFired and TF_MVM.Outputs then
@@ -1905,6 +1934,10 @@ function RUNTIME:ScheduleMissionBotSpawns(wave)
             if not self.Active or not self.WaveActive then
                 RemoveTimer(timerName)
                 self.TimerNames[timerName] = nil
+                return
+            end
+
+            if self:IsBotSpawningPaused() then
                 return
             end
 

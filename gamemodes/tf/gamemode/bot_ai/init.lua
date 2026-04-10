@@ -68,6 +68,14 @@ local function runClassHandlers(bot, st)
 	end
 end
 
+local function syncLegacyPlayerBotFields(bot, st)
+	if not base:IsPlayerAgent(bot) then return end
+	bot.botPos = st.objective and st.objective.targetPos or nil
+	bot._tfbotObjectiveEnt = st.objective and st.objective.targetEnt or nil
+	bot.TargetEnt = st.vision and st.vision.currentThreat or nil
+	bot._tfbotObjectiveMode = st.objective and st.objective.mode or "none"
+end
+
 local function aiThink()
 	if not cfg:IsEnabled() then
 		_G.TFBOT_VALVE_AI_ACTIVE = false
@@ -89,6 +97,7 @@ local function aiThink()
 		mvm:Tick(bot, st)
 		hints:Apply(bot, st)
 		runClassHandlers(bot, st)
+		syncLegacyPlayerBotFields(bot, st)
 		if base:IsNextBotAgent(bot) then
 			base:ApplyNextBotModules(bot, st, movement, combat)
 		end

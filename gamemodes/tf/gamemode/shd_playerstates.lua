@@ -2242,7 +2242,17 @@ function meta:SetCarryingRuneType(runeType)
 	end
 end
 
-function meta:DropRune()
+local function get_melee_weapon(self)
+	if not IsValid(self) or not self:IsPlayer() then return nil end
+	for _, wep in ipairs(self:GetWeapons()) do
+		if is_melee_weapon(wep) then
+			return wep
+		end
+	end
+	return nil
+end
+
+function meta:DropRune(bApplyForce, nTeam)
 	if not SERVER then return nil end
 
 	local runeType = self:GetCarryingRuneType()
@@ -2253,15 +2263,24 @@ function meta:DropRune()
 	local dropped = ents.Create("item_powerup_rune")
 	if not IsValid(dropped) then return nil end
 
+	local forward = self:GetAimVector()
+	forward.z = 0.7
+	if forward:LengthSqr() <= 0 then
+		forward = Vector(0, 0, 1)
+	else
+		forward:Normalize()
+	end
+
 	dropped:SetPos(self:GetPos() + Vector(0, 0, 48))
 	dropped:SetAngles(Angle(0, self:EyeAngles().y, 0))
+	dropped.ApplyForce = bApplyForce ~= false
+	dropped.ShouldReposition = true
+	dropped.SpawnDirection = forward
+	dropped.TeamNum = nTeam ~= nil and nTeam or (TEAM_ANY or TEAM_UNASSIGNED)
 	dropped:Spawn()
 	dropped:Activate()
 	if dropped.SetRuneType then
 		dropped:SetRuneType(runeType)
-	end
-	if dropped.DropWithGravity then
-		dropped:DropWithGravity(self:GetVelocity() + self:GetAimVector() * 150)
 	end
 	dropped:SetOwner(self)
 	dropped.NextActive = CurTime() + 0.4
@@ -2277,93 +2296,276 @@ local function sync_carrying_rune_network(self, preferredType)
 	self:SetNWInt("TFCarryingRuneType", runeType or TF_RUNE_NONE)
 end
 
+local function get_rune_speed_mult(self, runeType)
+	if runeType == TF_RUNE_HASTE then
+		return 1.3
+	end
+
+	if runeType == TF_RUNE_AGILITY then
+		local className = self.GetPlayerClass and self:GetPlayerClass() or ""
+		if className == "demoman" or className == "soldier" or className == "heavy" then
+			return 1.4
+		end
+		return 1.5
+	end
+
+	return nil
+end
+
+local function player_has_demo_sword(self)
+	local melee = get_melee_weapon(self)
+	if not IsValid(melee) then return false end
+	local className = melee:GetClass()
+	return className == "tf_weapon_sword" or className == "tf_weapon_katana"
+end
+
+local function player_has_demo_shield(self)
+	if self.IsShieldEquipped then
+		local ok, result = pcall(self.IsShieldEquipped, self)
+		if ok then
+			return result and true or false
+		end
+	end
+
+	for _, wep in ipairs(self.GetWeapons and self:GetWeapons() or {}) do
+		if IsValid(wep) and string.find(string.lower(wep:GetClass() or ""), "demoshield", 1, true) then
+			return true
+		end
+	end
+
+	return false
+end
+
+local function get_rune_health_bonus(self, runeType)
+	if not IsValid(self) or runeType == TF_RUNE_NONE then
+		return 0
+	end
+
+	local baseHealth = math.max((self.GetPlayerClassTable and tonumber((self:GetPlayerClassTable() or {}).Health)) or tonumber(self:GetMaxHealth()) or 100, 1)
+	local dominant = self.InCond and self:InCond(TF_COND_POWERUPMODE_DOMINANT) or false
+	local className = self.GetPlayerClass and self:GetPlayerClass() or ""
+
+	if runeType == TF_RUNE_KNOCKOUT then
+		if className == "demoman" then
+			if player_has_demo_sword(self) then
+				return 20
+			end
+			if player_has_demo_shield(self) then
+				return 30
+			end
+			return 150
+		elseif className == "heavy" or className == "pyro" then
+			return 125
+		elseif className == "soldier" or className == "medic" then
+			return 150
+		end
+		return 175
+	end
+
+	if runeType == TF_RUNE_REFLECT then
+		local target = dominant and 320 or 400
+		return math.max(0, target - baseHealth)
+	end
+
+	if runeType == TF_RUNE_KING then
+		return dominant and 20 or 100
+	end
+
+	if runeType == TF_RUNE_VAMPIRE then
+		return 80
+	end
+
+	return 0
+end
+
+local function refresh_rune_health_bonus(self)
+	if not SERVER or not IsValid(self) or not self:IsPlayer() or not self.SetMaxHealth then return end
+
+	local currentRune = self.GetCarryingRuneType and self:GetCarryingRuneType() or TF_RUNE_NONE
+	local oldBonus = tonumber(self._tfRuneHealthBonusApplied) or 0
+	local currentMax = tonumber(self:GetMaxHealth()) or 100
+	local baseMax = math.max(1, currentMax - oldBonus)
+	local newBonus = get_rune_health_bonus(self, currentRune)
+	local newMax = math.max(1, baseMax + newBonus)
+
+	self._tfRuneHealthBonusApplied = newBonus
+	self:SetMaxHealth(newMax)
+	if self.SetNWInt then
+		self:SetNWInt("MaxHealth", newMax)
+	end
+
+	local hp = tonumber(self:Health()) or newMax
+	local hardCap = newMax
+	if self.GetMaxOverheal then
+		hardCap = math.max(hardCap, tonumber(self:GetMaxOverheal()) or hardCap)
+	end
+	if hp > hardCap then
+		self:SetHealth(hardCap)
+	end
+end
+
+local function refresh_rune_jump_bonus(self)
+	if not IsValid(self) or not self.SetJumpPower then return end
+
+	local oldMult = tonumber(self._tfRuneJumpMultApplied) or 1
+	local currentJump = tonumber(self.GetJumpPower and self:GetJumpPower()) or tonumber(self.PlayerJumpPower) or 289
+	local baseJump = currentJump / math.max(oldMult, 0.001)
+	local runeType = self.GetCarryingRuneType and self:GetCarryingRuneType() or TF_RUNE_NONE
+	local newMult = runeType == TF_RUNE_AGILITY and 1.8 or 1
+
+	self._tfRuneJumpMultApplied = newMult
+	self:SetJumpPower(baseJump * newMult)
+end
+
+local function refresh_rune_player_effects(self)
+	if not IsValid(self) then return end
+
+	local runeType = self.GetCarryingRuneType and self:GetCarryingRuneType() or TF_RUNE_NONE
+	local speedMult = get_rune_speed_mult(self, runeType)
+	if speedMult then
+		set_speed_mult(self, "rune_exact", speedMult)
+	else
+		clear_speed_mult(self, "rune_exact")
+	end
+
+	refresh_rune_jump_bonus(self)
+	refresh_rune_health_bonus(self)
+
+	if self.TeamFortress_SetSpeed then
+		self:TeamFortress_SetSpeed()
+	elseif SERVER and self.ResetClassSpeed then
+		self:ResetClassSpeed()
+		refresh_rune_jump_bonus(self)
+	end
+end
+
 function meta:OnAddRuneResist()
 	self:OnAddDefenseBuff()
+	self:SetNWBool("RuneResist", true)
+	refresh_rune_player_effects(self)
 	sync_carrying_rune_network(self, TF_RUNE_RESIST)
 end
 
 function meta:OnRemoveRuneResist()
 	self:OnRemoveDefenseBuff()
+	self:SetNWBool("RuneResist", false)
+	refresh_rune_player_effects(self)
 	sync_carrying_rune_network(self)
 end
 
 function meta:OnAddRuneStrength()
-	self:OnAddCritBoost()
+	self:SetNWBool("RuneStrength", true)
+	refresh_rune_player_effects(self)
 	sync_carrying_rune_network(self, TF_RUNE_STRENGTH)
 end
 
 function meta:OnRemoveRuneStrength()
-	self:OnRemoveCritBoost()
+	self:SetNWBool("RuneStrength", false)
+	refresh_rune_player_effects(self)
 	sync_carrying_rune_network(self)
 end
 
 function meta:OnAddRuneHaste()
-	set_speed_mult(self, "rune_haste", 1.25)
+	refresh_rune_player_effects(self)
 	sync_carrying_rune_network(self, TF_RUNE_HASTE)
 end
 
 function meta:OnRemoveRuneHaste()
-	clear_speed_mult(self, "rune_haste")
+	refresh_rune_player_effects(self)
 	sync_carrying_rune_network(self)
 end
 
 function meta:OnAddRuneRegen()
 	update_regen_timer(self)
+	refresh_rune_player_effects(self)
 	sync_carrying_rune_network(self, TF_RUNE_REGEN)
 end
 
 function meta:OnRemoveRuneRegen()
 	update_regen_timer(self)
+	refresh_rune_player_effects(self)
 	sync_carrying_rune_network(self)
 end
 
 function meta:OnAddRuneVampire()
 	self:SetNWBool("RuneVampire", true)
+	refresh_rune_player_effects(self)
 	sync_carrying_rune_network(self, TF_RUNE_VAMPIRE)
 end
 
 function meta:OnRemoveRuneVampire()
 	self:SetNWBool("RuneVampire", false)
+	refresh_rune_player_effects(self)
 	sync_carrying_rune_network(self)
 end
 
 function meta:OnAddRuneReflect()
 	self:SetNWBool("RuneReflect", true)
+	refresh_rune_player_effects(self)
 	sync_carrying_rune_network(self, TF_RUNE_REFLECT)
 end
 
 function meta:OnRemoveRuneReflect()
 	self:SetNWBool("RuneReflect", false)
+	refresh_rune_player_effects(self)
 	sync_carrying_rune_network(self)
 end
 
 function meta:OnAddRunePrecision()
-	self:OnAddCritBoost()
+	self:SetNWBool("RunePrecision", true)
+	refresh_rune_player_effects(self)
 	sync_carrying_rune_network(self, TF_RUNE_PRECISION)
 end
 
 function meta:OnRemoveRunePrecision()
-	self:OnRemoveCritBoost()
+	self:SetNWBool("RunePrecision", false)
+	refresh_rune_player_effects(self)
 	sync_carrying_rune_network(self)
 end
 
 function meta:OnAddRuneAgility()
-	set_speed_mult(self, "rune_agility", 1.15)
+	self:SetNWBool("RuneAgility", true)
+	refresh_rune_player_effects(self)
 	sync_carrying_rune_network(self, TF_RUNE_AGILITY)
 end
 
 function meta:OnRemoveRuneAgility()
-	clear_speed_mult(self, "rune_agility")
+	self:SetNWBool("RuneAgility", false)
+	refresh_rune_player_effects(self)
 	sync_carrying_rune_network(self)
 end
 
 function meta:OnAddRuneKnockout()
-	self:OnAddOffenseBuff()
+	self:SetNWBool("RuneKnockout", true)
+	if self.AddCond and not self:InCond(TF_COND_CANNOT_SWITCH_FROM_MELEE) then
+		self:AddCond(TF_COND_CANNOT_SWITCH_FROM_MELEE, PERMANENT_CONDITION or -1, self)
+	end
+	if SERVER and self:IsPlayer() then
+		local pl = self
+		timer.Simple(0, function()
+			if not IsValid(pl) or not pl:Alive() or not pl.InCond or not pl:InCond(TF_COND_RUNE_KNOCKOUT) then return end
+
+			local melee = get_melee_weapon(pl)
+			if not IsValid(melee) then return end
+
+			local active = pl:GetActiveWeapon()
+			if IsValid(active) and active:GetClass() == "tf_weapon_grapplinghook" then
+				pl.LastWeapon = melee:GetClass()
+			end
+
+			pl:SelectWeapon(melee:GetClass())
+		end)
+	end
+	refresh_rune_player_effects(self)
 	sync_carrying_rune_network(self, TF_RUNE_KNOCKOUT)
 end
 
 function meta:OnRemoveRuneKnockout()
-	self:OnRemoveOffenseBuff()
+	self:SetNWBool("RuneKnockout", false)
+	if self.RemoveCond and self.InCond and self:InCond(TF_COND_CANNOT_SWITCH_FROM_MELEE) then
+		self:RemoveCond(TF_COND_CANNOT_SWITCH_FROM_MELEE, true)
+	end
+	refresh_rune_player_effects(self)
 	sync_carrying_rune_network(self)
 end
 
@@ -2376,42 +2578,43 @@ function meta:OnRemoveRuneImbalance()
 end
 
 function meta:OnAddRuneKing()
-	self:OnAddOffenseBuff()
-	self:OnAddDefenseBuff()
-	set_speed_mult(self, "rune_king", 1.1)
+	self:SetNWBool("RuneKing", true)
 	update_regen_timer(self)
+	refresh_rune_player_effects(self)
 	sync_carrying_rune_network(self, TF_RUNE_KING)
 end
 
 function meta:OnRemoveRuneKing()
-	self:OnRemoveOffenseBuff()
-	self:OnRemoveDefenseBuff()
-	clear_speed_mult(self, "rune_king")
+	self:SetNWBool("RuneKing", false)
 	update_regen_timer(self)
+	if self.SetNWBool then
+		self:SetNWBool("TFKingRuneBuffActive", false)
+	end
+	refresh_rune_player_effects(self)
 	sync_carrying_rune_network(self)
 end
 
 function meta:OnAddKingBuff()
-	self:OnAddOffenseBuff()
+	self:SetNWBool("KingBuffed", true)
 	update_regen_timer(self)
 end
 
 function meta:OnRemoveKingBuff()
-	self:OnRemoveOffenseBuff()
+	self:SetNWBool("KingBuffed", false)
 	update_regen_timer(self)
 end
 
 function meta:OnAddRuneSupernova()
-	self:OnAddCritBoost()
-	self:OnAddInvulnerable()
+	self:SetNWBool("RuneSupernova", true)
 	self:SetRuneCharge(0)
+	refresh_rune_player_effects(self)
 	sync_carrying_rune_network(self, TF_RUNE_SUPERNOVA)
 end
 
 function meta:OnRemoveRuneSupernova()
-	self:OnRemoveCritBoost()
-	self:OnRemoveInvulnerable()
+	self:SetNWBool("RuneSupernova", false)
 	self:SetRuneCharge(0)
+	refresh_rune_player_effects(self)
 	sync_carrying_rune_network(self)
 end
 
@@ -2424,20 +2627,37 @@ function meta:OnRemovePasstimeInterception()
 end
 
 function meta:OnAddPlague()
-	self:OnAddCondGas()
+	self:AddPlayerState(PLAYERSTATE_BLEEDING, true)
+	self:SetNWBool("Plagued", true)
+	if SERVER then
+		self:EmitSound("Powerup.PickUpPlagueInfected", 75, 100)
+		self:EmitSound("Powerup.PickUpPlagueInfectedLoop", 75, 100)
+		local provider = self.GetConditionProvider and self:GetConditionProvider(TF_COND_PLAGUE) or NULL
+		if IsValid(provider) and provider:IsPlayer() and provider ~= self then
+			provider:EmitSound("Powerup.PickUpPlagueInfected", 75, 100)
+		end
+		local text = tf_lang and tf_lang.GetRaw and tf_lang.GetRaw("#TF_Powerup_Contract_Plague", true) or "You have contracted the Plague, find a health kit fast!"
+		self:PrintMessage(HUD_PRINTCENTER, text)
+	end
 end
 
 function meta:OnRemovePlague()
-	self:OnRemoveCondGas()
+	self:RemovePlayerState(PLAYERSTATE_BLEEDING, true)
+	self:SetNWBool("Plagued", false)
+	if SERVER then
+		self:StopSound("Powerup.PickUpPlagueInfectedLoop")
+	end
 end
 
 function meta:OnAddRunePlague()
-	self:OnAddCondGas()
+	self:SetNWBool("RunePlague", true)
+	refresh_rune_player_effects(self)
 	sync_carrying_rune_network(self, TF_RUNE_PLAGUE)
 end
 
 function meta:OnRemoveRunePlague()
-	self:OnRemoveCondGas()
+	self:SetNWBool("RunePlague", false)
+	refresh_rune_player_effects(self)
 	sync_carrying_rune_network(self)
 end
 
@@ -2640,8 +2860,20 @@ function meta:OnAddLostFooting() set_cond_flag(self, "LostFooting", true) end
 function meta:OnRemoveLostFooting() set_cond_flag(self, "LostFooting", false) end
 function meta:OnAddAirCurrent() set_cond_flag(self, "AirCurrent", true) end
 function meta:OnRemoveAirCurrent() set_cond_flag(self, "AirCurrent", false) end
-function meta:OnAddPowerupModeDominant() set_cond_flag(self, "PowerupDominant", true) end
-function meta:OnRemovePowerupModeDominant() set_cond_flag(self, "PowerupDominant", false) end
+function meta:OnAddPowerupModeDominant()
+	set_cond_flag(self, "PowerupDominant", true)
+	if self.AddCond and self.InCond and not self:InCond(TF_COND_MARKEDFORDEATH) then
+		self:AddCond(TF_COND_MARKEDFORDEATH, PERMANENT_CONDITION or -1, self)
+	end
+	refresh_rune_player_effects(self)
+end
+function meta:OnRemovePowerupModeDominant()
+	set_cond_flag(self, "PowerupDominant", false)
+	if self.RemoveCond and self.InCond and self:InCond(TF_COND_MARKEDFORDEATH) then
+		self:RemoveCond(TF_COND_MARKEDFORDEATH, true)
+	end
+	refresh_rune_player_effects(self)
+end
 function meta:OnAddImmuneToPushback() set_cond_flag(self, "ImmuneToPushback", true) end
 function meta:OnRemoveImmuneToPushback() set_cond_flag(self, "ImmuneToPushback", false) end
 function meta:OnAddDoNotUse0() end
@@ -3009,11 +3241,137 @@ function meta:OnConditionRemoved(eCond)
 end
 
 if SERVER then
+	if not ConVarExists("tf_powerup_mode_dominant_multiplier") then
+		CreateConVar("tf_powerup_mode_dominant_multiplier", "3", { FCVAR_NOTIFY, FCVAR_ARCHIVE, FCVAR_REPLICATED }, "The multiple by which a player must exceed the median kills by in order to be considered dominant.")
+	end
+
+	local MANNPOWER_DOMINANCE_INTERVAL = 120
+	local MANNPOWER_PLAGUE_RADIUS = 128
+	local MANNPOWER_PLAGUE_DAMAGE_INTERVAL = 1
+	local nextMannpowerDominanceCheckAt = 0
+
+	local function begin_mannpower_interval(pl)
+		if not IsValid(pl) or not pl:IsPlayer() then return end
+		pl._tfMannpowerIntervalKills = 0
+		pl._tfMannpowerIntervalDeaths = 0
+	end
+
+	local function run_mannpower_plague_tick(pl)
+		if not TF_IsMannpowerMode or not TF_IsMannpowerMode() then return end
+		if not IsValid(pl) or not pl:IsPlayer() or not pl:Alive() then return end
+		if not pl.InCond or not pl:InCond(TF_COND_RUNE_PLAGUE) then return end
+		if (pl._tfNextPlaguePulse or 0) > CurTime() then return end
+		pl._tfNextPlaguePulse = CurTime() + 0.25
+
+		for _, other in ipairs(ents.FindInSphere(pl:WorldSpaceCenter(), MANNPOWER_PLAGUE_RADIUS)) do
+			if not IsValid(other) or not other:IsPlayer() or not other:Alive() or other == pl then continue end
+			if pl.IsFriendly and pl:IsFriendly(other) then continue end
+			if other.IsStealthed and other:IsStealthed() then continue end
+			if other.InCond and other:InCond(TF_COND_PLAGUE) then continue end
+			if other.GetCarryingRuneType and other:GetCarryingRuneType() == TF_RUNE_RESIST then continue end
+			if other.AddCond then
+				other:AddCond(TF_COND_PLAGUE, PERMANENT_CONDITION or -1, pl)
+			end
+		end
+	end
+
+	local function run_plague_damage_tick(pl)
+		if not IsValid(pl) or not pl:IsPlayer() or not pl:Alive() then return end
+		if not pl.InCond or not pl:InCond(TF_COND_PLAGUE) then return end
+		if (pl._tfNextPlagueDamage or 0) > CurTime() then return end
+		pl._tfNextPlagueDamage = CurTime() + MANNPOWER_PLAGUE_DAMAGE_INTERVAL
+
+		local provider = pl.GetConditionProvider and pl:GetConditionProvider(TF_COND_PLAGUE) or NULL
+		local attacker = IsValid(provider) and provider or pl
+		local plagueDamage = math.max(1, math.floor(((tonumber(pl.GetMaxHealth and pl:GetMaxHealth()) or 100) * 0.05) + 0.5))
+
+		local dmg = DamageInfo()
+		dmg:SetDamage(plagueDamage)
+		dmg:SetDamageType(bit.bor(DMG_PREVENT_PHYSICS_FORCE, DMG_GENERIC))
+		dmg:SetAttacker(attacker)
+		dmg:SetInflictor(attacker)
+		pl:TakeDamageInfo(dmg)
+	end
+
+	local function evaluate_mannpower_dominance()
+		if not TF_IsMannpowerMode or not TF_IsMannpowerMode() then return end
+
+		local participants = {}
+		local killCounts = {}
+		for _, pl in ipairs(player.GetAll()) do
+			if not IsValid(pl) or not pl:IsPlayer() then continue end
+			local kills = tonumber(pl._tfMannpowerIntervalKills) or 0
+			local deaths = tonumber(pl._tfMannpowerIntervalDeaths) or 0
+			if kills <= 2 and deaths <= 2 then continue end
+			participants[#participants + 1] = pl
+			killCounts[#killCounts + 1] = math.max(kills, 1)
+		end
+
+		table.sort(killCounts)
+		local participantCount = #participants
+		local dominantTeam = TEAM_UNASSIGNED
+
+		if participantCount >= 6 then
+			local medianKillCount
+			if participantCount % 2 == 1 then
+				medianKillCount = killCounts[(participantCount + 1) / 2]
+			else
+				local hi = participantCount / 2
+				medianKillCount = (killCounts[hi] + killCounts[hi + 1]) / 2
+			end
+
+			local dominantMultiplier = GetConVar("tf_powerup_mode_dominant_multiplier")
+			dominantMultiplier = dominantMultiplier and dominantMultiplier:GetFloat() or 3
+
+			for _, pl in ipairs(participants) do
+				local kills = tonumber(pl._tfMannpowerIntervalKills) or 0
+				local isDominant = kills >= 14 and kills >= medianKillCount * dominantMultiplier
+				if isDominant then
+					dominantTeam = pl:Team()
+					if not pl.InCond or not pl:InCond(TF_COND_POWERUPMODE_DOMINANT) then
+						pl:AddCond(TF_COND_POWERUPMODE_DOMINANT, PERMANENT_CONDITION or -1, pl)
+						pl:EmitSound("Mannpower.PlayerIsDominant")
+						local text = tf_lang and tf_lang.GetRaw and tf_lang.GetRaw("#TF_Powerup_Dominant", true) or "You are dominating the other team!"
+						pl:PrintMessage(HUD_PRINTCENTER, text)
+					end
+				elseif pl.InCond and pl:InCond(TF_COND_POWERUPMODE_DOMINANT) then
+					pl:RemoveCond(TF_COND_POWERUPMODE_DOMINANT, true)
+					pl:EmitSound("Mannpower.PlayerIsNoLongerDominant")
+					local text = tf_lang and tf_lang.GetRaw and tf_lang.GetRaw("#TF_Powerup_OutOfDominant", true) or "You are no longer dominant."
+					pl:PrintMessage(HUD_PRINTCENTER, text)
+				end
+			end
+		else
+			for _, pl in ipairs(player.GetAll()) do
+				if IsValid(pl) and pl.InCond and pl:InCond(TF_COND_POWERUPMODE_DOMINANT) then
+					pl:RemoveCond(TF_COND_POWERUPMODE_DOMINANT, true)
+				end
+			end
+		end
+
+		if dominantTeam == TEAM_RED or dominantTeam == TEAM_BLU then
+			local victimTeam = dominantTeam == TEAM_RED and TEAM_BLU or TEAM_RED
+			for _, pl in ipairs(player.GetAll()) do
+				if IsValid(pl) and pl:IsPlayer() and pl:Team() == victimTeam and (not pl.InCond or not pl:InCond(TF_COND_POWERUPMODE_DOMINANT)) then
+					local text = tf_lang and tf_lang.GetRaw and tf_lang.GetRaw("#TF_Powerup_Dominant_Other_Team", true) or "An enemy player is dominating the game."
+					pl:PrintMessage(HUD_PRINTCENTER, text)
+					pl:EmitSound("Mannpower.DominantPlayerOtherTeam")
+				end
+			end
+		end
+
+		for _, pl in ipairs(player.GetAll()) do
+			begin_mannpower_interval(pl)
+		end
+	end
+
 	hook.Add("Think", "TFCondCoreServerThink", function()
 		for _, pl in ipairs(player.GetAll()) do
 			if IsValid(pl) and pl.ConditionGameRulesThink and pl.ConditionThink then
 				pl:ConditionGameRulesThink()
 				pl:ConditionThink()
+				run_mannpower_plague_tick(pl)
+				run_plague_damage_tick(pl)
 
 				if pl.CanRuneCharge and pl:CanRuneCharge() and not pl:IsRuneCharged() then
 					local now = CurTime()
@@ -3045,7 +3403,51 @@ if SERVER then
 				else
 					pl:SetNWBool("TFKingRuneBuffActive", false)
 				end
+
+				if not TF_IsMannpowerMode or not TF_IsMannpowerMode() then
+					begin_mannpower_interval(pl)
+				end
 			end
+		end
+
+		if TF_IsMannpowerMode and TF_IsMannpowerMode() then
+			if nextMannpowerDominanceCheckAt <= CurTime() then
+				nextMannpowerDominanceCheckAt = CurTime() + MANNPOWER_DOMINANCE_INTERVAL
+				evaluate_mannpower_dominance()
+			end
+		else
+			nextMannpowerDominanceCheckAt = 0
+		end
+	end)
+
+	hook.Add("PlayerInitialSpawn", "TFMannpowerInitCounters", function(pl)
+		begin_mannpower_interval(pl)
+	end)
+
+	hook.Add("PlayerSpawn", "TFMannpowerResetState", function(pl)
+		if not IsValid(pl) then return end
+		pl._tfNextPlaguePulse = 0
+		pl._tfNextPlagueDamage = 0
+		pl._tfNextReflectZap = 0
+		if pl._tfMannpowerIntervalKills == nil or pl._tfMannpowerIntervalDeaths == nil then
+			begin_mannpower_interval(pl)
+		end
+		if pl.GetCarryingRuneType and pl:GetCarryingRuneType() ~= TF_RUNE_NONE then
+			refresh_rune_player_effects(pl)
+		else
+			pl._tfRuneHealthBonusApplied = 0
+			pl._tfRuneJumpMultApplied = 1
+			clear_speed_mult(pl, "rune_exact")
+		end
+	end)
+
+	hook.Add("PlayerDeath", "TFMannpowerTrackKillsDeaths", function(victim, inflictor, attacker)
+		if not TF_IsMannpowerMode or not TF_IsMannpowerMode() then return end
+		if IsValid(victim) and victim:IsPlayer() then
+			victim._tfMannpowerIntervalDeaths = (tonumber(victim._tfMannpowerIntervalDeaths) or 0) + 1
+		end
+		if IsValid(attacker) and attacker:IsPlayer() and attacker ~= victim then
+			attacker._tfMannpowerIntervalKills = (tonumber(attacker._tfMannpowerIntervalKills) or 0) + 1
 		end
 	end)
 else
@@ -3134,6 +3536,54 @@ hook.Add("Move", "TFCondMoveAdjust", function(pl, move)
 end)
 
 if SERVER then
+	local function stopLegacyLoopingTaunt(pl)
+		if not IsValid(pl) then return false end
+		if TF_StopTaunt and TF_StopTaunt(pl) then
+			return true
+		end
+
+		local entId = pl:EntIndex()
+		if pl:GetNWBool("Congaing", false) then
+			pl:ConCommand("tf_taunt_conga_stop")
+			return true
+		end
+		if pl:GetNWBool("Russian", false) then
+			pl:ConCommand("tf_taunt_russian_stop")
+			return true
+		end
+		if timer.Exists("squaredancestart" .. entId)
+			or timer.Exists("squaredanceintro" .. entId)
+			or timer.Exists("squaredancewaiting" .. entId)
+		then
+			pl:ConCommand("tf_taunt_squaredance_intro_stop")
+			return true
+		end
+		if timer.Exists("rpsstart" .. entId)
+			or timer.Exists("rpsintro" .. entId)
+			or timer.Exists("rpswaiting" .. entId)
+		then
+			pl:ConCommand("tf_taunt_rockpaperscissors_intro_stop")
+			return true
+		end
+		if pl:GetNWBool("Taunting2", false) and pl:GetNWBool("Taunting", false) and pl:GetNWBool("NoWeapon", false) then
+			local className = string.lower(tostring(pl:GetPlayerClass() or ""))
+			if className == "spy" then
+				pl:ConCommand("tf_taunt_chair_stop")
+				return true
+			end
+			if className == "heavy" then
+				pl:ConCommand("tf_taunt_weight_stop")
+				return true
+			end
+			if className == "engineer" then
+				pl:ConCommand("tf_taunt_chair2_stop")
+				return true
+			end
+		end
+
+		return false
+	end
+
 	hook.Add("StartCommand", "TFCondCommandAdjust", function(pl, cmd)
 		if not IsValid(pl) or not pl.InCond then return end
 
@@ -3245,30 +3695,29 @@ if SERVER then
 				drive = -1
 			end
 			pl.__SchemaTauntDriveInput = drive
+			if TF_SchemaTauntRefreshDriveSound then
+				TF_SchemaTauntRefreshDriveSound(pl)
+			end
 
 			if schemaState.stopIfMoved and wantsDirectionalMove and TF_EndSchemaTaunt then
 				TF_EndSchemaTaunt(pl)
 			end
 
-			local jumpDown = cmd:KeyDown(IN_JUMP)
-			local jumpPressed = jumpDown and not pl.__SchemaTauntJumpWasDown
-			pl.__SchemaTauntJumpWasDown = jumpDown
-			if jumpPressed and TF_EndSchemaTaunt then
-				TF_EndSchemaTaunt(pl)
+			local inputOrder = istable(schemaState.inputOrder) and schemaState.inputOrder or nil
+			if inputOrder and TF_SchemaQueueInputState then
+				pl.__SchemaTauntKeyWasDown = pl.__SchemaTauntKeyWasDown or {}
+				for _, inputName in ipairs(inputOrder) do
+					local buttonMask = _G[inputName]
+					if isnumber(buttonMask) then
+						local isDown = cmd:KeyDown(buttonMask)
+						local wasDown = pl.__SchemaTauntKeyWasDown[inputName] and true or false
+						TF_SchemaQueueInputState(pl, inputName, isDown, isDown and not wasDown)
+						pl.__SchemaTauntKeyWasDown[inputName] = isDown
+					end
+				end
 			end
-
-			local attackDown = cmd:KeyDown(IN_ATTACK)
-			local attackPressed = attackDown and not pl.__SchemaTauntAttackWasDown
-			pl.__SchemaTauntAttackWasDown = attackDown
-			if attackPressed and TF_TriggerSchemaTauntInput then
-				TF_TriggerSchemaTauntInput(pl, "IN_ATTACK")
-			end
-
-			local attack2Down = cmd:KeyDown(IN_ATTACK2)
-			local attack2Pressed = attack2Down and not pl.__SchemaTauntAttack2WasDown
-			pl.__SchemaTauntAttack2WasDown = attack2Down
-			if attack2Pressed and TF_TriggerSchemaTauntInput then
-				TF_TriggerSchemaTauntInput(pl, "IN_ATTACK2")
+			if TF_ProcessSchemaTauntInput then
+				TF_ProcessSchemaTauntInput(pl)
 			end
 
 			cmd:RemoveKey(IN_JUMP)
@@ -3276,11 +3725,11 @@ if SERVER then
 			cmd:RemoveKey(IN_ATTACK2)
 			cmd:RemoveKey(IN_RELOAD)
 		else
-			pl.__SchemaTauntJumpWasDown = false
-			pl.__SchemaTauntAttackWasDown = false
-			pl.__SchemaTauntAttack2WasDown = false
 			pl.__SchemaTauntMoveInput = 0
 			pl.__SchemaTauntDriveInput = 0
+			pl.__SchemaTauntKeyWasDown = nil
+			pl.__SchemaTauntInputDown = nil
+			pl.__SchemaTauntInputPressed = nil
 		end
 
 		local allowTauntMotion = pl:GetNWBool("TauntingMoped", false) or pl:GetNWBool("TauntingSchemaMove", false)

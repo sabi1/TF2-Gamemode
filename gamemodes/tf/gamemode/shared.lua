@@ -19,6 +19,41 @@ local function TFIsHL2Player(pl)
 	return pl:GetNWBool("IsHL2", false)
 end
 
+concommand.Add("tf_applyfixup", function()
+	-- Compatibility stub for legacy TF2 binds and map logic that expect this command to exist.
+end)
+
+local function TF_DropPlayerCarriedItem(pl)
+	if not IsValid(pl) or not pl:IsPlayer() then return false end
+
+	for _, className in ipairs({
+		"item_teamflag",
+		"item_teamflag_mvm",
+	}) do
+		for _, item in ipairs(ents.FindByClass(className)) do
+			if item.Carrier == pl and item.Drop then
+				item:Drop()
+				return true
+			end
+		end
+	end
+
+	if pl.DropRune and pl.IsCarryingRune and pl:IsCarryingRune() then
+		return IsValid(pl:DropRune())
+	end
+
+	return false
+end
+
+if SERVER then
+	local function HandleDropItemCommand(pl)
+		TF_DropPlayerCarriedItem(pl)
+	end
+
+	concommand.Add("dropitem", HandleDropItemCommand)
+	concommand.Add("tf_dropitem", HandleDropItemCommand)
+end
+
 do
 	local meta = FindMetaTable("Player")
 	if meta then
@@ -284,10 +319,51 @@ do
 		return istable(found) and #found > 0
 	end
 
+	local function HasNeutralFlag()
+		if not ents or not ents.FindByClass then return false end
+		for _, flag in ipairs(ents.FindByClass("item_teamflag")) do
+			if IsValid(flag) and tonumber(flag.TeamNum or flag.te or -1) == 0 then
+				return true
+			end
+		end
+		return false
+	end
+
+	local function DetectHudModeFromRuntimeState(forceRefresh)
+		if TF_IsMvMMap and TF_IsMvMMap(forceRefresh) then
+			return "mvm"
+		end
+		if (TF_IsMannpowerMode and TF_IsMannpowerMode()) or GetGlobalBool("tf_mannpower_mode", false) or GetGlobalBool("tf_powerup_mode", false) then
+			return "mannpower"
+		end
+		if TF_IsPasstimeMap and TF_IsPasstimeMap() then
+			return "passtime"
+		end
+		if GetGlobalBool("tf_player_destruction_map", false) then
+			return "pd"
+		end
+		if GetGlobalBool("tf_robot_destruction_map", false) then
+			return "rd"
+		end
+		if GetGlobalBool("tf_hybrid_ctf_cp_map", false) then
+			return "cp"
+		end
+		if GetGlobalBool("tf_multiple_escort_map", false) then
+			return "payload"
+		end
+		if HasNeutralFlag() then
+			return "sd"
+		end
+		return nil
+	end
+
 	local function DetectHudModeFromEntities()
 		-- Order matters: pick the most specific logic first.
 		if HasClass("tf_logic_mann_vs_machine") or HasClass("info_populator") or HasClass("item_teamflag_mvm") then
 			return "mvm"
+		end
+		if HasClass("tf_logic_mannpower") or HasClass("info_powerup_spawn") or HasClass("func_powerupvolume") then
+			return "mannpower"
 		end
 		if HasClass("tf_logic_koth") then
 			return "koth"
@@ -303,6 +379,9 @@ do
 		end
 		if HasClass("team_train_watcher") or HasClass("tf_logic_multiple_escort") then
 			return "payload"
+		end
+		if HasNeutralFlag() then
+			return "sd"
 		end
 		if HasClass("tf_logic_arena") then
 			return "arena"
@@ -325,6 +404,7 @@ do
 		if StartsWithMapPrefix(map, "cp_") then return "cp" end
 		if StartsWithMapPrefix(map, "tc_") then return "cp" end
 		if StartsWithMapPrefix(map, "ctf_") then return "ctf" end
+		if StartsWithMapPrefix(map, "powerup_") then return "mannpower" end
 		if StartsWithMapPrefix(map, "pl_") or StartsWithMapPrefix(map, "plr_") then return "payload" end
 		if StartsWithMapPrefix(map, "arena_") then return "arena" end
 		if StartsWithMapPrefix(map, "pass_") then return "passtime" end
@@ -344,9 +424,9 @@ do
 		end
 		hudModeDetectCache.nextProbeAt = now + 2
 
-		local mode = DetectHudModeFromEntities()
-		if not mode and TF_IsMvMMap and TF_IsMvMMap(forceRefresh) then
-			mode = "mvm"
+		local mode = DetectHudModeFromRuntimeState(forceRefresh)
+		if not mode then
+			mode = DetectHudModeFromEntities()
 		end
 		if not mode then
 			mode = DetectHudModeFromMapName()
@@ -362,7 +442,8 @@ do
 	end
 
 	function TF_IsCtfHudMode(forceRefresh)
-		return TF_GetHudGameMode(forceRefresh) == "ctf"
+		local mode = TF_GetHudGameMode(forceRefresh)
+		return mode == "ctf" or mode == "mannpower"
 	end
 
 	function TF_IsPayloadHudMode(forceRefresh)
@@ -384,6 +465,10 @@ do
 			kothTimer = "resource/ui/hudobjectivekothtimepanel.res",
 		},
 		ctf = {
+			flagPanel = "resource/ui/hudobjectiveflagpanel.res",
+			roundTimer = "resource/ui/hudobjectivetimepanel.res",
+		},
+		mannpower = {
 			flagPanel = "resource/ui/hudobjectiveflagpanel.res",
 			roundTimer = "resource/ui/hudobjectivetimepanel.res",
 		},
@@ -426,6 +511,195 @@ do
 			return modeMap[key]
 		end
 		return fallback
+	end
+
+	local FLAG_TEAM_UNASSIGNED = rawget(_G, "TEAM_UNASSIGNED") or 0
+	local FLAG_TEAM_RED = rawget(_G, "TEAM_RED") or 2
+	local FLAG_TEAM_BLU = rawget(_G, "TEAM_BLU") or 3
+	local TF_FLAGTYPE_CTF_ID = rawget(_G, "TF_FLAGTYPE_CTF") or 0
+	local TF_FLAGTYPE_ATTACK_DEFEND_ID = rawget(_G, "TF_FLAGTYPE_ATTACK_DEFEND") or 1
+	local TF_FLAGTYPE_TERRITORY_CONTROL_ID = rawget(_G, "TF_FLAGTYPE_TERRITORY_CONTROL") or 2
+	local TF_FLAGTYPE_INVADE_ID = rawget(_G, "TF_FLAGTYPE_INVADE") or 3
+	local TF_FLAGTYPE_RESOURCE_CONTROL_ID = rawget(_G, "TF_FLAGTYPE_RESOURCE_CONTROL") or 4
+	local TF_FLAGTYPE_ROBOT_DESTRUCTION_ID = rawget(_G, "TF_FLAGTYPE_ROBOT_DESTRUCTION") or 5
+
+	local function IsFlagHudVisible(flag)
+		if not IsValid(flag) then return false end
+		local disabled = flag:GetNWBool("FlagDisabled", flag.Disabled or false)
+		if not disabled then return true end
+		return flag:GetNWBool("FlagVisibleWhenDisabled", flag.VisibleWhenDisabled or false)
+	end
+
+	local function GetFlagHudGameType(flag)
+		if not IsValid(flag) then
+			return TF_FLAGTYPE_CTF_ID
+		end
+
+		return flag:GetNWInt("FlagGameType", flag.GameType or TF_FLAGTYPE_CTF_ID)
+	end
+
+	local function AnyHudFlag(assignments, predicate)
+		if not assignments then return false end
+
+		local seen = {}
+		for _, flag in ipairs({ assignments.redFlag, assignments.blueFlag }) do
+			if IsValid(flag) and not seen[flag] then
+				seen[flag] = true
+				if predicate(flag) then
+					return true
+				end
+			end
+		end
+
+		for _, flag in ipairs(assignments.neutralFlags or {}) do
+			if IsValid(flag) and not seen[flag] then
+				seen[flag] = true
+				if predicate(flag) then
+					return true
+				end
+			end
+		end
+
+		return false
+	end
+
+	function TF_BuildFlagHudAssignments()
+		local state = {
+			redFlag = nil,
+			blueFlag = nil,
+			neutralFlags = {},
+			numValidFlags = 0,
+			uniqueFlags = 0,
+			singleFlag = nil,
+		}
+
+		if not ents or not ents.FindByClass then
+			return state
+		end
+
+		for _, flag in ipairs(ents.FindByClass("item_teamflag")) do
+			if not IsFlagHudVisible(flag) then continue end
+
+			state.numValidFlags = state.numValidFlags + 1
+
+			local teamNum = flag:GetNWInt("FlagTeamNum", FLAG_TEAM_UNASSIGNED)
+			if teamNum == FLAG_TEAM_RED then
+				state.redFlag = flag
+			elseif teamNum == FLAG_TEAM_BLU then
+				state.blueFlag = flag
+			elseif teamNum == FLAG_TEAM_UNASSIGNED then
+				table.insert(state.neutralFlags, flag)
+				if not IsValid(state.blueFlag) then
+					state.blueFlag = flag
+				elseif not IsValid(state.redFlag) and state.blueFlag ~= flag then
+					state.redFlag = flag
+				end
+			end
+		end
+
+		local seen = {}
+		for _, flag in ipairs({ state.redFlag, state.blueFlag }) do
+			if IsValid(flag) and not seen[flag] then
+				seen[flag] = true
+				state.uniqueFlags = state.uniqueFlags + 1
+			end
+		end
+
+		if state.uniqueFlags == 1 then
+			state.singleFlag = state.blueFlag or state.redFlag
+		end
+
+		return state
+	end
+
+	function TF_GetFlagHudModeState(assignments)
+		assignments = assignments or TF_BuildFlagHudAssignments()
+
+		local hybrid = AnyHudFlag(assignments, function(flag)
+			local gameType = GetFlagHudGameType(flag)
+			return gameType == TF_FLAGTYPE_ATTACK_DEFEND_ID
+				or gameType == TF_FLAGTYPE_TERRITORY_CONTROL_ID
+				or gameType == TF_FLAGTYPE_RESOURCE_CONTROL_ID
+		end) or (TF_IsHybridCTFCPMap and TF_IsHybridCTFCPMap() or false)
+
+		local specialDelivery = AnyHudFlag(assignments, function(flag)
+			return GetFlagHudGameType(flag) == TF_FLAGTYPE_INVADE_ID
+		end) or (TF_IsSpecialDeliveryMap and TF_IsSpecialDeliveryMap() or false)
+
+		local mvm = AnyHudFlag(assignments, function(flag)
+			return GetFlagHudGameType(flag) == TF_FLAGTYPE_ROBOT_DESTRUCTION_ID
+		end) or (TF_IsMvMMap and TF_IsMvMMap() or false)
+
+		local usingRoundCapsScore = (not hybrid)
+			and (not specialDelivery)
+			and (not mvm)
+			and ((GetConVar("tf_flag_caps_per_round") and GetConVar("tf_flag_caps_per_round"):GetInt()) or 0) > 0
+
+		return {
+			hybrid = hybrid,
+			specialDelivery = specialDelivery,
+			mvm = mvm,
+			usingRoundCapsScore = usingRoundCapsScore,
+			numValidFlags = assignments.numValidFlags or 0,
+			uniqueFlags = assignments.uniqueFlags or 0,
+			singleFlag = assignments.singleFlag,
+			redFlag = assignments.redFlag,
+			blueFlag = assignments.blueFlag,
+			neutralFlags = assignments.neutralFlags or {},
+		}
+	end
+
+	function TF_GetPayloadHudState()
+		local gm = rawget(_G, "GAMEMODE") or rawget(_G, "GM")
+		if not istable(gm) then return nil end
+		if not istable(gm.PayloadState) then return nil end
+		return gm.PayloadState
+	end
+
+	function TF_GetPayloadHudStates()
+		local gm = rawget(_G, "GAMEMODE") or rawget(_G, "GM")
+		if not istable(gm) then return nil end
+		if not istable(gm.PayloadStates) then return nil end
+		return gm.PayloadStates
+	end
+
+	function TF_GetPayloadRaceHudState()
+		local states = TF_GetPayloadHudStates()
+		if not states then return nil end
+
+		local blue = states.byAttackTeam and states.byAttackTeam[TEAM_BLU or 3] or nil
+		local red = states.byAttackTeam and states.byAttackTeam[TEAM_RED or 2] or nil
+		local localPlayer = LocalPlayer and LocalPlayer() or NULL
+		local localTeam = IsValid(localPlayer) and localPlayer:Team() or TEAM_UNASSIGNED or 0
+		local topTeam = (localTeam == (TEAM_RED or 2)) and (TEAM_RED or 2) or (TEAM_BLU or 3)
+
+		return {
+			blue = blue,
+			red = red,
+			topTeam = topTeam,
+			bottomTeam = (topTeam == (TEAM_RED or 2)) and (TEAM_BLU or 3) or (TEAM_RED or 2),
+			multiple = states.multiple and true or false,
+		}
+	end
+
+	function TF_HasActivePayloadHudState()
+		local gm = rawget(_G, "GAMEMODE") or rawget(_G, "GM")
+		if not istable(gm) then return false end
+		local states = TF_GetPayloadHudStates()
+		if states and istable(states.list) then
+			for _, state in ipairs(states.list) do
+				if state.active then
+					return true
+				end
+			end
+			return false
+		end
+		local state = TF_GetPayloadHudState()
+		if not state then return false end
+		if gm.PayloadHUDActive ~= nil then
+			return gm.PayloadHUDActive and true or false
+		end
+		return state.active and true or false
 	end
 end
 
@@ -2060,6 +2334,13 @@ CreateConVar( "tf_mapintro_video_url", "", {FCVAR_SERVER_CAN_EXECUTE, FCVAR_REPL
 CreateConVar('tf_talkicon_computablecolor', 1, FCVAR_ARCHIVE + FCVAR_REPLICATED + FCVAR_SERVER_CAN_EXECUTE, 'Compute color from location brightness.')
 CreateConVar('tf_bot_mvm_max_deaths', 20, FCVAR_ARCHIVE + FCVAR_REPLICATED + FCVAR_SERVER_CAN_EXECUTE, 'Maximum Deaths. Not Functional.')
 CreateConVar('tf_grapplinghook_enable', 0, FCVAR_ARCHIVE + FCVAR_REPLICATED + FCVAR_SERVER_CAN_EXECUTE, 'When Enabled: TF2 Players get the Grappling Hook.')
+
+function TF_IsGrapplingHookEnabled()
+	local hookCvar = GetConVar("tf_grapplinghook_enable")
+	local cvarEnabled = hookCvar and hookCvar:GetBool() or false
+	local mannpowerEnabled = TF_IsMannpowerMode and TF_IsMannpowerMode() or false
+	return cvarEnabled or mannpowerEnabled
+end
 CreateConVar('tf_bot_mvm_has_bots', 0, FCVAR_ARCHIVE + FCVAR_REPLICATED + FCVAR_SERVER_CAN_EXECUTE, 'Automatically set by Lua')
 CreateConVar('tf_bot_mvm_giant_max_deaths', 3, FCVAR_ARCHIVE + FCVAR_REPLICATED + FCVAR_SERVER_CAN_EXECUTE, 'Maximum Deaths. Not Functional.')
 CreateConVar('tf_bot_perf_enable', 1, FCVAR_ARCHIVE + FCVAR_REPLICATED + FCVAR_SERVER_CAN_EXECUTE, 'Enable bot performance throttling and caches.')
@@ -3685,17 +3966,45 @@ concommand.Add("-inspect", function(pl)
 end)
 
 GM.RoundHasWinner = false
+local WINREASON_STALEMATE = 5
 
+function GM:SwitchRedBlueTeams()
+	for _, ply in ipairs(player.GetAll()) do
+		if not IsValid(ply) then continue end
+		if ply:Team() == TEAM_RED then
+			ply:SetTeam(TEAM_BLU)
+		elseif ply:Team() == TEAM_BLU then
+			ply:SetTeam(TEAM_RED)
+		end
+	end
+end
 
-function GM:RoundWin(teamnum)
+function GM:RoundWin(teamnum, winReason, forceMapReset, switchTeamsOnWin, activator)
+	if GAMEMODE.RoundHasWinner then
+		return
+	end
+
 	GAMEMODE.RoundHasWinner = true
+	GAMEMODE.RoundStalemate = false
 	GAMEMODE.WinningTeam = teamnum
-	team.SetScore(teamnum,team.GetScore() + 1)
-	hook.Run("TF_GameRules_RoundWinOutputs", teamnum)
+	GAMEMODE.RoundWinReason = tonumber(winReason)
+	GAMEMODE.RoundForceMapReset = forceMapReset
+	GAMEMODE.RoundSwitchTeamsOnWin = switchTeamsOnWin and true or false
+	SetGlobalBool("TF_RoundStalemate", false)
+	if teamnum == TEAM_RED or teamnum == TEAM_BLU then
+		team.SetScore(teamnum, team.GetScore(teamnum) + 1)
+	end
+	hook.Run("TF_GameRules_RoundWinOutputs", teamnum, activator, GAMEMODE.RoundWinReason, forceMapReset, switchTeamsOnWin)
 	timer.Simple(15, function() 
 		GAMEMODE.RoundHasWinner = false
+		GAMEMODE.RoundStalemate = false
 		GAMEMODE.WinningTeam = nil
+		GAMEMODE.RoundWinReason = nil
+		SetGlobalBool("TF_RoundStalemate", false)
 		if SERVER then
+			if GAMEMODE.RoundSwitchTeamsOnWin then
+				GAMEMODE:SwitchRedBlueTeams()
+			end
 			RunConsoleCommand("gmod_admin_cleanup")
 			timer.Simple(0.1, function()
 			
@@ -3734,4 +4043,26 @@ function GM:RoundWin(teamnum)
 		end
 	end
 
+end
+
+function GM:RoundStalemate(forceMapReset, switchTeamsOnWin, activator)
+	if GAMEMODE.RoundHasWinner then
+		return
+	end
+
+	GAMEMODE.RoundHasWinner = true
+	GAMEMODE.RoundStalemate = true
+	GAMEMODE.WinningTeam = TEAM_UNASSIGNED
+	GAMEMODE.RoundWinReason = WINREASON_STALEMATE
+	GAMEMODE.RoundForceMapReset = forceMapReset
+	GAMEMODE.RoundSwitchTeamsOnWin = switchTeamsOnWin and true or false
+	SetGlobalBool("TF_RoundStalemate", true)
+	hook.Run("TF_GameRules_RoundWinOutputs", TEAM_UNASSIGNED, activator, GAMEMODE.RoundWinReason, forceMapReset, switchTeamsOnWin)
+
+	for _, pl in ipairs(player.GetAll()) do
+		if IsValid(pl) then
+			pl:PrintMessage(HUD_PRINTCENTER, tf_lang and tf_lang.GetRaw and (tf_lang.GetRaw("EnterStalemate") or "Sudden Death Mode!") or "Sudden Death Mode!")
+			pl:SendLua([[surface.PlaySound("Game.Stalemate")]])
+		end
+	end
 end

@@ -62,55 +62,27 @@ local function AlphaOf(ent)
 end
 
 function ENT:ShouldDrawDispenserPanels(modelEnt)
-	if self:GetState() < 2 then return false end
-	if not IsValid(modelEnt) then return false end
-	if isfunction(self.GetInvisibilityLevel) and self:GetInvisibilityLevel() >= 1 then
-		return false
-	end
-	if AlphaOf(self) <= 0 or AlphaOf(modelEnt) <= 0 then
-		return false
-	end
 	return true
 end
 
+local function HideCartDispenserModel(ent)
+	if not IsValid(ent) then return end
+	ent:SetNoDraw(true)
+	ent:DrawShadow(false)
+
+	local modelEnt = ResolveDispenserModel(ent)
+	if IsValid(modelEnt) then
+		modelEnt:SetNoDraw(true)
+		modelEnt:DrawShadow(false)
+	end
+end
+
 function ENT:DrawDispenserPanels()
-	local modelEnt = ResolveDispenserModel(self)
-	if not self:ShouldDrawDispenserPanels(modelEnt) then return end
-	
-	local metal = math.Clamp(tonumber(self:GetAmmoPercentage() or 0) or 0, 0, 1)
-	self.Ang = self:CalcAngle(metal)
-	
-	local cp0_ll = ResolveControlPanelWithFallback(
-		modelEnt,
-		{"controlpanel0_ll", "control_panel0_ll", "controlpanel0_l", "controlpanel0"},
-		Vector(-10.5, -8.5, 49),
-		Angle(0, 90, 90)
-	)
-	local cp1_ll = ResolveControlPanelWithFallback(
-		modelEnt,
-		{"controlpanel1_ll", "control_panel1_ll", "controlpanel1_l", "controlpanel1"},
-		Vector(-10.5, 8.5, 49),
-		Angle(0, 90, 90)
-	)
-	if not cp0_ll or not cp1_ll then return end
-	
-	cam.Start3D2D(cp0_ll.Pos
-		+ Offset.x * cp0_ll.Ang:Forward()
-		+ Offset.y * cp0_ll.Ang:Right()
-		+ Offset.z * cp0_ll.Ang:Up(), cp0_ll.Ang, Scale)
-		self:DrawScreen()
-	cam.End3D2D()
-	
-	cam.Start3D2D(cp1_ll.Pos
-		+ Offset.x * cp1_ll.Ang:Forward()
-		+ Offset.y * cp1_ll.Ang:Right()
-		+ Offset.z * cp1_ll.Ang:Up(), cp1_ll.Ang, Scale)
-		self:DrawScreen()
-	cam.End3D2D()
+	HideCartDispenserModel(self)
 end
 
 function ENT:Draw()
-	self:DrawDispenserPanels()
+	HideCartDispenserModel(self)
 end
 
 function ENT:DrawScreen()

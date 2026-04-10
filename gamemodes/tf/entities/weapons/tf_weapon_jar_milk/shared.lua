@@ -180,9 +180,37 @@ end
 function SWEP:PredictCriticalHit()
 end
 
+function SWEP:SyncBreadMonsterDeployState()
+	if not SERVER then return end
+	if not self:IsBreadMonsterMilk() then return end
+	if self.IsDeployed then return end
+	if not IsValid(self.Owner) or self.Owner:GetActiveWeapon() ~= self then return end
+
+	local vm = self.Owner:GetViewModel()
+	if not IsValid(vm) then return end
+
+	local idleAnim = self.VM_IDLE or ACT_ITEM1_VM_IDLE
+	local seq = vm:GetSequence()
+	if not seq or seq < 0 then return end
+
+	if isnumber(idleAnim) then
+		if vm:GetSequenceActivity(seq) == idleAnim then
+			self.IsDeployed = true
+			self.NextDeployed = nil
+		end
+	elseif isstring(idleAnim) then
+		local seqName = string.lower(vm:GetSequenceName(seq) or "")
+		if seqName == string.lower(idleAnim) then
+			self.IsDeployed = true
+			self.NextDeployed = nil
+		end
+	end
+end
+
 function SWEP:Think()
 	self:CallBaseFunction("Think")
 	if SERVER then
+		self:SyncBreadMonsterDeployState()
 		self:ProcessRechargeTimer()
 		self:ClampAmmo()
 	elseif CLIENT then
@@ -209,8 +237,43 @@ function SWEP:Deploy()
 	self:InspectAnimCheck()
 	local r = self:CallBaseFunction("Deploy")
 
-	-- Some item animation IDs can resolve late/invalid on re-equip; guarantee a short deploy window.
-	if not self.NextDeployed then
+	-- Breadmonster deploy activities can occasionally resolve to an overlong gate on re-equip.
+	-- Clamp Mutated Milk back to a sane draw/idle handoff so switching stays responsive
+	-- without chopping off the visible equip animation.
+	local deployDuration = (0.5 / self:GetDeploySpeed()) / 1.34
+	local drawSeq = self:SelectWeightedSequence(self.VM_DRAW)
+	if drawSeq and drawSeq >= 0 then
+		local drawDuration = (self:SequenceDuration(drawSeq) or 0) / math.max(self:GetDeploySpeed(), 0.01)
+		if drawDuration > 0 then
+			deployDuration = math.Clamp(drawDuration, deployDuration, 0.9)
+		end
+	end
+	local deployFallback = CurTime() + deployDuration
+	if self:IsBreadMonsterMilk() then
+		if not self.NextDeployed or self.NextDeployed > deployFallback then
+			self.NextDeployed = deployFallback
+		end
+		if not self.NextIdle or self.NextIdle > deployFallback then
+			self.NextIdle = deployFallback
+		end
+		if SERVER then
+			self.BreadMonsterIdleToken = (self.BreadMonsterIdleToken or 0) + 1
+			local token = self.BreadMonsterIdleToken
+			local delay = math.max(0, deployFallback - CurTime())
+			timer.Simple(delay, function()
+				if not IsValid(self) or not IsValid(self.Owner) then return end
+				if self.BreadMonsterIdleToken ~= token then return end
+				if self.Owner:GetActiveWeapon() ~= self then return end
+				if self.Owner:KeyDown(IN_ATTACK) or self.Owner:KeyDown(IN_ATTACK2) then return end
+
+				local idleAnim = self.VM_IDLE or ACT_ITEM1_VM_IDLE
+				self.IsDeployed = true
+				self.NextDeployed = nil
+				self:SendWeaponAnimEx(idleAnim)
+				self.NextIdle = CurTime() + (self:SequenceDuration(self:SelectWeightedSequence(idleAnim)) or 0)
+			end)
+		end
+	elseif not self.NextDeployed then
 		self.NextDeployed = CurTime() + 0.1
 	end
 	self.IsDeployed = nil
@@ -366,6 +429,8 @@ function SWEP:PrimaryAttack()
 end
 
 function SWEP:Holster()
+	self.BreadMonsterIdleToken = (self.BreadMonsterIdleToken or 0) + 1
+
 	if CLIENT then
 		self.DoneDeployParticle = false
 	end

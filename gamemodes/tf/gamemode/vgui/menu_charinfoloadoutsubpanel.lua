@@ -562,13 +562,67 @@ local function getPropertyAttributeByClass(properties, className, fallback)
 	return fallback
 end
 
-local function decodeItemTintColor(raw)
+local function decodePackedFloat32Integer(raw)
+	local n = tonumber(raw)
+	if not n then return nil end
+
+	n = bit.band(math.floor(n), 0xFFFFFFFF)
+
+	local sign = bit.band(bit.rshift(n, 31), 0x1)
+	local exponent = bit.band(bit.rshift(n, 23), 0xFF)
+	local mantissa = bit.band(n, 0x7FFFFF)
+
+	if exponent == 0xFF then
+		return nil
+	end
+
+	local value
+	if exponent == 0 then
+		if mantissa == 0 then
+			value = 0
+		else
+			value = (mantissa / 8388608) * (2 ^ -126)
+		end
+	else
+		value = (1 + mantissa / 8388608) * (2 ^ (exponent - 127))
+	end
+
+	if sign == 1 then
+		value = -value
+	end
+
+	return value
+end
+
+local function normalizeItemTintValue(raw)
 	local n = tonumber(raw)
 	if not n or n <= 0 then return nil end
+
 	n = math.floor(n)
-	if n > 0xFFFFFF then
-		n = bit.band(n, 0xFFFFFF)
+	if n <= 0xFFFFFF then
+		return n
 	end
+
+	local decoded = decodePackedFloat32Integer(n)
+	if decoded and decoded > 0 and decoded <= 0xFFFFFF then
+		local rounded = math.floor(decoded + 0.5)
+		if rounded > 0 and rounded <= 0xFFFFFF then
+			return rounded
+		end
+	end
+
+	return bit.band(n, 0xFFFFFF)
+end
+
+local function isTintAttributeClass(attrClass)
+	return attrClass == "set_item_tint_rgb"
+		or attrClass == "set_item_tint_rgb_2"
+		or attrClass == "set_item_tint_rgb_override"
+end
+
+local function decodeItemTintColor(raw)
+	local n = normalizeItemTintValue(raw)
+	if not n then return nil end
 
 	local r = bit.band(bit.rshift(n, 16), 0xFF)
 	local g = bit.band(bit.rshift(n, 8), 0xFF)
@@ -2070,11 +2124,10 @@ local function mapItemToLoadoutSlot(item, className)
 		return 3
 	end
 
-	local swapped = className == "spy"
 	if item.item_slot == "primary" then
-		return swapped and 2 or 1
+		return 1
 	elseif item.item_slot == "secondary" then
-		return swapped and 1 or 2
+		return 2
 	end
 
 	return nil
@@ -2181,20 +2234,36 @@ local function buildSteamItemPropertiesForMenu(itemData)
 		props.custom_desc = itemData.custom_desc
 	end
 
+	for _, key in ipairs({"pickup_method", "acquisition_method", "item_origin", "origin"}) do
+		local value = itemData[key]
+		if value ~= nil then
+			props[key] = value
+		end
+	end
+
 	if istable(itemData.attributes) then
 		local attrs = {}
 		for _, att in ipairs(itemData.attributes) do
 			if istable(att) then
-				local id = tonumber(att.defindex or att.attribute_class or att.id)
+				local id = tonumber(att.defindex or att.attribute_class or att.id or att[1])
 				local attrDef = id and tf_items and tf_items.AttributesByID and tf_items.AttributesByID[id] or nil
 				local rawFloat = tonumber(att.float_value)
 				local rawValue = tonumber(att.value)
 				local value = nil
 
-				if attrDef and tonumber(attrDef.stored_as_integer) == 1 then
+				if rawValue == nil and att.value == nil then
+					rawValue = tonumber(att[2])
+				end
+				if rawFloat == nil and att.float_value == nil then
+					rawFloat = tonumber(att[2])
+				end
+
+				if attrDef and isTintAttributeClass(attrDef.attribute_class) then
+					value = normalizeItemTintValue(rawValue or rawFloat)
+				elseif attrDef and tonumber(attrDef.stored_as_integer) == 1 then
 					value = rawValue
 				elseif attrDef and attrDef.attribute_type == "string" then
-					value = att.value
+					value = att.value ~= nil and att.value or att[2]
 				elseif rawFloat ~= nil and (rawFloat == 0 or math.abs(rawFloat) > 0.000001) then
 					value = rawFloat
 				else
@@ -2387,9 +2456,6 @@ local function hasCosmeticEquipRegionConflict(item, equippedLoadout, itemsById, 
 	return false
 end
 
-CreateClientConVar("tf_backpack_page_size", "50", true, false, "Backpack items per page (TF2-Gamemode)")
-CreateClientConVar("tf_backpack_dedupe", "1", true, false, "Collapse duplicate backpack entries by defindex (TF2-Gamemode)")
-
 function TF_OpenStandaloneBackpack(initialClassName, initialClassIndex, forcedLoadoutSlot)
 	if IsValid(TFStandaloneBackpackPanel) then
 		TFStandaloneBackpackPanel:Remove()
@@ -2403,10 +2469,7 @@ function TF_OpenStandaloneBackpack(initialClassName, initialClassIndex, forcedLo
 	local steamErr
 	local steamStatus
 	local currentPage = 1
-	local pageSizeConVar = GetConVar("tf_backpack_page_size")
-	local dedupeConVar = GetConVar("tf_backpack_dedupe")
-	local pageSize = math.Clamp((pageSizeConVar and pageSizeConVar:GetInt()) or 50, 10, 50)
-	local dedupeEnabled = (not dedupeConVar) or dedupeConVar:GetBool()
+	local pageSize = 50
 	local columns = 10
 	local rows = 5
 	local itemsById = buildItemsById()
@@ -2535,12 +2598,16 @@ function TF_OpenStandaloneBackpack(initialClassName, initialClassIndex, forcedLo
 	local frameY = resToFrame(getResString(backpackResRoot, "ypos", "0"), 480, sh, math.max(48, math.floor(sh * 0.105)))
 	local frameW = resLengthToScreen(getResString(backpackResRoot, "wide", "f0"), 640, sw, sw - (frameX * 2))
 	local frameH = resLengthToScreen(getResString(backpackResRoot, "tall", ""), 480, sh, sh - frameY - math.max(18, math.floor(sh * 0.06)))
-	local headerH = math.max(116, math.floor(frameH * 0.17))
-	local footerH = math.max(74, math.floor(frameH * 0.11))
-	local tabY = frameY - math.max(42, math.floor(24 * Scale))
-	local tabH = math.max(42, math.floor(24 * Scale))
-	local gridPadding = math.max(9, math.floor(4 * Scale))
-	local gridSpacing = math.max(4, math.floor(2 * Scale))
+	local gridPadding = math.max(6, math.floor(4 * Scale))
+	local gridSpacingX = math.max(1, math.floor(backpackLayout.itemDeltaX * Scale))
+	local gridSpacingY = math.max(1, math.floor(backpackLayout.itemDeltaY * Scale))
+	local itemOffsetX = TF2Res and TF2Res.GetNumber and TF2Res.GetNumber(backpackResRoot, "item_backpack_offcenter_x", -288) or -288
+	local itemStartX = 0
+	local itemStartY = 0
+	local tileW = 0
+	local tileH = 0
+	local gridInnerW = 0
+	local gridInnerH = 0
 
 	local panel = vgui.Create("EditablePanel")
 	panel:SetSize(sw, sh)
@@ -2580,13 +2647,6 @@ function TF_OpenStandaloneBackpack(initialClassName, initialClassIndex, forcedLo
 
 		surface.SetDrawColor(124, 112, 96, 255)
 		surface.DrawOutlinedRect(frameX, frameY, frameW, frameH, 1)
-
-		draw.RoundedBoxEx(12, frameX + 16, tabY, 280, tabH, Color(55, 49, 44, 255), true, true, false, false)
-		draw.RoundedBoxEx(12, frameX + 300, tabY, 228, tabH, Color(42, 37, 33, 245), true, true, false, false)
-
-		draw.SimpleText("LOADOUT", "HudFontMediumBold", frameX + 44, tabY + tabH * 0.54, Color(234, 224, 201, 255), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-		draw.SimpleText("STATS", "HudFontMediumBold", frameX + 334, tabY + tabH * 0.54, Color(152, 141, 124, 255), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-
 		draw.SimpleText(">>", "HudFontSmallBold", frameX + 76, frameY + 36, Color(200, 80, 60, 255), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
 		draw.SimpleText("BACKPACK", "HudFontMediumBold", frameX + 112, frameY + 36, Color(235, 226, 202, 255), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
 	end
@@ -2606,19 +2666,6 @@ function TF_OpenStandaloneBackpack(initialClassName, initialClassIndex, forcedLo
 		surface.SetDrawColor(85, 75, 63, 255)
 		surface.DrawOutlinedRect(0, 0, w, h, 1)
 		self:DrawTextEntryText(Color(37, 34, 28, 255), Color(37, 34, 28, 255), Color(37, 34, 28, 255))
-	end
-
-	local helpButton = vgui.Create("DButton", panel)
-	helpButton:SetText("?")
-	helpButton:SetFont("HudFontMediumBold")
-	helpButton:SetTextColor(Color(241, 232, 210, 255))
-	helpButton.Paint = function(self, w, h)
-		draw.RoundedBox(4, 0, 0, w, h, self:IsHovered() and Color(152, 142, 124, 255) or Color(124, 113, 97, 255))
-		surface.SetDrawColor(85, 75, 63, 255)
-		surface.DrawOutlinedRect(0, 0, w, h, 1)
-	end
-	helpButton.DoClick = function()
-		chat.AddText(Color(214, 202, 178), "[TF2-Gamemode] Use search/sort to filter backpack items. Right click any item for Inspect.")
 	end
 
 	local stockCheckbox = vgui.Create("DCheckBoxLabel", panel)
@@ -2670,23 +2717,24 @@ function TF_OpenStandaloneBackpack(initialClassName, initialClassIndex, forcedLo
 
 	local qualityDropdown = vgui.Create("DComboBox", panel)
 	styleCombo(qualityDropdown)
-	qualityDropdown:AddChoice("SHOW QUALITY COLOR BORDERS", true)
-	qualityDropdown:AddChoice("HIDE QUALITY COLOR BORDERS", false)
-	qualityDropdown:SetValue("SHOW QUALITY COLOR BORDERS")
+	qualityDropdown:AddChoice(getResLabel("#TF_Backpack_ShowNoBorders", "NO ITEM BORDERS"), "none")
+	qualityDropdown:AddChoice(getResLabel("#TF_Backpack_ShowQualityBorders", "SHOW QUALITY COLOR BORDERS"), "quality")
+	qualityDropdown:AddChoice(getResLabel("#TF_Backpack_ShowMarketableBorders", "SHOW MARKETABLE BORDERS ONLY"), "marketable")
+	qualityDropdown:SetValue(getResLabel("#TF_Backpack_ShowQualityBorders", "SHOW QUALITY COLOR BORDERS"))
 	qualityDropdown.OnSelect = function(_, _, _, data)
-		showQualityBorders = data ~= false
+		showQualityBorders = data ~= "none"
 		panel:BuildItems()
 	end
 
 	local sortDropdown = vgui.Create("DComboBox", panel)
 	styleCombo(sortDropdown)
-	sortDropdown:AddChoice("SORT BACKPACK", "default")
-	sortDropdown:AddChoice("SORT BY QUALITY", "quality")
-	sortDropdown:AddChoice("SORT BY TYPE", "type")
-	sortDropdown:AddChoice("SORT BY CLASS", "class")
-	sortDropdown:AddChoice("SORT BY LOADOUT SLOT", "slot")
-	sortDropdown:AddChoice("SORT BY DATE", "date")
-	sortDropdown:SetValue("SORT BACKPACK")
+	sortDropdown:AddChoice(getResLabel("#Backpack_SortBy_Header", "SORT BACKPACK"), "default")
+	sortDropdown:AddChoice(getResLabel("#Backpack_SortBy_Rarity", "SORT BY QUALITY"), "quality")
+	sortDropdown:AddChoice(getResLabel("#Backpack_SortBy_Type", "SORT BY TYPE"), "type")
+	sortDropdown:AddChoice(getResLabel("#Backpack_SortBy_Class", "SORT BY CLASS"), "class")
+	sortDropdown:AddChoice(getResLabel("#Backpack_SortBy_Slot", "SORT BY LOADOUT SLOT"), "slot")
+	sortDropdown:AddChoice(getResLabel("#Backpack_SortBy_Date", "SORT BY DATE"), "date")
+	sortDropdown:SetValue(getResLabel("#Backpack_SortBy_Header", "SORT BACKPACK"))
 	sortDropdown.OnSelect = function(_, _, _, data)
 		sortMode = isstring(data) and data or "default"
 		currentPage = 1
@@ -2711,15 +2759,12 @@ function TF_OpenStandaloneBackpack(initialClassName, initialClassIndex, forcedLo
 		surface.DrawOutlinedRect(0, 0, w, h, 1)
 	end
 
-	local itemicons = vgui.Create("DIconLayout", gridPanel)
-	itemicons:Dock(FILL)
-	itemicons:SetBorder(gridPadding)
-	itemicons:SetSpaceX(gridSpacing)
-	itemicons:SetSpaceY(gridSpacing)
+	local itemLayer = vgui.Create("EditablePanel", panel)
+	itemLayer:SetMouseInputEnabled(true)
+	function itemLayer:Paint() end
 
-	local pageBar = vgui.Create("DIconLayout", panel)
-	pageBar:SetSpaceX(5)
-	pageBar:SetSpaceY(5)
+	local pageBar = vgui.Create("EditablePanel", panel)
+	function pageBar:Paint() end
 
 	local backBtn = vgui.Create("TFButton", panel)
 	backBtn:SetSize(200, 36)
@@ -2752,9 +2797,6 @@ function TF_OpenStandaloneBackpack(initialClassName, initialClassIndex, forcedLo
 		searchEntry:SetPos(searchEntryX, searchEntryY)
 		searchEntry:SetSize(searchEntryW, searchEntryH)
 
-		helpButton:SetPos(searchEntryX + searchEntryW + math.max(4, math.floor(3 * Scale)), searchEntryY)
-		helpButton:SetSize(math.max(20, math.floor(15 * Scale)), searchEntryH)
-
 		local stockX = frameX + resToFrame(getResString(backpackStockNode, "xpos", "c-70"), 640, frameW, math.floor(frameW * 0.42))
 		local stockY = frameY + resToFrame(getResString(backpackStockNode, "ypos", "15"), 480, frameH, 15)
 		stockCheckbox:SetPos(stockX, stockY)
@@ -2774,50 +2816,34 @@ function TF_OpenStandaloneBackpack(initialClassName, initialClassIndex, forcedLo
 		sortDropdown:SetPos(sortX, sortY)
 		sortDropdown:SetSize(sortW, sortH)
 
-		infoLabel:SetPos(frameX + 20, frameY + 92)
+		tileW = math.max(42, resToFrame(tostring(backpackLayout.tileWide or 54), 640, frameW, 54))
+		tileH = math.max(34, resToFrame(tostring(backpackLayout.tileTall or 42), 480, frameH, 42))
+		gridInnerW = (columns * tileW) + ((columns - 1) * gridSpacingX)
+		gridInnerH = (rows * tileH) + ((rows - 1) * gridSpacingY)
+		itemStartX = frameX + math.floor((frameW * 0.5) + ((itemOffsetX / 640) * frameW))
+		itemStartY = frameY + resToFrame(tostring(TF2Res and TF2Res.GetNumber and TF2Res.GetNumber(backpackResRoot, "item_ypos", 60) or 60), 480, frameH, 60)
+
+		infoLabel:SetPos(frameX + 20, itemStartY - math.max(26, math.floor(18 * Scale)))
 		infoLabel:SetSize(frameW - 40, 24)
 
-		local gridY = frameY + headerH
-		local gridH = frameH - headerH - footerH
-		gridPanel:SetPos(frameX + 12, gridY)
-		gridPanel:SetSize(frameW - 24, gridH)
+		gridPanel:SetPos(itemStartX - gridPadding, itemStartY - gridPadding)
+		gridPanel:SetSize(gridInnerW + (gridPadding * 2), gridInnerH + (gridPadding * 2))
+		itemLayer:SetPos(itemStartX, itemStartY)
+		itemLayer:SetSize(gridInnerW, gridInnerH)
 
-		local buttonY = frameY + frameH - footerH + math.floor((footerH - backBtn:GetTall()) * 0.5)
+		local buttonY = frameY + frameH - backBtn:GetTall() - math.max(18, math.floor(14 * Scale))
 		backBtn:SetPos(frameX + 16, buttonY)
 		closeBtn:SetPos(frameX + frameW - closeBtn:GetWide() - 16, buttonY)
 
-		local pageX = backBtn:GetX() + backBtn:GetWide() + 12
-		local pageW = math.max(120, closeBtn:GetX() - pageX - 12)
-		local resPageY = frameY + resToFrame(tostring(backpackLayout.pageButtonY), 480, frameH, frameH - footerH + 9)
-		pageBar:SetPos(pageX, resPageY)
-		pageBar:SetSize(pageW, footerH - 18)
-		pageBar:SetSpaceX(math.max(1, math.floor(backpackLayout.pageButtonGapX * Scale)))
-		pageBar:SetSpaceY(math.max(1, math.floor(backpackLayout.pageButtonGapY * Scale)))
-		itemicons:SetSpaceX(math.max(1, math.floor(backpackLayout.itemDeltaX * Scale)))
-		itemicons:SetSpaceY(math.max(1, math.floor(backpackLayout.itemDeltaY * Scale)))
+		local resPageY = frameY + resToFrame(tostring(backpackLayout.pageButtonY), 480, frameH, 288)
+		local pageBarW = math.max(gridInnerW, math.floor((math.abs(itemOffsetX) * 2 / 640) * frameW))
+		pageBar:SetPos(itemStartX, resPageY)
+		pageBar:SetSize(pageBarW, math.max(16, frameY + frameH - resPageY - math.max(52, math.floor(42 * Scale))))
 	end
 
 	layoutBackpackUI()
 	panel.OnSizeChanged = function()
 		layoutBackpackUI()
-	end
-
-	local matValidity = {}
-	local function hasValidInventoryImage(item)
-		if not istable(item) then
-			return false
-		end
-		local imagePath = getResolvedItemImagePath(item, item.SteamProperties)
-		if not isstring(imagePath) or imagePath == "" then
-			return false
-		end
-		if matValidity[imagePath] ~= nil then
-			return matValidity[imagePath]
-		end
-		local mat = Material(imagePath)
-		local ok = mat ~= nil and (not mat:IsError())
-		matValidity[imagePath] = ok
-		return ok
 	end
 
 	local function getItemDisplayName(item)
@@ -3018,7 +3044,7 @@ function TF_OpenStandaloneBackpack(initialClassName, initialClassIndex, forcedLo
 	function panel:BuildItems()
 		steamInstances, steamErr, steamStatus = getSteamInventoryInstances()
 
-		for _, child in ipairs(itemicons:GetChildren()) do
+		for _, child in ipairs(itemLayer:GetChildren()) do
 			child:Remove()
 		end
 		for _, child in ipairs(pageBar:GetChildren()) do
@@ -3081,40 +3107,7 @@ function TF_OpenStandaloneBackpack(initialClassName, initialClassIndex, forcedLo
 
 		local sourceItems = rawCandidates
 		local ownedCount = #rawCandidates
-		if dedupeEnabled then
-			local dedupById = {}
-			local dedupByFallback = {}
-			for _, item in ipairs(rawCandidates) do
-				local id = tonumber(item.InventoryInstanceID or item.id)
-				local key
-				if id then
-					key = "id:" .. tostring(id)
-				else
-					local nameKey = string.lower(getItemDisplayName(item))
-					key = "fallback:" .. nameKey .. "|" .. tostring(getResolvedItemImagePath(item, item.SteamProperties) or "")
-				end
-
-				local existing = dedupById[key] or dedupByFallback[key]
-				if not existing then
-					if id then dedupById[key] = item else dedupByFallback[key] = item end
-				else
-					local scoreA = 0
-					local scoreB = 0
-					if hasValidInventoryImage(item) then scoreA = scoreA + 2 end
-					if hasValidInventoryImage(existing) then scoreB = scoreB + 2 end
-					if tf_lang.GetRaw(item.item_name) then scoreA = scoreA + 1 end
-					if tf_lang.GetRaw(existing.item_name) then scoreB = scoreB + 1 end
-					if scoreA > scoreB then
-						if id then dedupById[key] = item else dedupByFallback[key] = item end
-					end
-				end
-			end
-
-			sourceItems = {}
-			for _, item in pairs(dedupById) do sourceItems[#sourceItems + 1] = item end
-			for _, item in pairs(dedupByFallback) do sourceItems[#sourceItems + 1] = item end
-		end
-		local dedupCount = #sourceItems
+		local dedupCount = ownedCount
 
 		table.sort(sourceItems, function(a, b)
 			if sortMode == "quality" then
@@ -3199,13 +3192,7 @@ function TF_OpenStandaloneBackpack(initialClassName, initialClassIndex, forcedLo
 		local totalPages = math.max(1, math.ceil(visibleCount / pageSize))
 		currentPage = math.Clamp(currentPage, 1, totalPages)
 
-		if panel.LoadoutMode and forcedSlot and forcedSlot >= 4 and forcedSlot <= 6 then
-			infoLabel:SetText("Owned: " .. tostring(visibleCount) .. "  |  Class: " .. string.upper(activeClass) .. slotText .. "  |  Page " .. tostring(currentPage) .. "/" .. tostring(totalPages) .. "  |  Region conflicts are enforced")
-		elseif panel.LoadoutMode then
-			infoLabel:SetText("Owned: " .. tostring(visibleCount) .. "  |  Class: " .. string.upper(activeClass) .. slotText .. "  |  Page " .. tostring(currentPage) .. "/" .. tostring(totalPages) .. "  |  Showing equippable items only")
-		else
-			infoLabel:SetText("Owned: " .. tostring(visibleCount) .. "  |  Class: " .. string.upper(activeClass) .. slotText .. "  |  Page " .. tostring(currentPage) .. "/" .. tostring(totalPages) .. "  |  Incompatible items are disabled")
-		end
+		infoLabel:SetText("Owned: " .. tostring(visibleCount) .. "  |  Class: " .. string.upper(activeClass) .. slotText .. "  |  Page " .. tostring(currentPage) .. "/" .. tostring(totalPages))
 
 		if TFDebugBridge and TFDebugBridge.SetBackpackState then
 			local snapshot = {
@@ -3225,8 +3212,8 @@ function TF_OpenStandaloneBackpack(initialClassName, initialClassIndex, forcedLo
 		end
 
 		local pageButtonsPerRow = math.max(1, math.floor(backpackLayout.pageButtonsPerRow or 20))
-		local pageGapX = math.max(1, pageBar:GetSpaceX())
-		local pageGapY = math.max(1, pageBar:GetSpaceY())
+		local pageGapX = math.max(1, math.floor(backpackLayout.pageButtonGapX * Scale))
+		local pageGapY = math.max(1, math.floor(backpackLayout.pageButtonGapY * Scale))
 		local preferredPageBtnW = math.max(20, resToFrame(tostring(backpackLayout.pageButtonWidth or 25), 640, frameW, 25))
 		local preferredPageBtnH = math.max(14, resToFrame(tostring(backpackLayout.pageButtonHeight or 13), 480, frameH, 13))
 		local pageRows = math.max(1, math.ceil(totalPages / pageButtonsPerRow))
@@ -3238,12 +3225,15 @@ function TF_OpenStandaloneBackpack(initialClassName, initialClassIndex, forcedLo
 		for p = 1, totalPages do
 			local btn = vgui.Create("DButton", pageBar)
 			btn:SetSize(pageBtnW, pageBtnH)
+			local pageRow = math.floor((p - 1) / pageButtonsPerRow)
+			local pageCol = (p - 1) % pageButtonsPerRow
+			btn:SetPos(pageCol * (pageBtnW + pageGapX), pageRow * (pageBtnH + pageGapY))
 			btn:SetText("")
 			btn.Paint = function(self, w, h)
 				if p == currentPage then
-					draw.RoundedBox(6, 0, 0, w, h, Color(160, 88, 68, 255))
+					draw.RoundedBox(0, 0, 0, w, h, Color(160, 88, 68, 255))
 				else
-					draw.RoundedBox(6, 0, 0, w, h, Color(131, 122, 108, 228))
+					draw.RoundedBox(0, 0, 0, w, h, Color(131, 122, 108, 228))
 				end
 				surface.SetDrawColor(90, 84, 76, 255)
 				surface.DrawOutlinedRect(0, 0, w, h, 1)
@@ -3253,7 +3243,6 @@ function TF_OpenStandaloneBackpack(initialClassName, initialClassIndex, forcedLo
 				currentPage = p
 				panel:BuildItems()
 			end
-			pageBar:Add(btn)
 		end
 
 		local startIndex = ((currentPage - 1) * pageSize) + 1
@@ -3265,18 +3254,14 @@ function TF_OpenStandaloneBackpack(initialClassName, initialClassIndex, forcedLo
 		end
 		local tauntSplit = getTauntLoadout(activeClass)
 
-		local spaceX, spaceY = itemicons:GetSpaceX(), itemicons:GetSpaceY()
-		local gridW, gridH = gridPanel:GetWide() - (gridPadding * 2), gridPanel:GetTall() - (gridPadding * 2)
-		local resTileW = math.max(42, resToFrame(tostring(backpackLayout.tileWide or 54), 640, frameW, 72))
-		local resTileH = math.max(34, resToFrame(tostring(backpackLayout.tileTall or 42), 480, frameH, 62))
-		local tileW = math.max(resTileW, math.floor((gridW - ((columns - 1) * spaceX)) / columns))
-		local tileH = math.max(resTileH, math.floor((gridH - ((rows - 1) * spaceY)) / rows))
-
 		for idx = startIndex, endIndex do
 			local item = sourceItems[idx]
-			local model = vgui.Create("ItemModelPanel", itemicons)
+			local model = vgui.Create("ItemModelPanel", itemLayer)
 			model:SetSize(tileW, tileH)
-			itemicons:Add(model)
+			local localIndex = idx - startIndex
+			local col = localIndex % columns
+			local row = math.floor(localIndex / columns)
+			model:SetPos(col * (tileW + gridSpacingX), row * (tileH + gridSpacingY))
 
 			model.activeImage = loadout_rect_mouseover
 			model.inactiveImage = loadout_rect
@@ -3316,9 +3301,10 @@ function TF_OpenStandaloneBackpack(initialClassName, initialClassIndex, forcedLo
 			end
 			applyDecoratedPanelVisual(model, item, item.SteamProperties)
 
-			local compatible = classCanUseItem(item, activeClass)
+			local compatible = true
 			local slotCompatible = forcedSlot == nil or forcedSlot == false
 			if forcedSlot then
+				compatible = classCanUseItem(item, activeClass)
 				local tauntSlot = forcedSlotToTauntSlot(forcedSlot)
 				if tauntSlot then
 					slotCompatible = isTauntItem(item)
@@ -3335,12 +3321,8 @@ function TF_OpenStandaloneBackpack(initialClassName, initialClassIndex, forcedLo
 				equipRegionCompatible = not hasCosmeticEquipRegionConflict(item, split, itemsById, forcedSlot)
 			end
 			compatible = compatible and slotCompatible and equipRegionCompatible
-			model.disabled = not compatible
-			if not compatible then
-				model:SetAlpha(108)
-			else
-				model:SetAlpha(255)
-			end
+			model.disabled = panel.LoadoutMode and (not compatible)
+			model:SetAlpha((panel.LoadoutMode and not compatible) and 108 or 255)
 
 			local equipped = false
 			local itemId = tonumber(item.id)
@@ -3362,18 +3344,15 @@ function TF_OpenStandaloneBackpack(initialClassName, initialClassIndex, forcedLo
 			end
 			local qualityBorder = getQualityBorderColor(item)
 			model.PaintOver = function(self, w, h)
-				local borderAlpha = compatible and 255 or 128
+				local borderAlpha = (panel.LoadoutMode and not compatible) and 128 or 255
 				surface.SetDrawColor(qualityBorder.r, qualityBorder.g, qualityBorder.b, borderAlpha)
-				surface.DrawOutlinedRect(0, 0, w, h, 2)
-				if not compatible then
+				surface.DrawOutlinedRect(0, 0, w, h, 1)
+				if panel.LoadoutMode and not compatible then
 					surface.SetDrawColor(8, 8, 8, 110)
 					surface.DrawRect(1, 1, w - 2, h - 2)
 				end
 				if equipped then
-					local badgeW, badgeH = math.max(56, math.floor(w * 0.5)), 16
-					local badgeX, badgeY = math.floor((w - badgeW) * 0.5), h - badgeH - 2
-					draw.RoundedBox(4, badgeX, badgeY, badgeW, badgeH, Color(7, 7, 7, 210))
-					draw.SimpleText("Equipped", "HudFontSmallBold", badgeX + badgeW * 0.5, badgeY + badgeH * 0.5, Color(238, 131, 84, 255), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+					draw.SimpleText("EQUIPPED", "HudFontSmallBold", 6, h - 4, Color(238, 131, 84, 255), TEXT_ALIGN_LEFT, TEXT_ALIGN_BOTTOM)
 				end
 			end
 

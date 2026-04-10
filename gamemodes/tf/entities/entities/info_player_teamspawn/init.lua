@@ -16,6 +16,22 @@ function ENT:KeyValue(key, value)
 		value = tonumber(value)
 	end
 	self.Properties[key] = value
+
+	if key == "startdisabled"
+		or key == "spawnmode"
+		or key == "matchsummary"
+		or key == "teamnum" then
+		self:RefreshStateFromProperties()
+	elseif key == "controlpoint"
+		or key == "round_bluespawn"
+		or key == "round_redspawn" then
+		self:ResolveLinkedEntities()
+	end
+end
+
+function ENT:Activate()
+	self:RefreshStateFromProperties()
+	self:ResolveLinkedEntities()
 end
 
 function ENT:RefreshStateFromProperties()
@@ -27,17 +43,55 @@ function ENT:RefreshStateFromProperties()
 
 	local teamNum = tonumber(props.teamnum or -1) or -1
 	if teamNum == -1 then
-		teamNum = tonumber((self:GetKeyValues() or {}).TeamNum or -1) or -1
+		local kv = self.GetKeyValues and self:GetKeyValues() or {}
+		teamNum = tonumber(kv.TeamNum or kv.teamnum or kv.TeamNum or -1) or -1
 	end
 	self.TeamNum = teamNum
 end
 
-function ENT:ResolveLinkedEntities()
+function ENT:GetControlPointTargetName()
 	local props = self.Properties or {}
+	local controlPointName = props.controlpoint
+	if controlPointName == nil then
+		local kv = self.GetKeyValues and self:GetKeyValues() or {}
+		controlPointName = kv.controlpoint or kv.ControlPoint
+	end
 
-	local controlPointName = tostring(props.controlpoint or "")
-	local roundBlueName = tostring(props.round_bluespawn or "")
-	local roundRedName = tostring(props.round_redspawn or "")
+	if isnumber(controlPointName) then
+		if controlPointName <= 0 then
+			return ""
+		end
+	end
+
+	controlPointName = tostring(controlPointName or "")
+	if controlPointName == "" or controlPointName == "0" or controlPointName == "-1" or controlPointName == "nil" then
+		return ""
+	end
+
+	return controlPointName
+end
+
+function ENT:GetRoundSpawnTargetName(teamNum)
+	local props = self.Properties or {}
+	local key = teamNum == TEAM_BLU and "round_bluespawn" or "round_redspawn"
+	local roundName = props[key]
+	if roundName == nil then
+		local kv = self.GetKeyValues and self:GetKeyValues() or {}
+		roundName = kv[key] or kv[(teamNum == TEAM_BLU) and "RoundBlueSpawn" or "RoundRedSpawn"]
+	end
+
+	roundName = tostring(roundName or "")
+	if roundName == "" or roundName == "0" or roundName == "-1" or roundName == "nil" then
+		return ""
+	end
+
+	return roundName
+end
+
+function ENT:ResolveLinkedEntities()
+	local controlPointName = self:GetControlPointTargetName()
+	local roundBlueName = self:GetRoundSpawnTargetName(TEAM_BLU)
+	local roundRedName = self:GetRoundSpawnTargetName(TEAM_RED)
 
 	self.ControlPoint = ents.FindByName(controlPointName)[1] or NULL
 	self.RoundBlueSpawn = ents.FindByName(roundBlueName)[1] or NULL
@@ -62,7 +116,14 @@ function ENT:IsDisabled()
 end
 
 function ENT:GetSpawnTeamNum()
-	return tonumber(self.TeamNum or -1) or -1
+	local teamNum = tonumber(self.TeamNum or -1) or -1
+	if teamNum ~= -1 then
+		return teamNum
+	end
+
+	local kv = self.GetKeyValues and self:GetKeyValues() or {}
+	teamNum = tonumber(kv.TeamNum or kv.teamnum or self.teamnum or self.Team or -1) or -1
+	return teamNum
 end
 
 function ENT:IsTriggeredSpawn()
@@ -70,6 +131,15 @@ function ENT:IsTriggeredSpawn()
 end
 
 function ENT:IsRoundEnabledForTeam(teamNum)
+	local expectsNamedRound = self:GetRoundSpawnTargetName(teamNum) ~= ""
+
+	if expectsNamedRound then
+		local roundEnt = (teamNum == TEAM_BLU and self.RoundBlueSpawn) or (teamNum == TEAM_RED and self.RoundRedSpawn) or NULL
+		if not IsValid(roundEnt) then
+			self:ResolveLinkedEntities()
+		end
+	end
+
 	local roundEnt = NULL
 	if teamNum == TEAM_BLU then
 		roundEnt = self.RoundBlueSpawn
@@ -78,14 +148,7 @@ function ENT:IsRoundEnabledForTeam(teamNum)
 	end
 
 	if not IsValid(roundEnt) then
-		local hasNamedRound = false
-		local props = self.Properties or {}
-		if teamNum == TEAM_BLU then
-			hasNamedRound = isstring(props.round_bluespawn) and props.round_bluespawn ~= ""
-		elseif teamNum == TEAM_RED then
-			hasNamedRound = isstring(props.round_redspawn) and props.round_redspawn ~= ""
-		end
-		return not hasNamedRound
+		return not expectsNamedRound
 	end
 
 	if roundEnt.IsDisabled then
@@ -96,9 +159,19 @@ function ENT:IsRoundEnabledForTeam(teamNum)
 end
 
 function ENT:IsControlPointEnabledForTeam(teamNum)
+	local controlPointName = self:GetControlPointTargetName()
+	local expectsControlPoint = controlPointName ~= ""
+	if not expectsControlPoint then
+		self.ControlPoint = NULL
+		return true
+	end
+
 	if not IsValid(self.ControlPoint) then
-		local props = self.Properties or {}
-		return not (isstring(props.controlpoint) and props.controlpoint ~= "")
+		self:ResolveLinkedEntities()
+	end
+
+	if not IsValid(self.ControlPoint) then
+		return true
 	end
 
 	if not self.ControlPoint.GetOwnerTeam then

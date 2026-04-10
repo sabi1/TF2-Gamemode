@@ -727,6 +727,14 @@ function meta:ResetClassSpeed()
 	local c = self:GetPlayerClassTable()
 	local sp = 100
 	if c and c.Speed then sp = c.Speed end
+	local jumpPower = tonumber(self.PlayerJumpPower)
+	if not jumpPower then
+		jumpPower = tonumber(c and c.JumpPower)
+	end
+	if not jumpPower or jumpPower <= 0 then
+		jumpPower = tonumber(self.GetJumpPower and self:GetJumpPower()) or TF2_JUMP_POWER or 200
+	end
+	self.PlayerJumpPower = jumpPower
 	
 	if self.TempAttributes then
 		--[[sp = sp * (self.TempAttributes.SpeedBonus or 1) * (self:GetActiveWeapon().LocalSpeedBonus or 1)
@@ -755,7 +763,7 @@ function meta:ResetClassSpeed()
 		sp = sp * mul_speedbonus + add_speedbonus
 	end
 	self:SetClassSpeed(sp)
-	self:SetJumpPower(self.PlayerJumpPower)
+	self:SetJumpPower(jumpPower)
 end
 
 end

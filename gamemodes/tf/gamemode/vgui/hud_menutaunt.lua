@@ -77,6 +77,7 @@ function PANEL:Open()
 	local ply = LocalPlayer()
 	if not IsValid(ply) or not ply:Alive() then return false end
 	if ply:GetNWBool("Taunting") then return false end
+	if ply.InCond and ply:InCond(TF_COND_HALLOWEEN_KART) then return false end
 	if not self:HasAnyEquippedTaunt() then return false end
 
 	self:RefreshItems(true)

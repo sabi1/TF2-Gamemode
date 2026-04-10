@@ -5,6 +5,7 @@ local M = TFBotNavGen
 
 local DATA_DIR = "tf/nav_landmarks"
 local POLL_TIMER = "TFBotNavGen_Poll"
+local META_VERSION = 2
 local vectorUp = Vector(0, 0, 1)
 local mapPrefix = string.lower((game.GetMap() or ""):match("^([a-z0-9]+)_") or "")
 
@@ -14,6 +15,7 @@ file.CreateDir(DATA_DIR)
 M.Runtime = M.Runtime or {
 	active = false,
 	landmarks = {},
+	areaMeta = {},
 	mapMode = "generic",
 }
 
@@ -108,6 +110,187 @@ local function addPoint(list, dedupe, kind, pos, meta)
 	}
 end
 
+local function normalizeAttrName(name)
+	name = string.lower(tostring(name or ""))
+	name = string.gsub(name, "^tf_nav_", "")
+	return name
+end
+
+local function getTeamControlPointNum(teamNum)
+	if teamNum == TEAM_RED then return 2 end
+	if teamNum == TEAM_BLU or teamNum == TF_TEAM_PVE_INVADERS then return 3 end
+	return nil
+end
+
+local function getWorldAABB(ent)
+	if not IsValid(ent) then return nil, nil end
+	if ent.WorldSpaceAABB then
+		local ok, mins, maxs = pcall(ent.WorldSpaceAABB, ent)
+		if ok and isvector(mins) and isvector(maxs) then
+			return mins, maxs
+		end
+	end
+	if ent.GetCollisionBounds and ent.LocalToWorld then
+		local okBounds, mins, maxs = pcall(ent.GetCollisionBounds, ent)
+		if okBounds and isvector(mins) and isvector(maxs) then
+			local okWorldMin, worldMin = pcall(ent.LocalToWorld, ent, mins)
+			local okWorldMax, worldMax = pcall(ent.LocalToWorld, ent, maxs)
+			if okWorldMin and okWorldMax and isvector(worldMin) and isvector(worldMax) then
+				return Vector(math.min(worldMin.x, worldMax.x), math.min(worldMin.y, worldMax.y), math.min(worldMin.z, worldMax.z)),
+					Vector(math.max(worldMin.x, worldMax.x), math.max(worldMin.y, worldMax.y), math.max(worldMin.z, worldMax.z))
+			end
+		end
+	end
+	return nil, nil
+end
+
+local function pointWithinBounds(pos, mins, maxs, pad)
+	if not (isvector(pos) and isvector(mins) and isvector(maxs)) then return false end
+	pad = tonumber(pad) or 0
+	return pos.x >= (mins.x - pad) and pos.x <= (maxs.x + pad)
+		and pos.y >= (mins.y - pad) and pos.y <= (maxs.y + pad)
+		and pos.z >= (mins.z - pad) and pos.z <= (maxs.z + pad)
+end
+
+local function getAllNavAreas()
+	if not (navmesh and navmesh.GetAllNavAreas) then return {} end
+	return navmesh.GetAllNavAreas() or {}
+end
+
+local function collectAreasInBounds(mins, maxs, out, seen, pad)
+	for _, area in ipairs(getAllNavAreas()) do
+		if not IsValid(area) then continue end
+		local areaId = area.GetID and area:GetID() or nil
+		if not areaId or (seen and seen[areaId]) then continue end
+		if pointWithinBounds(area:GetCenter(), mins, maxs, pad or 32) then
+			if seen then seen[areaId] = true end
+			out[#out + 1] = area
+		end
+	end
+end
+
+local function getAreaById(areaId)
+	if not areaId then return nil end
+	if navmesh and navmesh.GetNavAreaByID then
+		local area = navmesh.GetNavAreaByID(areaId)
+		if IsValid(area) then
+			return area
+		end
+	end
+	for _, area in ipairs(getAllNavAreas()) do
+		if IsValid(area) and area.GetID and area:GetID() == areaId then
+			return area
+		end
+	end
+	return nil
+end
+
+local function ensureAreaMetaEntry(areaMeta, area)
+	if not IsValid(area) then return nil end
+	local areaId = area:GetID()
+	if not areaMeta[areaId] then
+		areaMeta[areaId] = {
+			attrs = {},
+			place = nil,
+			center = area:GetCenter(),
+		}
+	end
+	return areaMeta[areaId]
+end
+
+local function addAreaAttr(areaMeta, area, attrName)
+	local entry = ensureAreaMetaEntry(areaMeta, area)
+	if not entry then return end
+	entry.attrs[normalizeAttrName(attrName)] = true
+end
+
+local function setAreaPlace(areaMeta, area, placeName)
+	local entry = ensureAreaMetaEntry(areaMeta, area)
+	if not entry then return end
+	entry.place = placeName or entry.place
+end
+
+local function getNavAreaMetaTable()
+	if FindMetaTable then
+		for _, name in ipairs({"CNavArea", "NavArea"}) do
+			local meta = FindMetaTable(name)
+			if istable(meta) then
+				return meta
+			end
+		end
+	end
+	if debug and debug.getmetatable then
+		for _, area in ipairs(getAllNavAreas()) do
+			if IsValid(area) then
+				local meta = debug.getmetatable(area)
+				if istable(meta) then
+					return meta
+				end
+			end
+		end
+	end
+	return nil
+end
+
+function M:InstallNavAreaExtensions()
+	if self._navAreaExtensionsInstalled then return end
+	local meta = getNavAreaMetaTable()
+	if not istable(meta) then return end
+	self._navAreaExtensionsInstalled = true
+
+	local originalHasTFAttribute = meta.HasTFAttribute
+	if not meta._tfbotOriginalHasTFAttribute then
+		meta._tfbotOriginalHasTFAttribute = originalHasTFAttribute
+	end
+	meta.HasTFAttribute = function(area, attr)
+		if isstring(attr) then
+			local runtime = TFBotNavGen and TFBotNavGen.Runtime or nil
+			local areaId = area.GetID and area:GetID() or nil
+			local entry = runtime and runtime.areaMeta and areaId and runtime.areaMeta[areaId] or nil
+			if entry and entry.attrs and entry.attrs[normalizeAttrName(attr)] ~= nil then
+				return entry.attrs[normalizeAttrName(attr)] == true
+			end
+		end
+		if isfunction(meta._tfbotOriginalHasTFAttribute) then
+			local ok, result = pcall(meta._tfbotOriginalHasTFAttribute, area, attr)
+			if ok then
+				return result
+			end
+		end
+		return false
+	end
+
+	local originalGetPlace = meta.GetPlace
+	if not meta._tfbotOriginalGetPlace then
+		meta._tfbotOriginalGetPlace = originalGetPlace
+	end
+	meta.GetPlace = function(area)
+		if isfunction(meta._tfbotOriginalGetPlace) then
+			local ok, result = pcall(meta._tfbotOriginalGetPlace, area)
+			if ok and result and result ~= "" then
+				return result
+			end
+		end
+		local runtime = TFBotNavGen and TFBotNavGen.Runtime or nil
+		local areaId = area.GetID and area:GetID() or nil
+		local entry = runtime and runtime.areaMeta and areaId and runtime.areaMeta[areaId] or nil
+		return entry and entry.place or ""
+	end
+end
+
+function M:ApplyAreaMetadata(areaMeta)
+	self:SetRuntimeAreaMeta(areaMeta or {})
+	self:InstallNavAreaExtensions()
+
+	for areaId, meta in pairs(self:GetAreaMeta()) do
+		local area = getAreaById(areaId)
+		if not IsValid(area) then continue end
+		if meta.place and area.SetPlace then
+			pcall(area.SetPlace, area, meta.place)
+		end
+	end
+end
+
 local function collectClassPoints(list, dedupe, className, kind, opts)
 	for _, ent in ipairs(ents.FindByClass(className)) do
 		local pos = getEntPos(ent)
@@ -137,9 +320,17 @@ function M:CollectObjectivePoints()
 	collectClassPoints(points, dedupe, "func_capturezone", "capture_zone", {})
 	collectClassPoints(points, dedupe, "item_teamflag", "flag", {})
 	collectClassPoints(points, dedupe, "item_teamflag_mvm", "flag_mvm", {})
+	collectClassPoints(points, dedupe, "func_passtime_goal", "passtime_goal", {})
+	collectClassPoints(points, dedupe, "info_powerup_spawn", "powerup_spawn", {})
 	collectClassPoints(points, dedupe, "bot_hint_sniper_spot", "sniper_spot", {})
 	collectClassPoints(points, dedupe, "bot_hint_sentrygun", "sentry_spot", {})
 	collectClassPoints(points, dedupe, "bot_hint_teleporter_exit", "tele_exit", {})
+	collectClassPoints(points, dedupe, "item_healthkit_small", "health", {})
+	collectClassPoints(points, dedupe, "item_healthkit_medium", "health", {})
+	collectClassPoints(points, dedupe, "item_healthkit_full", "health", {})
+	collectClassPoints(points, dedupe, "item_ammopack_small", "ammo", {})
+	collectClassPoints(points, dedupe, "item_ammopack_medium", "ammo", {})
+	collectClassPoints(points, dedupe, "item_ammopack_full", "ammo", {})
 
 	local hasPayloadWatchers = #ents.FindByClass("team_train_watcher") > 0
 	collectClassPoints(points, dedupe, "team_train_watcher", "payload", {})
@@ -159,11 +350,15 @@ local placeNames = {
 	capture_zone = "tf_capture_zone",
 	flag = "tf_flag",
 	flag_mvm = "tf_flag_mvm",
+	passtime_goal = "tf_passtime_goal",
+	powerup_spawn = "tf_powerup_spawn",
 	payload = "tf_payload",
 	payload_path = "tf_payload_path",
 	sniper_spot = "tf_sniper_spot",
 	sentry_spot = "tf_sentry_spot",
 	tele_exit = "tf_tele_exit",
+	health = "tf_health",
+	ammo = "tf_ammo",
 }
 
 local placePriority = {
@@ -177,9 +372,13 @@ local placePriority = {
 	payload = 55,
 	flag = 60,
 	flag_mvm = 70,
+	passtime_goal = 72,
+	powerup_spawn = 73,
 	capture_area = 75,
 	capture_zone = 80,
 	control_point = 90,
+	health = 18,
+	ammo = 18,
 }
 
 local hidingFlags = {
@@ -193,6 +392,8 @@ local hidingFlags = {
 	flag_mvm = 1,
 	payload = 1,
 	payload_path = 1,
+	passtime_goal = 1,
+	powerup_spawn = 1,
 }
 
 local function getMapMode(points)
@@ -295,6 +496,18 @@ local function inferKindFromPlaceName(placeName)
 	if string.find(place, "payload", 1, true) or string.find(place, "cart", 1, true) or string.find(place, "track", 1, true) then
 		return "payload_path"
 	end
+	if string.find(place, "passtime", 1, true) then
+		return "passtime_goal"
+	end
+	if string.find(place, "powerup", 1, true) or string.find(place, "rune", 1, true) then
+		return "powerup_spawn"
+	end
+	if string.find(place, "health", 1, true) or string.find(place, "med", 1, true) then
+		return "health"
+	end
+	if string.find(place, "ammo", 1, true) then
+		return "ammo"
+	end
 	if string.find(place, "sniper", 1, true) or string.find(place, "battlement", 1, true) then
 		return "sniper_spot"
 	end
@@ -352,8 +565,16 @@ function M:SetRuntimeLandmarks(landmarks, modeName)
 	self.Runtime.mapMode = modeName or "generic"
 end
 
+function M:SetRuntimeAreaMeta(areaMeta)
+	self.Runtime.areaMeta = areaMeta or {}
+end
+
 function M:GetLandmarks()
 	return self.Runtime.landmarks or {}
+end
+
+function M:GetAreaMeta()
+	return self.Runtime.areaMeta or {}
 end
 
 function M:GetMapMode()
@@ -397,10 +618,26 @@ local function landmarksToJson(list)
 	return util.TableToJSON(out, true)
 end
 
-local function landmarksFromJson(raw)
-	local decoded = util.JSONToTable(raw or "")
-	if not istable(decoded) then return {} end
+local function packLandmarks(list)
+	local out = {}
+	for _, landmark in ipairs(list or {}) do
+		out[#out + 1] = {
+			kind = landmark.kind,
+			team = landmark.team,
+			areaId = landmark.areaId,
+			place = landmark.place,
+			pos = {
+				x = landmark.pos.x,
+				y = landmark.pos.y,
+				z = landmark.pos.z,
+			},
+		}
+	end
+	return out
+end
 
+local function unpackLandmarks(decoded)
+	if not istable(decoded) then return {} end
 	local out = {}
 	for _, landmark in ipairs(decoded) do
 		if not istable(landmark) or not istable(landmark.pos) then continue end
@@ -420,6 +657,64 @@ local function landmarksFromJson(raw)
 	return out
 end
 
+local function packAreaMeta(areaMeta)
+	local out = {}
+	for areaId, meta in pairs(areaMeta or {}) do
+		if not istable(meta) then continue end
+		out[#out + 1] = {
+			id = tonumber(areaId),
+			place = isstring(meta.place) and meta.place or nil,
+			attrs = istable(meta.attrs) and table.GetKeys(meta.attrs) or {},
+			center = meta.center and { x = meta.center.x, y = meta.center.y, z = meta.center.z } or nil,
+		}
+	end
+	table.sort(out, function(a, b) return (a.id or 0) < (b.id or 0) end)
+	return out
+end
+
+local function unpackAreaMeta(list)
+	local out = {}
+	for _, entry in ipairs(list or {}) do
+		if not istable(entry) then continue end
+		local areaId = tonumber(entry.id)
+		if not areaId then continue end
+		local attrs = {}
+		for _, attrName in ipairs(entry.attrs or {}) do
+			attrs[normalizeAttrName(attrName)] = true
+		end
+		out[areaId] = {
+			place = isstring(entry.place) and entry.place or nil,
+			attrs = attrs,
+			center = istable(entry.center) and Vector(tonumber(entry.center.x) or 0, tonumber(entry.center.y) or 0, tonumber(entry.center.z) or 0) or nil,
+		}
+	end
+	return out
+end
+
+local function serializeNavData(landmarks, areaMeta, modeName)
+	return util.TableToJSON({
+		version = META_VERSION,
+		mapMode = modeName or "generic",
+		landmarks = packLandmarks(landmarks),
+		areas = packAreaMeta(areaMeta),
+	}, true)
+end
+
+local function parseNavData(raw)
+	local decoded = util.JSONToTable(raw or "")
+	if not istable(decoded) then
+		return {}, {}, nil
+	end
+
+	if decoded[1] then
+		return unpackLandmarks(decoded), {}, nil
+	end
+
+	local landmarks = unpackLandmarks(decoded.landmarks or {})
+	local areaMeta = unpackAreaMeta(decoded.areas or {})
+	return landmarks, areaMeta, isstring(decoded.mapMode) and decoded.mapMode or nil
+end
+
 function M:GetDataPath()
 	return string.format("%s/%s.json", DATA_DIR, string.lower(game.GetMap() or "unknown"))
 end
@@ -427,11 +722,13 @@ end
 function M:LoadLandmarks()
 	local path = self:GetDataPath()
 	local landmarks = {}
+	local areaMeta = {}
+	local modeName = nil
 	if not file.Exists(path, "DATA") then
 		landmarks = {}
 	else
 		local raw = file.Read(path, "DATA")
-		landmarks = landmarksFromJson(raw)
+		landmarks, areaMeta, modeName = parseNavData(raw)
 	end
 
 	local nativePoints = self:CollectNativeNavHints()
@@ -445,12 +742,13 @@ function M:LoadLandmarks()
 		}
 	end
 
-	self:SetRuntimeLandmarks(landmarks, getMapMode(#landmarks > 0 and landmarks or nativePoints))
+	self:SetRuntimeLandmarks(landmarks, modeName or getMapMode(#landmarks > 0 and landmarks or nativePoints))
+	self:ApplyAreaMetadata(areaMeta)
 	return #landmarks > 0
 end
 
-function M:SaveLandmarks(landmarks)
-	file.Write(self:GetDataPath(), landmarksToJson(landmarks))
+function M:SaveLandmarks(landmarks, areaMeta, modeName)
+	file.Write(self:GetDataPath(), serializeNavData(landmarks, areaMeta, modeName))
 end
 
 local function getSeedPos(pos)
@@ -487,8 +785,115 @@ function M:PrepareSeeds(points)
 	return seeds
 end
 
+function M:CollectAreaMetadata(points)
+	local areaMeta = {}
+	local allAreas = getAllNavAreas()
+
+	local function nearestAreaFor(point)
+		local teamNum = point and point.team or TEAM_ANY
+		local area = navmesh.GetNearestNavArea(point.pos, true, 1500, true, true, teamNum or TEAM_ANY)
+		if not IsValid(area) then
+			area = navmesh.GetNearestNavArea(point.pos, true, 1500, true, true)
+		end
+		return area
+	end
+
+	for _, point in ipairs(points or {}) do
+		local area = nearestAreaFor(point)
+		if not IsValid(area) then continue end
+
+		if point.kind == "control_point" or point.kind == "capture_area" or point.kind == "capture_zone" then
+			addAreaAttr(areaMeta, area, "control_point")
+		elseif point.kind == "sniper_spot" then
+			addAreaAttr(areaMeta, area, "sniper_spot")
+		elseif point.kind == "sentry_spot" then
+			addAreaAttr(areaMeta, area, "sentry_spot")
+		elseif point.kind == "health" then
+			addAreaAttr(areaMeta, area, "has_health")
+		elseif point.kind == "ammo" then
+			addAreaAttr(areaMeta, area, "has_ammo")
+		end
+
+		local placeName = placeNames[point.kind]
+		if placeName then
+			setAreaPlace(areaMeta, area, placeName)
+		end
+	end
+
+	for _, room in ipairs(ents.FindByClass("func_respawnroom")) do
+		if not IsValid(room) then continue end
+		local teamNum = getTeamNum(room)
+		local attrName = (teamNum == TEAM_RED and "spawn_room_red") or ((teamNum == TEAM_BLU or teamNum == TF_TEAM_PVE_INVADERS) and "spawn_room_blue") or nil
+		if not attrName then continue end
+
+		local mins, maxs = getWorldAABB(room)
+		if not (isvector(mins) and isvector(maxs)) then continue end
+
+		local roomAreas = {}
+		local seen = {}
+		collectAreasInBounds(mins, maxs, roomAreas, seen, 40)
+
+		for _, area in ipairs(roomAreas) do
+			addAreaAttr(areaMeta, area, attrName)
+			setAreaPlace(areaMeta, area, teamNum == TEAM_RED and "tf_spawn_red" or "tf_spawn_blu")
+		end
+
+		for _, area in ipairs(roomAreas) do
+			if not area.GetAdjacentAreas then continue end
+			local ok, adjacent = pcall(area.GetAdjacentAreas, area)
+			if not ok or not istable(adjacent) then continue end
+			for _, adjArea in ipairs(adjacent) do
+				if not IsValid(adjArea) then continue end
+				local adjId = adjArea:GetID()
+				local adjMeta = areaMeta[adjId]
+				if adjMeta and adjMeta.attrs and adjMeta.attrs[attrName] then continue end
+				addAreaAttr(areaMeta, adjArea, "spawn_room_exit")
+			end
+		end
+	end
+
+	for _, cpTriggerClass in ipairs({"trigger_capture_area", "func_capturezone", "func_passtime_goal"}) do
+		for _, ent in ipairs(ents.FindByClass(cpTriggerClass)) do
+			if not IsValid(ent) then continue end
+			local mins, maxs = getWorldAABB(ent)
+			if not (isvector(mins) and isvector(maxs)) then continue end
+			local found = {}
+			local seen = {}
+			collectAreasInBounds(mins, maxs, found, seen, 32)
+			for _, area in ipairs(found) do
+				if cpTriggerClass ~= "func_passtime_goal" then
+					addAreaAttr(areaMeta, area, "control_point")
+				end
+				local placeName = placeNames[cpTriggerClass == "func_passtime_goal" and "passtime_goal" or "capture_zone"]
+				if placeName then
+					setAreaPlace(areaMeta, area, placeName)
+				end
+			end
+		end
+	end
+
+	for _, area in ipairs(allAreas) do
+		if not IsValid(area) then continue end
+		local placeName = area.GetPlace and area:GetPlace() or ""
+		local inferred = inferKindFromPlaceName(placeName)
+		if inferred == "control_point" then
+			addAreaAttr(areaMeta, area, "control_point")
+		elseif inferred == "sniper_spot" then
+			addAreaAttr(areaMeta, area, "sniper_spot")
+		elseif inferred == "sentry_spot" then
+			addAreaAttr(areaMeta, area, "sentry_spot")
+		end
+		if isstring(placeName) and placeName ~= "" then
+			setAreaPlace(areaMeta, area, placeName)
+		end
+	end
+
+	return areaMeta
+end
+
 function M:Finalize(invoker)
 	local points = self:CollectObjectivePoints()
+	local areaMeta = self:CollectAreaMetadata(points)
 	local perArea = {}
 	local landmarks = {}
 
@@ -528,7 +933,8 @@ function M:Finalize(invoker)
 	end
 
 	self:SetRuntimeLandmarks(landmarks, getMapMode(points))
-	self:SaveLandmarks(landmarks)
+	self:ApplyAreaMetadata(areaMeta)
+	self:SaveLandmarks(landmarks, areaMeta, self:GetMapMode())
 
 	if navmesh.Save then
 		pcall(navmesh.Save)
@@ -536,7 +942,7 @@ function M:Finalize(invoker)
 
 	self.Runtime.active = false
 	timer.Remove(POLL_TIMER)
-	notify(invoker, string.format("nav generation finished. saved %d landmarks for %s.", #landmarks, game.GetMap()))
+	notify(invoker, string.format("nav generation finished. saved %d landmarks and %d annotated nav areas for %s.", #landmarks, table.Count(areaMeta), game.GetMap()))
 end
 
 function M:Start(invoker)
@@ -608,11 +1014,15 @@ end, nil, "Generate a TF-aware navmesh and landmark set for player bots.")
 concommand.Add("tf_bot_nav_landmarks_reload", function(ply)
 	if IsValid(ply) and not ply:IsAdmin() then return end
 	local ok = M:LoadLandmarks()
-	notify(ply, ok and string.format("reloaded %d landmarks.", #M:GetLandmarks()) or "no stored landmarks were found for this map.")
+	notify(ply, ok and string.format("reloaded %d landmarks and %d annotated nav areas.", #M:GetLandmarks(), table.Count(M:GetAreaMeta())) or "no stored landmarks were found for this map.")
 end, nil, "Reload stored TF bot nav landmarks for the current map.")
 
 _G.TFBot_GetNavLandmarks = function()
 	return M:GetLandmarks()
+end
+
+_G.TFBot_GetNavAreaMeta = function()
+	return M:GetAreaMeta()
 end
 
 _G.TFBot_PickNavLandmarkPosition = function(bot, modeName)

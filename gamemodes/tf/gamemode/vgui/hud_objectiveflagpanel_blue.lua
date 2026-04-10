@@ -28,44 +28,8 @@ function PANEL:PerformLayout()
 end
 
 function PANEL:Paint()
-	local param
-	
-	local isCTF = TF_IsCtfHudMode and TF_IsCtfHudMode() or string.find(string.lower(game.GetMap() or ""), "ctf_", 1, true)
-	if not LocalPlayer():Alive() or (LocalPlayer():IsHL2() and !GetConVar("hud_show_ctf_as_hl2"):GetBool()) or GetConVar("tf_forcehl2hud"):GetBool() or GetConVarNumber("cl_drawhud")==0 or GAMEMODE.ShowScoreboard or not isCTF then return end
-	
-	surface.SetDrawColor(255,255,255,255)
-	local v
-	for _,flag in pairs(ents.FindByClass("item_teamflag")) do
-		if (flag:GetNWInt("FlagTeamNum",0) == TEAM_BLU) then
-			v = flag
-		end
-	end
-	
-	if (IsValid(v)) then
-		local vecFlag = v:WorldSpaceCenter() - LocalPlayer():GetPos()
-		vecFlag.z = 0
-		vecFlag:Normalize()
-		local forward = LocalPlayer():GetForward()
-		local right = LocalPlayer():GetRight()
-		forward.z = 0
-		right.z = 0
-		forward:Normalize()
-		right:Normalize()
-		local dot = vecFlag:Dot( forward )
-		local angleBetween = math.acos( dot )
-
-		dot = vecFlag:Dot( right )
-		if ( dot < 0.0 ) then
-			angleBetween = angleBetween * -1
-		end
-		
-		local flRetVal = math.deg( angleBetween )
-		surface.SetTexture(surface.GetTextureID("hud/objectives_flagpanel_compass_blue"))
-		surface.DrawTexturedRectRotated((340*WScale-30*Scale) - 120, (480-85)*Scale, 104*Scale, 104*Scale, flRetVal or 0)
-		surface.SetTexture(surface.GetTextureID("hud/objectives_flagpanel_briefcase"))
-		surface.DrawTexturedRect((340*WScale-50*Scale) - 120, (480-105)*Scale, 42*Scale, 42*Scale)
-	end
-
+	-- Kept as a compatibility stub: the main CTF panel now draws both flag slots.
+	return
 end
 
 if HudObjectiveFlagPanelBlue then HudObjectiveFlagPanelBlue:Remove() end

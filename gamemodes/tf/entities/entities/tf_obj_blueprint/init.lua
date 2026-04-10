@@ -85,6 +85,29 @@ local function CanPlaceEngineerObject(ply, className, mode)
 	return true
 end
 
+local function GetObjectTypeByClassName(className)
+	local groupByClass = {
+		obj_dispenser = OBJ_DISPENSER or 0,
+		obj_teleporter = OBJ_TELEPORTER or 1,
+		obj_sentrygun = OBJ_SENTRYGUN or 2,
+	}
+
+	return groupByClass[className]
+end
+
+local function IsBlueprintPlacementAllowed(blueprint, pos, className, mode)
+	if not IsValid(blueprint) then return false end
+	local ply = blueprint.Player
+	if not IsValid(ply) then return false end
+
+	local objectType = GetObjectTypeByClassName(className)
+	if objectType ~= nil and isfunction(TF_PointInNoBuild) and TF_PointInNoBuild(pos, objectType, ply:Team()) then
+		return false
+	end
+
+	return CanPlaceEngineerObject(ply, className, mode)
+end
+
 function ENT:Initialize()
 	local owner = self:GetOwner()
 	if not IsValid(owner) then
@@ -150,7 +173,7 @@ function ENT:Build()
 	
 	local obj = self:GetOwner():GetBuilding()
 	if not obj then return end
-	if not CanPlaceEngineerObject(self.Player, obj.class_name, self:GetOwner():GetBuildMode()) then
+	if not IsBlueprintPlacementAllowed(self, pos, obj.class_name, self:GetOwner():GetBuildMode()) then
 		if IsValid(self.Player) then
 			self.Player:EmitSound("Player.DenyWeaponSelection")
 		end
@@ -285,6 +308,14 @@ function ENT:Think()
 	
 	ang.y = math.NormalizeAngle(ang.y + self.CurrentYaw)
 	self:SetAngles(ang)
+
+	if valid then
+		local owner = self:GetOwner()
+		local obj = IsValid(owner) and owner.GetBuilding and owner:GetBuilding() or nil
+		if obj then
+			valid = IsBlueprintPlacementAllowed(self, pos, obj.class_name, owner:GetBuildMode())
+		end
+	end
 	
 	if valid ~= self.dt.Allowed then
 		self.dt.Allowed = valid

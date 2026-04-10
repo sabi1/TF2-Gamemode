@@ -5,8 +5,19 @@ local TF_REGENERATE_SOUND = "Regenerate.Touch"
 local TF_REGENERATE_NEXT_USE_TIME = 3.0
 local TF_LOCKER_CLOSE_DELAY = TF_REGENERATE_NEXT_USE_TIME - 1.0
 
+local function ParseHammerTeamNum(value)
+	local teamNum = tonumber(value) or 0
+	if teamNum == 2 then return TEAM_RED end
+	if teamNum == 3 then return TEAM_BLU end
+	return TEAM_UNASSIGNED or 0
+end
+
 local PreserveResupplyWeapons = {
 	["tf_weapon_jar_gas"] = true,
+}
+
+local RefillResupplyWeapons = {
+	["tf_weapon_jar_milk"] = true,
 }
 
 local function PreserveMeterAmmo(pl, fn)
@@ -49,6 +60,26 @@ local function PreserveMeterAmmo(pl, fn)
 	end
 end
 
+local function RefillResupplyThrowables(pl)
+	if not IsValid(pl) then return end
+
+	for class,_ in pairs(RefillResupplyWeapons) do
+		local wep = pl:GetWeapon(class)
+		if IsValid(wep) and wep.Primary and wep.Primary.Ammo then
+			local maxcarry = math.max(0, wep.MaxCarry or 1)
+			if maxcarry > 0 then
+				pl:SetAmmoCount(maxcarry, wep.Primary.Ammo)
+				wep.LastTrackedAmmo = maxcarry
+			end
+
+			if pl.NextGiveAmmoType == wep.Primary.Ammo then
+				pl.NextGiveAmmo = nil
+				pl.NextGiveAmmoType = nil
+			end
+		end
+	end
+end
+
 function ENT:Initialize()
 	self.Team = 0
 	self.Players = {}
@@ -60,12 +91,16 @@ function ENT:KeyValue(key,value)
 	key = string.lower(key)
 	
 	if key=="teamnum" then
-		self.Team = tonumber(value)
+		self.Team = ParseHammerTeamNum(value)
 	elseif key=="associatedmodel" then
 		self.ResupplyLockerName = value
 	elseif key=="startdisabled" then
 		self.Disabled = tonumber(value) == 1
 	end
+end
+
+function ENT:SetTeamNum(teamNum)
+	self.Team = tonumber(teamNum) or (TEAM_UNASSIGNED or 0)
 end
 
 function ENT:SetDisabled(disabled)
@@ -76,7 +111,7 @@ function ENT:IsDisabled()
 	return self.Disabled == true
 end
 
-function ENT:AcceptInput(name)
+function ENT:AcceptInput(name, activator, caller, value)
 	name = string.lower(tostring(name or ""))
 	if name == "enable" then
 		self:SetDisabled(false)
@@ -86,6 +121,16 @@ function ENT:AcceptInput(name)
 		return true
 	elseif name == "toggle" then
 		self:SetDisabled(not self:IsDisabled())
+		return true
+	elseif name == "setteam" then
+		local raw = tonumber(value)
+		if raw ~= nil then
+			if raw == 2 or raw == 3 then
+				self:SetTeamNum(ParseHammerTeamNum(raw))
+			else
+				self:SetTeamNum(raw)
+			end
+		end
 		return true
 	end
 	return false
@@ -142,6 +187,7 @@ function ENT:RegeneratePlayer(pl)
 		GAMEMODE:GiveHealthPercent(pl, 100)
 		GAMEMODE:GiveAmmoPercent(pl, 100)
 	end)
+	RefillResupplyThrowables(pl)
 
 	pl.__TFNextRegenerateTime = CurTime() + TF_REGENERATE_NEXT_USE_TIME
 	pl:EmitSound(TF_REGENERATE_SOUND, 100, 100)

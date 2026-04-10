@@ -386,49 +386,116 @@ local function GetProgressMessage(cp, state, localTeam)
 	if not cp then
 		return nil
 	end
-	-- Use authoritative server lock state from TF_ControlPointCapState.
+
 	if state.locked then
 		return "#Team_Capture_NotNow"
 	end
+
 	local blockStyle = GetConVar("mp_blockstyle")
 	local capStyle = GetConVar("mp_capstyle")
 	local blockStyleValue = blockStyle and blockStyle:GetInt() or 0
 	local capStyleValue = capStyle and capStyle:GetInt() or 0
 	local requiredPlayers = math.max(state.requiredPlayers or 1, 1)
 	local hasRequiredPlayers = capStyleValue == 1 or ((state.cappers or 0) >= requiredPlayers)
+	local enemyTeam = (localTeam == 2) and 3 or 2
+	local localCanCap = TeamCanCapFromState(state, localTeam)
+	local enemyCanCap = TeamCanCapFromState(state, enemyTeam)
 
 	if blockStyleValue == 1 and state.cappingTeam ~= 0 and state.cappingTeam ~= localTeam then
 		if state.blocked or (state.enemies or 0) > 0 then
 			return "#Team_Blocking_Capture"
-		elseif state.ownerTeam == 0 then
+		end
+		if state.ownerTeam == 0 then
 			return "#Team_Reverting_Capture"
 		end
 	end
 
 	if state.ownerTeam == localTeam then
-		local enemyTeam = (localTeam == 2) and 3 or 2
-		if not TeamCanCapFromState(state, enemyTeam) then
+		if not enemyCanCap then
 			return "#Team_Capture_Owned"
-		end
-		if state.enemies > 0 or (state.blocked and state.cappingTeam ~= 0 and state.cappingTeam ~= localTeam) then
-			return "#Team_Blocking_Capture"
 		end
 		return "#Team_Capture_OwnPoint"
 	end
 
-	if not TeamCanCapFromState(state, localTeam) then
+	if not localCanCap then
+		local mode = (TF_GetHudGameMode and TF_GetHudGameMode()) or "cp"
+		if mode == "arena" then
+			return "#Team_Capture_NotNow"
+		end
+		return "#Team_Capture_Linear"
+	end
+
+	if state.cappingTeam == localTeam then
+		if hasRequiredPlayers then
+			return "#Team_Capture_Blocked"
+		end
+	end
+
+	if not localCanCap then
 		return "#Team_Cannot_Capture"
 	end
 
-	if state.cappingTeam == localTeam and hasRequiredPlayers and (state.blocked or (state.enemies or 0) > 0) then
-		return "#Team_Capture_Blocked"
-	end
-
-	if state.cappingTeam == localTeam and not hasRequiredPlayers then
-		return "#Team_Waiting_for_teammate"
-	end
-
 	return "#Team_Waiting_for_teammate"
+end
+
+local function GetProgressTextures(cappingTeam, ownerTeam)
+	local bgTex = (cappingTeam == 2 and progress_bar_red) or progress_bar_blu
+	local fgTex
+	if ownerTeam == 2 then
+		fgTex = progress_bar_red
+	elseif ownerTeam == 3 then
+		fgTex = progress_bar_blu
+	else
+		fgTex = progress_bar_blocked
+	end
+	return fgTex, bgTex
+end
+
+local function GetProgressTextureForTeam(teamNum, fallback)
+	if teamNum == 2 then
+		return progress_bar_red
+	end
+	if teamNum == 3 then
+		return progress_bar_blu
+	end
+	return fallback
+end
+
+local function DrawCapSwipeArrow(x, y, w, h, mat, swipeUp, cappingTeam, capPercentage)
+	if not mat or (mat.IsError and mat:IsError()) then
+		return
+	end
+
+	local flXa, flXb = 0, 1
+	local flYa, flYb = 0, 1
+	local flArrowHeadPixelWidth = 15.0
+	local flArrowBodyPixelWidth = 54.0
+	local flBoxSize = 33.0
+	local flImageSize = flArrowHeadPixelWidth + flArrowBodyPixelWidth
+	local flMovementInTextureSpace = (flBoxSize + flArrowHeadPixelWidth) / flImageSize
+	local flArrowSizeInTextureSpace = flArrowHeadPixelWidth / flImageSize
+	local flIndent = 0.07
+
+	if swipeUp then
+		flYa = math.Remap(capPercentage, 0.0, 1.0, -flMovementInTextureSpace - flIndent, flArrowSizeInTextureSpace - flIndent)
+		flYb = math.Remap(capPercentage, 0.0, 1.0, flIndent, flMovementInTextureSpace - flIndent)
+	else
+		flIndent = 0.1
+		local flStart = 1.0 - flIndent
+		local flEnd = 1.0 + flIndent
+		local bSwipeLeftToRight = (cappingTeam % 2) == 0
+		if bSwipeLeftToRight then
+			flXa = math.Remap(capPercentage, 0.0, 1.0, flStart + flMovementInTextureSpace, flEnd - flArrowSizeInTextureSpace)
+			flXb = math.Remap(capPercentage, 0.0, 1.0, flStart, 0.0)
+		else
+			flXa = math.Remap(capPercentage, 0.0, 1.0, flStart, 0.0)
+			flXb = math.Remap(capPercentage, 0.0, 1.0, flStart + flMovementInTextureSpace, flEnd - flArrowSizeInTextureSpace)
+		end
+	end
+
+	surface.SetDrawColor(255, 255, 255, 255)
+	surface.SetMaterial(mat)
+	surface.DrawTexturedRectUV(x, y, w, h, flXa, flYa, flXb, flYb)
 end
 
 function PANEL:Init()
@@ -458,9 +525,17 @@ function PANEL:DrawControlPoint(cpIndex, x, y, swipeUp)
 	end
 
 	if state.cappingTeam == 2 or state.cappingTeam == 3 then
-		surface.SetDrawColor(255, 255, 255, 255)
-		surface.SetMaterial(swipeUp and (state.cappingTeam == 2 and cp_vbar_red or cp_vbar_blu) or (state.cappingTeam == 2 and cp_hbar_red or cp_hbar_blu))
-		surface.DrawTexturedRect(x, y, iconW, iconH)
+		local capPercentage = math.Clamp(state.progress or 0, 0, 1)
+		DrawCapSwipeArrow(
+			x,
+			y,
+			iconW,
+			iconH,
+			swipeUp and (state.cappingTeam == 2 and cp_vbar_red or cp_vbar_blu) or (state.cappingTeam == 2 and cp_hbar_red or cp_hbar_blu),
+			swipeUp,
+			state.cappingTeam,
+			capPercentage
+		)
 	end
 
 	if cp.tex_overlay and cp.tex_overlay >= 0 then
@@ -528,41 +603,45 @@ function PANEL:DrawProgressBubble(cpIndex, iconX, iconY)
 		pointerH = CPRes.teardropSideH
 	end
 
+	local progressValue = math.Clamp(state.progress or 0, 0, 1)
+	local showAnimatedProgress = (not state.locked)
+		and (not state.blocked)
+		and state.cappingTeam ~= 0
+		and state.cappingTeam ~= state.ownerTeam
+		and state.cappingTeam == localTeam
+	local showBubble = showAnimatedProgress or message ~= nil
+	if not showBubble then
+		return
+	end
+	local drawBubbleX = bubbleX
+	local drawBubbleY = bubbleY
+	local drawBubbleW = CPRes.progressW * scale
+	local drawBubbleH = CPRes.progressH * scale
+
 	surface.SetDrawColor(255, 255, 255, 255)
 	surface.SetTexture(pointerTex)
-	surface.DrawTexturedRect(bubbleX + CPRes.progressDropX * scale, bubbleY, pointerW * scale, pointerH * scale)
+	surface.DrawTexturedRect(drawBubbleX + CPRes.progressDropX * scale, drawBubbleY, pointerW * scale, pointerH * scale)
 
-	local progressValue = math.Clamp(state.progress or 0, 0, 1)
-	local showAnimatedProgress = (not state.locked) and progressValue > 0
 	if showAnimatedProgress then
-		state.displayProgress = math.Approach(state.displayProgress or progressValue, progressValue, FrameTime() * 3)
 		local progressTeam = state.cappingTeam ~= 0 and state.cappingTeam or (state.lastCappingTeam or 0)
-		local fgTex = (progressTeam == 2 and progress_bar_red) or (progressTeam == 3 and progress_bar_blu) or (localTeam == 2 and progress_bar_red or progress_bar_blu)
+		local fgTex, bgTex = GetProgressTextures(progressTeam, state.ownerTeam)
 		tf_draw.CircularProgressBar(
-			bubbleX + CPRes.progressBarX * scale,
-			bubbleY + CPRes.progressBarY * scale,
+			drawBubbleX + CPRes.progressBarX * scale,
+			drawBubbleY + CPRes.progressBarY * scale,
 			CPRes.progressBarW * scale,
 			CPRes.progressBarH * scale,
 			fgTex,
-			progress_bar_noCap,
+			bgTex,
 			Color(255, 255, 255, 255),
 			Color(255, 255, 255, 255),
-			math.Clamp(state.displayProgress or 0, 0, 1)
+			progressValue
 		)
-		if not state.blocked and state.cappingTeam == localTeam then
-			message = nil
-		end
+		message = nil
 	else
 		state.displayProgress = progressValue
-		surface.SetTexture(state.blocked and (CPRes.texBlocked or progress_bar_blocked) or progress_bar_noCap)
-		surface.DrawTexturedRect(bubbleX + CPRes.blockedX * scale, bubbleY + CPRes.blockedY * scale, CPRes.blockedW * scale, CPRes.blockedH * scale)
-	end
-
-	if state.blocked and showAnimatedProgress then
-		surface.SetDrawColor(255, 255, 255, 180)
-		surface.SetTexture(CPRes.texBlocked or progress_bar_blocked)
-		surface.DrawTexturedRect(bubbleX + CPRes.blockedX * scale, bubbleY + CPRes.blockedY * scale, CPRes.blockedW * scale, CPRes.blockedH * scale)
 		surface.SetDrawColor(255, 255, 255, 255)
+		surface.SetTexture(state.blocked and (CPRes.texBlocked or progress_bar_blocked) or GetProgressTextureForTeam(state.ownerTeam, progress_bar_noCap))
+		surface.DrawTexturedRect(drawBubbleX + CPRes.blockedX * scale, drawBubbleY + CPRes.blockedY * scale, CPRes.blockedW * scale, CPRes.blockedH * scale)
 	end
 
 	if message then
@@ -571,25 +650,34 @@ function PANEL:DrawProgressBubble(cpIndex, iconX, iconY)
 			align = "center"
 		end
 		tf_draw.LabelTextWrap{
-			x = bubbleX + CPRes.progressTextX * scale,
-			y = bubbleY + CPRes.progressTextY * scale,
+			x = drawBubbleX + CPRes.progressTextX * scale,
+			y = drawBubbleY + CPRes.progressTextY * scale,
 			w = CPRes.progressTextW * scale,
 			h = CPRes.progressTextH * scale,
 			font = CPRes.progressTextFont,
 			text = Localize(message),
 			align = align,
 			yspace = 0.05,
+			col = color_white,
 		}
 	end
 end
 
 function PANEL:Paint()
-	local mode = (TF_GetHudGameMode and TF_GetHudGameMode()) or "unknown"
-	if mode == "mvm" then return end
-	if not (mode == "cp" or mode == "koth" or mode == "arena") then return end
+	if TF_IsControlPointHudMode then
+		if not TF_IsControlPointHudMode() then return end
+	else
+		local mode = (TF_GetHudGameMode and TF_GetHudGameMode()) or "unknown"
+		if mode == "mvm" then return end
+		if not (mode == "cp" or mode == "koth" or mode == "arena") then return end
+	end
 	local gm = rawget(_G, "GAMEMODE")
 	if not istable(gm) then return end
-	if gm.PayloadHUDActive then return end
+	if TF_HasActivePayloadHudState then
+		if TF_HasActivePayloadHudState() then return end
+	elseif gm.PayloadHUDActive then
+		return
+	end
 	if not gm.ControlPoints then return end
 
 	local rows = GetLayoutRows()

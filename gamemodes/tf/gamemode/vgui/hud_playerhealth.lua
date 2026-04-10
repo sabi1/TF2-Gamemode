@@ -9,6 +9,20 @@ local health_dead = surface.GetTextureID("hud/health_dead")
 local bleed_drop = surface.GetTextureID("vgui/bleed_drop")
 local marked_for_death = surface.GetTextureID("vgui/marked_for_death")
 local slowed = surface.GetTextureID("vgui/slowed")
+local RUNE_HUD_TEXTURES = {
+	[TF_RUNE_STRENGTH] = surface.GetTextureID("effects/powerup_strength_hud"),
+	[TF_RUNE_HASTE] = surface.GetTextureID("effects/powerup_haste_hud"),
+	[TF_RUNE_REGEN] = surface.GetTextureID("effects/powerup_regen_hud"),
+	[TF_RUNE_RESIST] = surface.GetTextureID("effects/powerup_resist_hud"),
+	[TF_RUNE_VAMPIRE] = surface.GetTextureID("effects/powerup_vampire_hud"),
+	[TF_RUNE_REFLECT] = surface.GetTextureID("effects/powerup_reflect_hud"),
+	[TF_RUNE_PRECISION] = surface.GetTextureID("effects/powerup_precision_hud"),
+	[TF_RUNE_AGILITY] = surface.GetTextureID("effects/powerup_agility_hud"),
+	[TF_RUNE_KNOCKOUT] = surface.GetTextureID("effects/powerup_knockout_hud"),
+	[TF_RUNE_KING] = surface.GetTextureID("effects/powerup_king_hud"),
+	[TF_RUNE_PLAGUE] = surface.GetTextureID("effects/powerup_plague_hud"),
+	[TF_RUNE_SUPERNOVA] = surface.GetTextureID("effects/powerup_supernova_hud"),
+}
 
 local HealthRes = {
 	panelX = 0,
@@ -84,6 +98,22 @@ do
 end
 
 local PANEL = {}
+
+local function drawCarriedRuneStatus(healthOwner, drawX)
+	if not IsValid(healthOwner) or not healthOwner.GetCarryingRuneType then return drawX end
+
+	local runeType = healthOwner:GetCarryingRuneType()
+	if not runeType or runeType == TF_RUNE_NONE then return drawX end
+
+	local runeTexture = RUNE_HUD_TEXTURES[runeType]
+	if not runeTexture or runeTexture <= 0 then return drawX end
+
+	surface.SetTexture(runeTexture)
+	surface.SetDrawColor(255, 255, 255, 255)
+	surface.DrawTexturedRect(drawX, HealthRes.statusY * Scale, HealthRes.statusW * Scale, HealthRes.statusH * Scale)
+
+	return drawX + 30 * Scale
+end
 
 function PANEL:Init()
 	self:SetPaintBackgroundEnabled(false)
@@ -235,6 +265,10 @@ function PANEL:Paint()
 		surface.SetDrawColor(255,255,0,255)
 		surface.DrawTexturedRect(droplet_x, (HealthRes.statusY)*Scale, HealthRes.statusW*Scale, HealthRes.statusH*Scale)
 		droplet_x = droplet_x + 30 * Scale
+	end
+
+	if TF_IsMannpowerMode and TF_IsMannpowerMode() then
+		droplet_x = drawCarriedRuneStatus(healthOwner, droplet_x)
 	end
 end
 

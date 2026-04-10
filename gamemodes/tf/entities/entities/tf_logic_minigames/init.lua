@@ -25,6 +25,7 @@ function ENT:Initialize()
 	self.Properties = self.Properties or {}
 	self.ActiveMiniGame = nil
 	self.AdvantageTeam = -1
+	self.LastChosenMiniGameIndex = -1
 	ApplyGlobals(self)
 end
 
@@ -51,6 +52,7 @@ function ENT:TeleportToMiniGame(index)
 	minigame.AdvantageTeam = self.AdvantageTeam
 	minigame:TeleportAllPlayers()
 	self.ActiveMiniGame = minigame
+	self.LastChosenMiniGameIndex = index
 	self.AdvantageTeam = -1
 	ApplyGlobals(self)
 	return true
@@ -71,9 +73,12 @@ function ENT:AcceptInput(name, activator, caller, data)
 		return self:TeleportToMiniGame(math.max(0, tonumber(data) or 0))
 	elseif name == "teleporttorandomminigame" then
 		local candidates = {}
-		for _, minigame in ipairs(GetMiniGames()) do
+		for index, minigame in ipairs(GetMiniGames()) do
 			if minigame.AllowedInRandomPool ~= false then
-				table.insert(candidates, minigame)
+				table.insert(candidates, {
+					index = index - 1,
+					ent = minigame,
+				})
 			end
 		end
 
@@ -81,29 +86,20 @@ function ENT:AcceptInput(name, activator, caller, data)
 			return false
 		end
 
-		if IsValid(self.ActiveMiniGame) and #candidates > 1 then
+		if self.LastChosenMiniGameIndex and self.LastChosenMiniGameIndex >= 0 and #candidates > 1 then
 			for i = #candidates, 1, -1 do
-				if candidates[i] == self.ActiveMiniGame then
+				if candidates[i].index == self.LastChosenMiniGameIndex then
 					table.remove(candidates, i)
 				end
 			end
 		end
 
 		local chosen = candidates[math.random(#candidates)]
-		if not IsValid(chosen) then
+		if not chosen or not IsValid(chosen.ent) then
 			return false
 		end
 
-		if IsValid(self.ActiveMiniGame) then
-			self.ActiveMiniGame:ReturnAllPlayers()
-		end
-
-		chosen.AdvantageTeam = self.AdvantageTeam
-		chosen:TeleportAllPlayers()
-		self.ActiveMiniGame = chosen
-		self.AdvantageTeam = -1
-		ApplyGlobals(self)
-		return true
+		return self:TeleportToMiniGame(chosen.index)
 	elseif name == "setadvantageteam" then
 		local teamName = string.lower(tostring(data or ""))
 		self.AdvantageTeam = teamName == "red" and TEAM_RED or TEAM_BLU

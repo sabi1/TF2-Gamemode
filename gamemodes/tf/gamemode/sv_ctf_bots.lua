@@ -3086,6 +3086,23 @@ local function ComputePathCost(bot, area, fromArea, ladder, length)
 		end
 	end
 
+	local function GetAreaPlayerCount(navArea, teamNum)
+		if not navArea then
+			return 0
+		end
+
+		-- Valve-style nav areas expose GetPlayerCount(team). GMod nav areas on some
+		-- branches do not, so treat the count as unavailable instead of crashing.
+		if navArea.GetPlayerCount then
+			local ok, count = pcall(navArea.GetPlayerCount, navArea, teamNum)
+			if ok and isnumber(count) then
+				return math.max(count, 0)
+			end
+		end
+
+		return 0
+	end
+
     if not fromArea then
         -- First area in path, no cost
         return 0.0
@@ -3172,7 +3189,7 @@ local function ComputePathCost(bot, area, fromArea, ladder, length)
             end
         end
 
-        dist = dist + dist * 10.0 * area:GetPlayerCount(self:Team())
+        dist = dist + dist * 10.0 * GetAreaPlayerCount(area, self:Team())
     end
 
 	if IsMvMMap() then
@@ -4399,6 +4416,65 @@ hook.Add( "StartCommand", "TFBot_Movement", function( ply, cmd )
 
 	// Only run this code on bots, and only if bot_mimic is set to 0
 	if ( !ply.TFBot || ply.botPos == nil ) then return end
+
+	if TF_PointIsBlockedForBot and TF_PointIsBlockedForBot(ply.botPos, ply:Team()) then
+		ply.path = nil
+		ply.targetArea = nil
+		ResetPathFollowingState(ply)
+		local recoverPos = nil
+		if navmesh and navmesh.GetNearestNavArea then
+			local goalArea = navmesh.GetNearestNavArea(ply:GetPos())
+			if IsValid(goalArea) then
+				recoverPos = goalArea:GetCenter()
+			end
+		end
+		if recoverPos then
+			ply.botPos = recoverPos
+		end
+	end
+
+	if TF_GetBotNavPrerequisite then
+		local prereq = TF_GetBotNavPrerequisite(ply, ply:GetPos())
+		if IsValid(prereq) then
+			local taskType = tonumber(prereq.TaskType) or 0
+			local taskValue = tonumber(prereq.TaskValue) or 0
+			local taskEnt = prereq.GetTaskEntity and prereq:GetTaskEntity() or nil
+
+			if taskType == 1 and IsValid(taskEnt) then
+				ply.TargetEnt = taskEnt
+				ply.botPos = taskEnt:GetPos()
+				if taskValue > 0 and ply:GetPos():DistToSqr(taskEnt:GetPos()) <= (taskValue * taskValue) then
+					cmd:ClearMovement()
+					cmd:SetViewAngles((taskEnt:GetPos() - ply:GetPos()):Angle())
+					cmd:SetButtons(bit.bor(cmd:GetButtons(), IN_ATTACK))
+					return
+				end
+			elseif taskType == 2 and IsValid(taskEnt) then
+				ply.botPos = taskEnt:GetPos()
+				if ply:GetPos():DistToSqr(taskEnt:GetPos()) <= (64 * 64) then
+					ply._navPrereqSatisfiedUntil = CurTime() + 0.25
+				end
+			elseif taskType == 3 then
+				ply._navPrereqWaitUntil = ply._navPrereqWaitUntil or (CurTime() + math.max(taskValue, 0))
+				if CurTime() < ply._navPrereqWaitUntil then
+					cmd:ClearMovement()
+					return
+				end
+				ply._navPrereqSatisfiedUntil = CurTime() + 0.25
+			end
+
+			if ply._navPrereqSatisfiedUntil and CurTime() < ply._navPrereqSatisfiedUntil then
+				-- let the bot move through briefly after satisfying the prerequisite
+			else
+				ply.path = nil
+				ply.targetArea = nil
+			end
+		else
+			ply._navPrereqWaitUntil = nil
+			ply._navPrereqSatisfiedUntil = nil
+		end
+	end
+
 	local currentArea = navmesh.GetNearestNavArea( ply:GetPos() )
 	local hiding
 	cmd:ClearMovement()
