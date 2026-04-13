@@ -61,7 +61,7 @@ if SERVER then
 AddCSLuaFile( "shared.lua" )
 
 ENT.HitSound = Sound("Weapon_FlameThrower.FireHit")
-ENT.HitLoopSound = Sound("Weapon_FlameThrower.FireHit")
+--ENT.HitLoopSound = Sound("Weapon_FlameThrower.FireHit")
 
 ENT.MaxDamage = 4
 ENT.MinDamage = 4
@@ -77,6 +77,8 @@ ENT.BaseLifeTime = 0.28
 ENT.BackCritAngle = 120
 
 tf_debug_flamethrower = CreateConVar("tf_debug_flamethrower", 0, {FCVAR_CHEAT})
+
+local soundApplyList = {}
 
 function ENT:SetFlamethrowerEffect(i)
 	if self.LastEffect==i then return end
@@ -189,7 +191,7 @@ function ENT:Think()
 	
 	if TF2_IsPyrovisionEnabled(CLIENT and LocalPlayer() or self:GetOwner()) then
 		self.HitSound = Sound("Weapon_Rainblower.FireHit")
-		self.HitLoopSound = Sound("Weapon_Rainblower.FireHit")
+		--self.HitLoopSound = Sound("Weapon_Rainblower.FireHit")
 	end
 	
 	local vel = self:GetVelocity()
@@ -213,12 +215,15 @@ function ENT:Hit(ent)
 			local rf = RecipientFilter()
 			rf:AddAllPlayers()
 			ent.FlameBurnSound = CreateSound(ent, self.HitSound,rf)
-			ent.FlameBurnSound = CreateSound(ent, self.HitLoopSound,rf)
+			--ent.FlameBurnSound = CreateSound(ent, self.HitLoopSound,rf)
 		end
 		
 		if not ent.NextStopBurnSound or CurTime()>ent.NextStopBurnSound then
 			ent.FlameBurnSound:Play()
 		end
+
+		soundApplyList[ent] = true
+
 		ent.NextStopBurnSound = CurTime() + 0.2
 	end
 	
@@ -236,7 +241,9 @@ function ENT:Hit(ent)
 				dmginfo:SetDamage(damage)
 			end
 			if ent:IsTFPlayer() then
-				if IsValid(self:GetOwner():GetActiveWeapon():GetItemData()) and self:GetOwner():GetActiveWeapon():GetItemData().model_player == "models/workshop/weapons/c_models/c_drg_phlogistinator/c_drg_phlogistinator.mdl" then
+				local wep = owner:GetActiveWeapon()
+
+				if IsValid(wep) and istable(wep:GetItemData()) and wep:GetItemData().model_player == "models/workshop/weapons/c_models/c_drg_phlogistinator/c_drg_phlogistinator.mdl" then
 					dmginfo:SetDamageType(DMG_DISSOLVE)
 				else
 					dmginfo:SetDamageType(DMG_GENERIC)
@@ -282,10 +289,14 @@ function ENT:Touch(ent)
 end
 
 hook.Add("Think", "FlameBurnSoundThink", function()
-	for _,v in pairs(ents.GetAll()) do
-		if v.FlameBurnSound and (not v.NextStopBurnSound or CurTime()>v.NextStopBurnSound) then
-			v.NextStopBurnSound = nil
-			v.FlameBurnSound:Stop()
+	for ent in pairs(soundApplyList) do
+		if IsValid(ent) and (ent.NextStopBurnSound or 0) < CurTime() then
+			if ent.FlameBurnSound then
+				ent.FlameBurnSound:Stop()
+			end
+
+			ent.NextStopBurnSound = nil
+			soundApplyList[ent] = nil
 		end
 	end
 end)
@@ -294,6 +305,8 @@ hook.Add("EntityRemoved", "FlameBurnSoundRemove", function(ent)
 	if ent.FlameBurnSound then
 		ent.FlameBurnSound:Stop()
 		ent.FlameBurnSound = nil
+
+		soundApplyList[ent] = nil
 	end
 end)
 
