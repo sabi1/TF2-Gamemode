@@ -347,10 +347,6 @@ local function VectorMA( start, scale, direction, dest )
 	]]
 	return Vector(start.x + scale * direction.x,start.y + scale * direction.y,start.z + scale * direction.z)
 end
-
-hook.Add( "CalcView", "SetPosToRagdoll", function( ply, pos, angles, fov )
-	physenv.SetGravity( Vector(0,0,-800) )
-end )
  
 if (IsValid(LocalPlayer())) then
     EmitSound("replay/downloadcomplete.wav",Vector(0,0,0),0,CHAN_REPLACE,1,0,0,100,0,nil)
@@ -586,6 +582,8 @@ hook.Add("InitPostEntity", "TF2Gamemode_InspectKeyInit", function()
 	if inspectKeyConVar and inspectKeyConVar:GetInt() == KEY_N then
 		RunConsoleCommand("tf_inspect_key", tostring(KEY_I))
 	end
+
+	physenv.SetGravity(Vector(0, 0, -600))
 end)
 concommand.Add("tf_open_backpack", function(ply)
 	if IsValid(ply) and ply ~= LocalPlayer() then return end
@@ -823,7 +821,7 @@ end, function() return GAMEMODE.PlayerClassesAutoComplete end)
 --RunConsoleCommand("snd_restart")
 RunConsoleCommand("hud_showloadout","0")
 RunConsoleCommand("spawnmenu_reload")
-physenv.SetGravity(Vector(0,0,-800))
+
 usermessage.Hook("PlayerResetDominations", function(um)
 	local pl = um:ReadEntity()
 	if not IsValid(pl) then return end
