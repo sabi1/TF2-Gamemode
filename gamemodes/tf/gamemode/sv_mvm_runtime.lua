@@ -227,6 +227,46 @@ local function RemoveManagedBotEntity(ent, reason)
     ent:Remove()
 end
 
+local function CreateManagedSquad(def)
+    return {
+        Id = "mvm_squad_" .. tostring(CurTime()) .. "_" .. tostring(math.random(1000, 9999)),
+        FormationSize = math.max(0, tonumber(def and (def.FormationSize or def.formationsize)) or 0),
+        ShouldPreserveSquad = BoolValue(def and (def.ShouldPreserveSquad or def.shouldpreservesquad), false),
+        Members = {},
+    }
+end
+
+local function AttachBotToManagedSquad(bot, squad)
+    if not IsValid(bot) or not squad then return end
+
+    squad.Members[bot] = true
+    bot.TF_MVM_Squad = squad
+    bot.IsInASquad = function(self)
+        return istable(self.TF_MVM_Squad) and next(self.TF_MVM_Squad.Members or {}) ~= nil
+    end
+    bot.GetSquadFormationSize = function(self)
+        return tonumber(self.TF_MVM_Squad and self.TF_MVM_Squad.FormationSize) or 0
+    end
+    bot.ShouldPreserveSquad = function(self)
+        return self.TF_MVM_Squad and self.TF_MVM_Squad.ShouldPreserveSquad == true or false
+    end
+end
+
+local function DetachBotFromManagedSquad(bot)
+    if not IsValid(bot) then return end
+    local squad = bot.TF_MVM_Squad
+    if not istable(squad) then
+        bot.TF_MVM_Squad = nil
+        return
+    end
+
+    squad.Members[bot] = nil
+    if next(squad.Members or {}) == nil then
+        squad.Members = {}
+    end
+    bot.TF_MVM_Squad = nil
+end
+
 local function ReadIconName(def)
     if not istable(def) then return "" end
     local raw = def.ClassIcon or def.classicon or def.Icon or def.icon or ""
@@ -775,12 +815,17 @@ end
 function RUNTIME:PushState()
     if not TF_MVMState or not TF_MVMState.Set then return end
 
+    local isEndless = BoolValue(self.Mission and self.Mission.IsEndless, false)
+    local eventPopfile = tostring(self.Mission and self.Mission.EventPopfile or "")
+
     TF_MVMState:Set("enabled", self:IsEnabled())
     TF_MVMState:Set("active", self.Active)
     TF_MVMState:Set("in_setup", self.Setup)
     TF_MVMState:Set("wave_active", self.WaveActive)
     TF_MVMState:Set("wave_current", math.max(0, self.WaveIndex))
     TF_MVMState:Set("wave_total", self.Mission and #self.Mission.Waves or 0)
+    TF_MVMState:Set("is_endless", isEndless)
+    TF_MVMState:Set("event_popfile", eventPopfile)
     TF_MVMState:Set("mission_name", self.Mission and (self.Mission.Path or "") or "")
     TF_MVMState:Set("error", self.LastError or "")
     local readyCount, readyTotal = self:GetReadyCounts()
@@ -800,12 +845,35 @@ function RUNTIME:SetError(msg)
 end
 
 function RUNTIME:GetSentryBusterKillThreshold()
+    local missionOverride = self.Mission and tonumber(self.Mission.AddSentryBusterWhenKillCountExceeds) or nil
+    if missionOverride and missionOverride > 0 then
+        return math.max(1, math.floor(missionOverride))
+    end
+
     local n = cv_sentrybuster_kills and cv_sentrybuster_kills:GetInt() or 15
     return math.max(1, n)
 end
 
+function RUNTIME:GetSentryBusterDamageThreshold()
+    local missionOverride = self.Mission and tonumber(self.Mission.AddSentryBusterWhenDamageDealtExceeds) or nil
+    if missionOverride and missionOverride > 0 then
+        return math.max(1, math.floor(missionOverride))
+    end
+    return nil
+end
+
+function RUNTIME:GetSentryBusterKillTimeThreshold()
+    local missionOverride = self.Mission and tonumber(self.Mission.AddSentryBusterWhenKillTimeExceeds) or nil
+    if missionOverride and missionOverride > 0 then
+        return missionOverride
+    end
+    return nil
+end
+
 function RUNTIME:ResetSentryBusterState()
     self.SentryBusterKillsBySentry = {}
+    self.SentryBusterDamageBySentry = {}
+    self.SentryBusterKillWindowStartBySentry = {}
     self.SentryBusterPendingByBuilder = {}
     self.SentryBusterCooldownUntil = 0
     self.SentryBusterKillsSinceLastSpawn = 0
@@ -814,10 +882,219 @@ end
 
 function RUNTIME:EnsureSentryBusterState()
     self.SentryBusterKillsBySentry = self.SentryBusterKillsBySentry or {}
+    self.SentryBusterDamageBySentry = self.SentryBusterDamageBySentry or {}
+    self.SentryBusterKillWindowStartBySentry = self.SentryBusterKillWindowStartBySentry or {}
     self.SentryBusterPendingByBuilder = self.SentryBusterPendingByBuilder or {}
     self.SentryBusterCooldownUntil = tonumber(self.SentryBusterCooldownUntil) or 0
     self.SentryBusterKillsSinceLastSpawn = tonumber(self.SentryBusterKillsSinceLastSpawn) or 0
     self.SentryBustersSpawnedThisWave = tonumber(self.SentryBustersSpawnedThisWave) or 0
+end
+
+function RUNTIME:ComputeMissionRespawnWaveTime(waveNumber)
+    local respawn = self.Mission and tonumber(self.Mission.RespawnWaveTime) or nil
+    if respawn == nil or respawn < 0 then
+        return nil
+    end
+
+    local waveNum = math.max(1, math.floor(tonumber(waveNumber) or 1))
+    if BoolValue(self.Mission and self.Mission.IsEndless, false) then
+        return waveNum / 3
+    end
+
+    if BoolValue(self.Mission and self.Mission.FixedRespawnWaveTime, false) then
+        return respawn
+    end
+
+    return math.min(respawn, waveNum * 2)
+end
+
+function RUNTIME:ApplyMissionRespawnWaveSetting(waveNumber)
+    if not TF2 or not TF2.RespawnWaves or not TF2.RespawnWaves.OverrideTeamWave then
+        return
+    end
+
+    local respawn = self:ComputeMissionRespawnWaveTime(waveNumber or self.WaveIndex)
+    if respawn ~= nil then
+        TF2.RespawnWaves.OverrideTeamWave(TEAM_RED, respawn)
+    end
+end
+
+function RUNTIME:ApplyMissionPresentationState()
+    local isEndless = BoolValue(self.Mission and self.Mission.IsEndless, false)
+    local eventPopfile = tostring(self.Mission and self.Mission.EventPopfile or "")
+
+    SetGlobalBool("TF_MVM_IsEndless", isEndless)
+    SetGlobalString("TF_MVM_EventPopfile", eventPopfile)
+end
+
+function RUNTIME:ClearMissionPresentationState()
+    SetGlobalBool("TF_MVM_IsEndless", false)
+    SetGlobalString("TF_MVM_EventPopfile", "")
+end
+
+function RUNTIME:ClearMissionRespawnWaveSetting()
+    if not TF2 or not TF2.RespawnWaves or not TF2.RespawnWaves.OverrideTeamWave then
+        return
+    end
+
+    TF2.RespawnWaves.OverrideTeamWave(TEAM_RED, nil)
+end
+
+function RUNTIME:MakeAuxiliarySpawnState(id, def)
+    return {
+        Id = tostring(id or "aux"),
+        Name = tostring(id or "aux"),
+        Def = def or {},
+        Support = false,
+        SupportLimited = false,
+        InfiniteSupport = false,
+        TotalCount = 0,
+        Spawned = 0,
+        Alive = 0,
+        CompletedSpawned = false,
+        CompletedDead = false,
+        SelectorState = { index = 0 },
+        RandomSpawn = BoolValue(def and (def.RandomSpawn or def.randomspawn), true),
+        FixedSpawnEnt = nil,
+    }
+end
+
+function RUNTIME:SpawnAuxiliaryDef(def, spawnState, fixedSpawnEnt)
+    if not TF_MVM or not TF_MVM.Spawner then
+        return false
+    end
+
+    local tempState = spawnState or self:MakeAuxiliarySpawnState("aux", def)
+    local ok, spawnedAny = false, false
+    local fixedSpawnPos = spawnState and spawnState.FixedSpawnPos or nil
+
+    local function spawnNode(node)
+        if not istable(node) then
+            return false
+        end
+
+        if node.RandomChoice then
+            local choice = table.Random(ToArray(node.RandomChoice))
+            return spawnNode(choice)
+        end
+
+        if node.Squad then
+            local any = false
+            for _, member in ipairs(ToArray(node.Squad)) do
+                if spawnNode(member) then
+                    any = true
+                end
+            end
+            return any
+        end
+
+        if node.Mob then
+            local mobNode = table.Random(ToArray(node.Mob))
+            return spawnNode(mobNode)
+        end
+
+        if node.Tank then
+            local tankDef = table.Random(ToArray(node.Tank))
+            local tank = TF_MVM.Spawner:SpawnTank(self, tankDef, tempState, fixedSpawnEnt, tempState.SelectorState, tempState.RandomSpawn, fixedSpawnPos)
+            return IsValid(tank)
+        end
+
+        if node.SentryGun then
+            local sentryDef = table.Random(ToArray(node.SentryGun))
+            local sentry = TF_MVM.Spawner:SpawnSentryGun(self, sentryDef, tempState, fixedSpawnEnt, tempState.SelectorState, tempState.RandomSpawn, fixedSpawnPos)
+            return IsValid(sentry)
+        end
+
+        local rawBotDef = node.TFBot and table.Random(ToArray(node.TFBot)) or node
+        local auxWhere = def and (def.ClosestPoint or def.closestpoint or def.Where or def.where) or nil
+        local bot = TF_MVM.Spawner:SpawnTFBot(self, rawBotDef, tempState, auxWhere, nil, fixedSpawnEnt, tempState.SelectorState, tempState.RandomSpawn, fixedSpawnPos)
+        return IsValid(bot)
+    end
+
+    ok = spawnNode(def or {})
+    spawnedAny = ok and true or false
+    return spawnedAny
+end
+
+function RUNTIME:InitializeRandomPlacements()
+    for idx, placementDef in ipairs(ToArray(self.Mission and self.Mission.RandomPlacements)) do
+        if not istable(placementDef) then
+            continue
+        end
+
+        local count = math.max(0, math.floor(NumValue(placementDef.Count or placementDef.count, 0) or 0))
+        if count <= 0 then
+            continue
+        end
+
+        local minSep = NumValue(placementDef.MinimumSeparation or placementDef.minimumseparation, 0) or 0
+        local classHint = BuildSpawnVisualInfo(placementDef).class or "scout"
+        local fixedSpawns = {}
+        local fixedPositions = {}
+        if TF_MVM.Spawner and placementDef.NavAreaFilter and TF_MVM.Spawner.PickSeparatedNavAreaPositions then
+            fixedPositions = TF_MVM.Spawner:PickSeparatedNavAreaPositions(placementDef.NavAreaFilter, count, minSep)
+        elseif TF_MVM.Spawner and TF_MVM.Spawner.PickSeparatedSpawnEntities then
+            fixedSpawns = TF_MVM.Spawner:PickSeparatedSpawnEntities(placementDef.Where or placementDef.ClosestPoint, classHint, count, minSep)
+        end
+
+        local auxState = self:MakeAuxiliarySpawnState(string.format("randomplacement_%d", idx), placementDef)
+        if #fixedSpawns > 0 then
+            for _, spawnEnt in ipairs(fixedSpawns) do
+                auxState.FixedSpawnPos = nil
+                self:SpawnAuxiliaryDef(placementDef, auxState, spawnEnt)
+            end
+        elseif #fixedPositions > 0 then
+            for _, spawnPos in ipairs(fixedPositions) do
+                auxState.FixedSpawnPos = spawnPos
+                self:SpawnAuxiliaryDef(placementDef, auxState, nil)
+            end
+            auxState.FixedSpawnPos = nil
+        else
+            for _ = 1, count do
+                auxState.FixedSpawnPos = nil
+                self:SpawnAuxiliaryDef(placementDef, auxState, nil)
+            end
+        end
+    end
+end
+
+function RUNTIME:SchedulePeriodicSpawns()
+    for idx, periodicDef in ipairs(ToArray(self.Mission and self.Mission.PeriodicSpawns)) do
+        if not istable(periodicDef) then
+            continue
+        end
+
+        local whenDef = periodicDef.When
+        local minInterval = NumValue((istable(whenDef) and (whenDef.MinInterval or whenDef.mininterval)) or periodicDef.MinInterval, nil)
+        local maxInterval = NumValue((istable(whenDef) and (whenDef.MaxInterval or whenDef.maxinterval)) or periodicDef.MaxInterval, minInterval)
+        local intervalMin = math.max(0.1, tonumber(minInterval) or 30)
+        local intervalMax = math.max(intervalMin, tonumber(maxInterval) or intervalMin)
+        local timerName = TimerName(string.format("PeriodicSpawn_%d", idx))
+        local auxState = self:MakeAuxiliarySpawnState(string.format("periodicspawn_%d", idx), periodicDef)
+
+        local function scheduleNext()
+            if not self.Active then
+                RemoveTimer(timerName)
+                self.TimerNames[timerName] = nil
+                return
+            end
+
+            local delay = math.Rand(intervalMin, intervalMax)
+            timer.Create(timerName, delay, 1, function()
+                if not self.Active then
+                    self.TimerNames[timerName] = nil
+                    return
+                end
+                if self.WaveActive and not self:IsBotSpawningPaused() then
+                    self:SpawnAuxiliaryDef(periodicDef, auxState, nil)
+                end
+                scheduleNext()
+            end)
+        end
+
+        AddTimerRef(self, timerName)
+        scheduleNext()
+    end
 end
 
 function RUNTIME:GetActiveSentryBusterCountForTarget(targetSentry)
@@ -906,11 +1183,82 @@ function RUNTIME:OnDefenderSentryKill(sentry, victim)
     local builder = IsValid(sentry:GetBuilder()) and sentry:GetBuilder() or nil
     if not IsValid(builder) then return end
 
+    local killTimeThreshold = self:GetSentryBusterKillTimeThreshold()
+    if killTimeThreshold and killTimeThreshold > 0 then
+        local firstKillAt = tonumber(self.SentryBusterKillWindowStartBySentry[sentry]) or 0
+        if firstKillAt <= 0 then
+            self.SentryBusterKillWindowStartBySentry[sentry] = CurTime()
+        end
+    end
+
     local kills = (tonumber(self.SentryBusterKillsBySentry[sentry]) or 0) + 1
     self.SentryBusterKillsBySentry[sentry] = kills
     if kills >= self:GetSentryBusterKillThreshold() then
         self.SentryBusterPendingByBuilder[builder] = (tonumber(self.SentryBusterPendingByBuilder[builder]) or 0) + 1
         self.SentryBusterKillsBySentry[sentry] = 0
+        self.SentryBusterKillWindowStartBySentry[sentry] = 0
+    end
+end
+
+function RUNTIME:OnDefenderSentryDamage(sentry, victim, damage)
+    if not self:IsManagedActive() or not self:IsWaveInProgress() then return end
+    if not IsValid(sentry) or sentry:GetClass() ~= "obj_sentrygun" then return end
+    if sentry:Team() ~= TEAM_RED then return end
+    if not IsValid(victim) then return end
+
+    local amount = math.max(0, tonumber(damage) or 0)
+    if amount <= 0 then return end
+
+    if victim:IsPlayer() then
+        local vt = victim:Team()
+        if vt ~= TEAM_BLU and vt ~= TF_TEAM_PVE_INVADERS then return end
+    end
+
+    local threshold = self:GetSentryBusterDamageThreshold()
+    if not threshold or threshold <= 0 then return end
+
+    self:EnsureSentryBusterState()
+    local builder = IsValid(sentry:GetBuilder()) and sentry:GetBuilder() or nil
+    if not IsValid(builder) then return end
+
+    local total = (tonumber(self.SentryBusterDamageBySentry[sentry]) or 0) + amount
+    self.SentryBusterDamageBySentry[sentry] = total
+    if total >= threshold then
+        self.SentryBusterPendingByBuilder[builder] = (tonumber(self.SentryBusterPendingByBuilder[builder]) or 0) + 1
+        self.SentryBusterDamageBySentry[sentry] = 0
+        self.SentryBusterKillsBySentry[sentry] = 0
+        self.SentryBusterKillWindowStartBySentry[sentry] = 0
+    end
+end
+
+function RUNTIME:UpdateSentryBusterKillTimeThreshold(now)
+    local threshold = self:GetSentryBusterKillTimeThreshold()
+    if not threshold or threshold <= 0 then
+        return
+    end
+
+    self:EnsureSentryBusterState()
+    for _, sentry in ipairs(ents.FindByClass("obj_sentrygun")) do
+        if not IsValid(sentry) or sentry:Team() ~= TEAM_RED then
+            continue
+        end
+
+        local firstKillAt = tonumber(self.SentryBusterKillWindowStartBySentry[sentry]) or 0
+        if firstKillAt <= 0 then
+            continue
+        end
+
+        local builder = IsValid(sentry:GetBuilder()) and sentry:GetBuilder() or nil
+        if not IsValid(builder) then
+            continue
+        end
+
+        if (now - firstKillAt) >= threshold then
+            self.SentryBusterPendingByBuilder[builder] = math.max(1, tonumber(self.SentryBusterPendingByBuilder[builder]) or 0)
+            self.SentryBusterKillsBySentry[sentry] = 0
+            self.SentryBusterDamageBySentry[sentry] = 0
+            self.SentryBusterKillWindowStartBySentry[sentry] = 0
+        end
     end
 end
 
@@ -1235,6 +1583,8 @@ function RUNTIME:Stop(reason)
     self:ResetSentryBusterState()
     self.BotSpawningPaused = false
     self.DefaultEventChangeAttributesName = ""
+    self:ClearMissionRespawnWaveSetting()
+    self:ClearMissionPresentationState()
     for _, roundTimer in ipairs(GetRoundTimers()) do
         if IsValid(roundTimer) then
             roundTimer.TF_MVM_Managed = false
@@ -1330,16 +1680,6 @@ function RUNTIME:GetSetupDuration()
         end
     end
 
-    local nextWave = nil
-    if self.Mission and self.Mission.Waves then
-        nextWave = self.Mission.Waves[self.WaveIndex + 1]
-    end
-
-    local fromWave = nextWave and NumValue(nextWave.WaitBeforeStarting, nil) or nil
-    if fromWave and fromWave > 0 then
-        return fromWave
-    end
-
     return 30
 end
 
@@ -1421,6 +1761,7 @@ function RUNTIME:StartSetupForWave(waveIndex)
     self.SetupEndTime = 0
     self.SetupReadyCountdownTotal = nil
     self:ResetReadyPlayers()
+    self:ApplyMissionRespawnWaveSetting(waveIndex)
     local preview, hash = self:BuildWavePreviewStatus(waveIndex)
     self:UpdateWaveStatusState(true, preview, hash)
 
@@ -1514,7 +1855,13 @@ function RUNTIME:CreateSpawnState(wave, index, def)
         NextSpawnAt = CurTime() + waitBefore,
         NextAfterDeathAt = nil,
         FirstSpawnOutputFired = false,
+        FirstSpawnWarningFired = false,
         DoneOutputFired = false,
+        DoneWarningFired = false,
+        StartWaveOutputFired = false,
+        StartWaveWarningFired = false,
+        LastSpawnOutputFired = false,
+        LastSpawnWarningFired = false,
         RandomSpawn = randomSpawn,
         SelectorState = { index = 0 },
         FixedSpawnEnt = nil,
@@ -1610,12 +1957,14 @@ function RUNTIME:SpawnOne(st, fixedSpawnEnt)
 
     local def = st.Def
     local spawnedNow = 0
+    local spawnedEntities = {}
 
     local function registerSpawned(ent)
         if not IsValid(ent) then return false end
         st.Spawned = st.Spawned + 1
         st.Alive = st.Alive + 1
         spawnedNow = spawnedNow + 1
+        spawnedEntities[#spawnedEntities + 1] = ent
         ent.TF_MVM_CurrencyValue = self:AllocateCurrencyForSpawn(st)
         return true
     end
@@ -1631,10 +1980,18 @@ function RUNTIME:SpawnOne(st, fixedSpawnEnt)
         end
 
         if node.Squad then
+            local squad = CreateManagedSquad(node)
             local any = false
             for _, member in ipairs(ToArray(node.Squad)) do
+                local beforeCount = #spawnedEntities
                 if spawnNode(member) then
                     any = true
+                    for idx = beforeCount + 1, #spawnedEntities do
+                        local spawnedEnt = spawnedEntities[idx]
+                        if IsValid(spawnedEnt) and spawnedEnt.IsPlayer and spawnedEnt:IsPlayer() then
+                            AttachBotToManagedSquad(spawnedEnt, squad)
+                        end
+                    end
                 end
             end
             return any
@@ -1669,7 +2026,8 @@ function RUNTIME:SpawnOne(st, fixedSpawnEnt)
         if node.TFBot then
             rawBotDef = table.Random(ToArray(node.TFBot))
         end
-        local bot, err = TF_MVM.Spawner:SpawnTFBot(self, rawBotDef, st, def.Where, nil, fixedSpawnEnt, st.SelectorState, st.RandomSpawn)
+        local whereField = def.ClosestPoint or def.closestpoint or def.Where or def.where
+        local bot, err = TF_MVM.Spawner:SpawnTFBot(self, rawBotDef, st, whereField, nil, fixedSpawnEnt, st.SelectorState, st.RandomSpawn)
         if not IsValid(bot) then
             DebugPrint("Failed to spawn bot", err or "")
             return false
@@ -1692,6 +2050,10 @@ function RUNTIME:UpdateSpawnState(st, now)
 
     if st.CompletedSpawned and st.Alive <= 0 and not st.CompletedDead then
         st.CompletedDead = true
+        if not st.DoneWarningFired and isfunction(BroadcastSound) and st.Def.DoneWarningSound then
+            st.DoneWarningFired = true
+            BroadcastSound(tostring(ScalarValue(st.Def.DoneWarningSound)))
+        end
         if not st.DoneOutputFired and TF_MVM.Outputs then
             st.DoneOutputFired = true
             TF_MVM.Outputs:Fire(st.Def.DoneOutput)
@@ -1712,9 +2074,13 @@ function RUNTIME:UpdateSpawnState(st, now)
 
     if not st.Started then
         st.Started = true
+        if not st.StartWaveWarningFired and isfunction(BroadcastSound) and st.Def.StartWaveWarningSound then
+            st.StartWaveWarningFired = true
+            BroadcastSound(tostring(ScalarValue(st.Def.StartWaveWarningSound)))
+        end
         if TF_MVM.Outputs then
+            st.StartWaveOutputFired = true
             TF_MVM.Outputs:Fire(st.Def.StartWaveOutput)
-            TF_MVM.Outputs:Fire(st.Def.FirstSpawnOutput)
         end
 
         if not self.CurrentWaveState.FirstSpawnOutputFired then
@@ -1762,7 +2128,8 @@ function RUNTIME:UpdateSpawnState(st, now)
     local groupSpawnEnt = st.FixedSpawnEnt
     if not st.RandomSpawn then
         if not IsValid(groupSpawnEnt) and TF_MVM.Spawner then
-            groupSpawnEnt = TF_MVM.Spawner:PickSpawnEntity(st.Def.Where, st.SpawnClassHint or "scout", st.SelectorState, false)
+            local whereField = st.Def.ClosestPoint or st.Def.closestpoint or st.Def.Where or st.Def.where
+            groupSpawnEnt = TF_MVM.Spawner:PickSpawnEntity(whereField, st.SpawnClassHint or "scout", st.SelectorState, false)
         end
         if IsValid(groupSpawnEnt) then
             st.FixedSpawnEnt = groupSpawnEnt
@@ -1774,6 +2141,16 @@ function RUNTIME:UpdateSpawnState(st, now)
         local ok = self:SpawnOne(st, fixedSpawnEnt)
         if not ok then
             break
+        end
+        if not st.FirstSpawnOutputFired then
+            st.FirstSpawnOutputFired = true
+            if not st.FirstSpawnWarningFired and isfunction(BroadcastSound) and st.Def.FirstSpawnWarningSound then
+                st.FirstSpawnWarningFired = true
+                BroadcastSound(tostring(ScalarValue(st.Def.FirstSpawnWarningSound)))
+            end
+            if TF_MVM.Outputs then
+                TF_MVM.Outputs:Fire(st.Def.FirstSpawnOutput)
+            end
         end
         spawnBudget = spawnBudget - 1
     end
@@ -1792,8 +2169,22 @@ function RUNTIME:UpdateSpawnState(st, now)
 
     if not st.InfiniteSupport and st.Spawned >= st.TotalCount then
         st.CompletedSpawned = true
+        if not st.LastSpawnOutputFired then
+            st.LastSpawnOutputFired = true
+            if not st.LastSpawnWarningFired and isfunction(BroadcastSound) and st.Def.LastSpawnWarningSound then
+                st.LastSpawnWarningFired = true
+                BroadcastSound(tostring(ScalarValue(st.Def.LastSpawnWarningSound)))
+            end
+            if TF_MVM.Outputs then
+                TF_MVM.Outputs:Fire(st.Def.LastSpawnOutput)
+            end
+        end
         if st.Support and st.Alive <= 0 then
             st.CompletedDead = true
+            if not st.DoneWarningFired and isfunction(BroadcastSound) and st.Def.DoneWarningSound then
+                st.DoneWarningFired = true
+                BroadcastSound(tostring(ScalarValue(st.Def.DoneWarningSound)))
+            end
             if not st.DoneOutputFired and TF_MVM.Outputs then
                 st.DoneOutputFired = true
                 TF_MVM.Outputs:Fire(st.Def.DoneOutput)
@@ -2019,6 +2410,7 @@ function RUNTIME:StartWave(waveIndex)
     self.SetupReadyCountdownTotal = nil
     self.WaveIndex = waveIndex
     self:ResetReadyPlayers()
+    self:ApplyMissionRespawnWaveSetting(waveIndex)
 
     self:ApplyRoundTimerWave()
 
@@ -2047,6 +2439,9 @@ function RUNTIME:StartWave(waveIndex)
     if TF_MVM.Outputs then
         TF_MVM.Outputs:Fire(wave.InitWaveOutput)
         TF_MVM.Outputs:Fire(wave.StartWaveOutput)
+    end
+    if isfunction(BroadcastSound) and wave.Sound then
+        BroadcastSound(tostring(ScalarValue(wave.Sound)))
     end
 
     self:ScheduleMissionBotSpawns(wave)
@@ -2127,6 +2522,8 @@ function RUNTIME:FinishMission()
     self.SetupReadyCountdownTotal = nil
     self.LastWaveStatusHash = ""
     self:ResetReadyPlayers()
+    self:ClearMissionRespawnWaveSetting()
+    self:ClearMissionPresentationState()
     for _, roundTimer in ipairs(GetRoundTimers()) do
         if IsValid(roundTimer) then
             roundTimer.TF_MVM_Managed = false
@@ -2161,6 +2558,8 @@ function RUNTIME:FailMission(reason)
     self.SetupReadyCountdownTotal = nil
     self.LastWaveStatusHash = ""
     self:ResetReadyPlayers()
+    self:ClearMissionRespawnWaveSetting()
+    self:ClearMissionPresentationState()
     for _, roundTimer in ipairs(GetRoundTimers()) do
         if IsValid(roundTimer) then
             roundTimer.TF_MVM_Managed = false
@@ -2215,10 +2614,15 @@ function RUNTIME:Start()
     self.LastWaveStatusHash = ""
     self.ReadyPlayers = {}
     self:ResetSentryBusterState()
+    self:ApplyMissionRespawnWaveSetting()
+    self:ApplyMissionPresentationState()
 
     if TF_MVM.Economy then
         TF_MVM.Economy:ResetAll(self.Mission.StartingCurrency or 600)
     end
+
+    self:InitializeRandomPlacements()
+    self:SchedulePeriodicSpawns()
 
     hook.Run("TF_MVM_MissionStarted", self.Mission)
 
@@ -2299,6 +2703,8 @@ function RUNTIME:HandleManagedEntityRemoved(ent)
     if IsValid(ent) and ent:GetClass() == "obj_sentrygun" then
         self:EnsureSentryBusterState()
         self.SentryBusterKillsBySentry[ent] = nil
+        self.SentryBusterDamageBySentry[ent] = nil
+        self.SentryBusterKillWindowStartBySentry[ent] = nil
         local builder = IsValid(ent:GetBuilder()) and ent:GetBuilder() or nil
         if IsValid(builder) then
             self.SentryBusterPendingByBuilder[builder] = 0
@@ -2333,6 +2739,7 @@ function RUNTIME:HandleManagedBotDeath(bot, attacker)
     if not info then return end
 
     self.ManagedBots[bot] = nil
+    DetachBotFromManagedSquad(bot)
     if IsSentryBusterObjective((info and info.objective) or bot.TF_MVM_Objective or "") or TrimLower(bot:GetPlayerClass()) == "sentrybuster" then
         self:OnSentryBusterKilled()
     end
@@ -2363,6 +2770,7 @@ function RUNTIME:HandleManagedBotDisconnected(bot)
     if not info then return end
 
     self.ManagedBots[bot] = nil
+    DetachBotFromManagedSquad(bot)
 
     local st = info.spawn
     if st then
@@ -2379,9 +2787,12 @@ function RUNTIME:Tick()
     if not self.WaveActive then return end
     if not self.CurrentWaveState then return end
 
+    self:UpdateSentryBusterKillTimeThreshold(CurTime())
+
     for bot, info in pairs(self.ManagedBots) do
         if not IsValid(bot) then
             self.ManagedBots[bot] = nil
+            DetachBotFromManagedSquad(bot)
             local st = info and info.spawn
             if st then
                 st.Alive = math.max(0, (st.Alive or 1) - 1)
@@ -2443,6 +2854,16 @@ hook.Add("OnNPCKilled", "TF_MVM_SentryKillForBuster", function(npc, attacker, in
     end
 end)
 
+hook.Add("EntityTakeDamage", "TF_MVM_SentryDamageForBuster", function(target, dmginfo)
+    if not TF_MVM or not TF_MVM.Runtime then return end
+    if not IsValid(target) or not dmginfo then return end
+
+    local sentry = ResolveSentryFromKillSources(dmginfo:GetAttacker(), dmginfo:GetInflictor())
+    if not IsValid(sentry) then return end
+
+    TF_MVM.Runtime:OnDefenderSentryDamage(sentry, target, dmginfo:GetDamage())
+end)
+
 hook.Add("PlayerDisconnected", "TF_MVM_ManagedBotDisconnect", function(ply)
     if not TF_MVM or not TF_MVM.Runtime then return end
     if not IsValid(ply) then return end
@@ -2463,6 +2884,8 @@ hook.Add("EntityRemoved", "TF_MVM_ManagedEntityRemoved", function(ent)
     if IsValid(ent) and ent:GetClass() == "obj_sentrygun" then
         TF_MVM.Runtime:EnsureSentryBusterState()
         TF_MVM.Runtime.SentryBusterKillsBySentry[ent] = nil
+        TF_MVM.Runtime.SentryBusterDamageBySentry[ent] = nil
+        TF_MVM.Runtime.SentryBusterKillWindowStartBySentry[ent] = nil
     end
 end)
 

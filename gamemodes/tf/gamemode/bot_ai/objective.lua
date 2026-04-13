@@ -51,9 +51,10 @@ end
 
 local function nearestEnemyBlueBot(bot)
 	if not IsValid(bot) then return nil end
+	local world = TFBotValveAI and TFBotValveAI.World or nil
 	local best, bestDist
 	local origin = bot:GetPos()
-	for _, p in ipairs(player.GetAll()) do
+	for _, p in ipairs(world and world:GetAlivePlayers() or player.GetAll()) do
 		if not IsValid(p) or not p:Alive() then continue end
 		if p:Team() ~= TEAM_BLU and p:Team() ~= TF_TEAM_PVE_INVADERS then continue end
 		if cv_red_respect_blu_spawn:GetBool() and inSpawnAreaForTeam(p:GetPos(), p:Team()) then continue end
@@ -68,26 +69,27 @@ local function nearestEnemyBlueBot(bot)
 end
 
 local function pickBlueFrontAnchor(bot)
+	local world = TFBotValveAI and TFBotValveAI.World or nil
 	local enemy = nearestEnemyBlueBot(bot)
 	if IsValid(enemy) then
 		return enemy:GetPos()
 	end
 
-	for _, intel in ipairs(ents.FindByClass("item_teamflag_mvm")) do
+	for _, intel in ipairs(world and world:GetEntitiesByClass("item_teamflag_mvm", 0.20) or ents.FindByClass("item_teamflag_mvm")) do
 		if IsValid(intel) then
 			local p = intel.HomePosition or getPos(intel)
 			if isvector(p) then return p end
 		end
 	end
 
-	local spawns = ents.FindByClass("info_player_bluspawn")
+	local spawns = world and world:GetEntitiesByClass("info_player_bluspawn", 0.20) or ents.FindByClass("info_player_bluspawn")
 	local spawn = nearest(spawns, bot:GetPos())
 	if IsValid(spawn) then
 		local p = getPos(spawn)
 		if isvector(p) then return p end
 	end
 
-	local blueFlag = nearest(ents.FindByClass("item_teamflag_blu"), bot:GetPos())
+	local blueFlag = nearest(world and world:GetEntitiesByClass("item_teamflag_blu", 0.20) or ents.FindByClass("item_teamflag_blu"), bot:GetPos())
 	if IsValid(blueFlag) then
 		local p = getPos(blueFlag)
 		if isvector(p) then return p end
@@ -118,12 +120,14 @@ end
 
 local function nearestCurrencyPack(bot)
 	if not IsValid(bot) then return nil end
+	local world = TFBotValveAI and TFBotValveAI.World or nil
 	local origin = bot:GetPos()
 	local maxRange = math.max(256, cv_red_collect_currency_range:GetFloat())
 	local maxRange2 = maxRange * maxRange
 	local best, bestDist
 	for _, cls in ipairs({"item_currencypack_small", "item_currencypack_medium", "item_currencypack_large"}) do
-		for _, ent in ipairs(ents.FindByClass(cls)) do
+		local entities = world and world:GetEntitiesByClass(cls, 0.15) or ents.FindByClass(cls)
+		for _, ent in ipairs(entities) do
 			if not IsValid(ent) then continue end
 			if ent.GetNoDraw and ent:GetNoDraw() then continue end
 			local p = getPos(ent)
@@ -144,7 +148,8 @@ local function isPasstimeMap()
 end
 
 local function getPasstimeLogic()
-	for _, logic in ipairs(ents.FindByClass("passtime_logic")) do
+	local world = TFBotValveAI and TFBotValveAI.World or nil
+	for _, logic in ipairs(world and world:GetEntitiesByClass("passtime_logic", 0.20) or ents.FindByClass("passtime_logic")) do
 		if IsValid(logic) and not logic.Disabled then
 			return logic
 		end
@@ -207,7 +212,8 @@ local function countTeamOccupantsNear(ent, teamNum, fallbackPos)
 	if not isvector(pos) then return 0 end
 
 	local count = 0
-	for _, ply in ipairs(player.GetAll()) do
+	local world = TFBotValveAI and TFBotValveAI.World or nil
+	for _, ply in ipairs(world and world:GetAlivePlayersForTeam(teamNum) or player.GetAll()) do
 		if IsValid(ply) and ply:IsPlayer() and ply:Alive() and ply:Team() == teamNum then
 			if ply:GetPos():DistToSqr(pos) <= (420 * 420) then
 				count = count + 1
@@ -224,7 +230,8 @@ local function getPayloadWatcher()
 			return watcher
 		end
 	end
-	for _, watcher in ipairs(ents.FindByClass("team_train_watcher")) do
+	local world = TFBotValveAI and TFBotValveAI.World or nil
+	for _, watcher in ipairs(world and world:GetEntitiesByClass("team_train_watcher", 0.20) or ents.FindByClass("team_train_watcher")) do
 		if IsValid(watcher) then
 			return watcher
 		end
@@ -337,8 +344,9 @@ end
 
 local function getFriendlyCaptureZone(bot)
 	if not IsValid(bot) then return nil end
+	local world = TFBotValveAI and TFBotValveAI.World or nil
 	local best, bestDist
-	for _, zone in ipairs(ents.FindByClass("func_capturezone")) do
+	for _, zone in ipairs(world and world:GetEntitiesByClass("func_capturezone", 0.20) or ents.FindByClass("func_capturezone")) do
 		if not IsValid(zone) then continue end
 		local teamNum = tonumber(zone.TeamNum or zone.Team or 0) or 0
 		if teamNum ~= 0 and teamNum ~= bot:Team() then continue end
@@ -354,7 +362,8 @@ local function getFriendlyCaptureZone(bot)
 end
 
 local function getTeamFlag(teamNum)
-	for _, flag in ipairs(ents.FindByClass("item_teamflag")) do
+	local world = TFBotValveAI and TFBotValveAI.World or nil
+	for _, flag in ipairs(world and world:GetEntitiesByClass("item_teamflag", 0.20) or ents.FindByClass("item_teamflag")) do
 		if IsValid(flag) and tonumber(flag.TeamNum or flag.Team or 0) == teamNum then
 			return flag
 		end
@@ -404,7 +413,8 @@ local function selectControlPointDecision(bot)
 	local enemyTeam = getEnemyTeam(teamNum)
 	local best, bestScore
 
-	for _, trigger in ipairs(ents.FindByClass("trigger_capture_area")) do
+	local world = TFBotValveAI and TFBotValveAI.World or nil
+	for _, trigger in ipairs(world and world:GetEntitiesByClass("trigger_capture_area", 0.20) or ents.FindByClass("trigger_capture_area")) do
 		if not IsValid(trigger) then continue end
 		local cp = trigger.CapturePoint
 		if not IsValid(cp) then continue end
@@ -556,9 +566,10 @@ end
 
 local function getPasstimeGoalForTeam(bot, teamNum)
 	if not IsValid(bot) then return nil end
+	local world = TFBotValveAI and TFBotValveAI.World or nil
 	local best, bestDist
 	local origin = bot:GetPos()
-	for _, goal in ipairs(ents.FindByClass("func_passtime_goal")) do
+	for _, goal in ipairs(world and world:GetEntitiesByClass("func_passtime_goal", 0.20) or ents.FindByClass("func_passtime_goal")) do
 		if not IsValid(goal) or goal.Disabled then continue end
 		if goal.TeamNum ~= teamNum then continue end
 		local pos = passtimeGoalPos(goal)
@@ -595,9 +606,10 @@ end
 
 local function nearestEnemyToPos(bot, pos, maxDist)
 	if not IsValid(bot) or not isvector(pos) then return nil, nil end
+	local world = TFBotValveAI and TFBotValveAI.World or nil
 	local best, bestDist
 	local maxDist2 = maxDist and (maxDist * maxDist) or nil
-	for _, ply in ipairs(player.GetAll()) do
+	for _, ply in ipairs(world and world:GetAlivePlayers() or player.GetAll()) do
 		if not IsValid(ply) or not ply:Alive() then continue end
 		if ply == bot or ply:IsFriendly(bot) then continue end
 		local d2 = pos:DistToSqr(ply:GetPos())

@@ -101,7 +101,7 @@ function M:SelectTarget(bot, state)
 		return nil
 	end
 	local mvm = TFBotValveAI.MvM
-	if mvm and mvm:IsCombatSuppressed(state) then
+	if mvm and mvm:IsCombatSuppressed(bot, state) then
 		local mvmState = state.mvm or {}
 		local mode = tostring(mvmState.mode or "")
 		local carrierCanFight = mvmState.isCarrier == true
@@ -132,11 +132,15 @@ function M:SelectTarget(bot, state)
 	end
 
 	local vision = TFBotValveAI.Vision
+	local world = TFBotValveAI.World
 	state.vision.nextTargetScan = now + vision:GetChooseInterval(bot)
 
 	local best
 	local bestScore = -math.huge
-	for _, ply in ipairs(player.GetAll()) do
+	for _, ply in ipairs(world and world:GetAlivePlayers() or player.GetAll()) do
+		if ply == bot then
+			continue
+		end
 		local id = ply:EntIndex()
 		if now < tonumber(state.vision.unreachableUntil[id] or 0) then
 			continue
@@ -157,7 +161,7 @@ function M:SelectTarget(bot, state)
 		end
 	end
 
-	for _, ent in ipairs(ents.FindByClass("obj_sentrygun")) do
+	for _, ent in ipairs(world and world:GetEntitiesByClass("obj_sentrygun", 0.12) or ents.FindByClass("obj_sentrygun")) do
 		if vision:CanTrack(bot, state, ent, now) then
 			local score = self:Score(bot, ent)
 			if score > bestScore then

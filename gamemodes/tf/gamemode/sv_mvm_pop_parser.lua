@@ -10,12 +10,26 @@ local CANON = {
     ["wave"] = "Wave",
     ["wavespawn"] = "WaveSpawn",
     ["mission"] = "Mission",
+    ["randomplacement"] = "RandomPlacement",
+    ["periodicspawn"] = "PeriodicSpawn",
+    ["when"] = "When",
     ["tfbot"] = "TFBot",
     ["tank"] = "Tank",
     ["sentrygun"] = "SentryGun",
     ["mob"] = "Mob",
     ["randomchoice"] = "RandomChoice",
     ["squad"] = "Squad",
+    ["eventpopfile"] = "EventPopfile",
+    ["isendless"] = "IsEndless",
+    ["respawnwavetime"] = "RespawnWaveTime",
+    ["canbotsattackwhileinspawnroom"] = "CanBotsAttackWhileInSpawnRoom",
+    ["fixedrespawnwavetime"] = "FixedRespawnWaveTime",
+    ["advanced"] = "Advanced",
+    ["addsentrybusterwhendamagedealtexceeds"] = "AddSentryBusterWhenDamageDealtExceeds",
+    ["addsentrybusterwhenkillcountexceeds"] = "AddSentryBusterWhenKillCountExceeds",
+    ["addsentrybusterwhenkilltimeexceeds"] = "AddSentryBusterWhenKillTimeExceeds",
+    ["sound"] = "Sound",
+    ["description"] = "Description",
     ["startwaveoutput"] = "StartWaveOutput",
     ["doneoutput"] = "DoneOutput",
     ["initwaveoutput"] = "InitWaveOutput",
@@ -40,6 +54,7 @@ local CANON = {
     ["money"] = "TotalCurrency",
     ["startingcurrency"] = "StartingCurrency",
     ["where"] = "Where",
+    ["closestpoint"] = "ClosestPoint",
     ["target"] = "Target",
     ["action"] = "Action",
     ["param"] = "Param",
@@ -48,6 +63,8 @@ local CANON = {
     ["randomspawn"] = "RandomSpawn",
     ["name"] = "Name",
     ["class"] = "Class",
+    ["classicon"] = "ClassIcon",
+    ["skill"] = "Skill",
     ["objective"] = "Objective",
     ["beginatwave"] = "BeginAtWave",
     ["runforthismanywaves"] = "RunForThisManyWaves",
@@ -60,13 +77,23 @@ local CANON = {
     ["maxvisionrange"] = "MaxVisionRange",
     ["template"] = "Template",
     ["teleportwhere"] = "TeleportWhere",
+    ["weaponrestrictions"] = "WeaponRestrictions",
+    ["characterattributes"] = "CharacterAttributes",
+    ["itemattributes"] = "ItemAttributes",
     ["autojumpmin"] = "AutoJumpMin",
     ["autojumpmax"] = "AutoJumpMax",
     ["scale"] = "Scale",
     ["pathtrack"] = "PathTrack",
-    ["startingpathtracknode"] = "PathTrack",
+    ["startingpathtracknode"] = "StartingPathTrackNode",
     ["health"] = "Health",
     ["speed"] = "Speed",
+    ["skin"] = "Skin",
+    ["level"] = "Level",
+    ["formationsize"] = "FormationSize",
+    ["minimumseparation"] = "MinimumSeparation",
+    ["navareafilter"] = "NavAreaFilter",
+    ["mininterval"] = "MinInterval",
+    ["maxinterval"] = "MaxInterval",
     ["onkilledoutput"] = "OnKilledOutput",
     ["onbombdroppedoutput"] = "OnBombDroppedOutput",
     ["onspawnoutput"] = "OnSpawnOutput",
@@ -464,11 +491,15 @@ local STRICT_SCHEMA = {
         CanBotsAttackWhileInSpawnRoom = true,
         FixedRespawnWaveTime = true,
         Advanced = true,
+        EventPopfile = true,
+        IsEndless = true,
         AddSentryBusterWhenDamageDealtExceeds = true,
         AddSentryBusterWhenKillCountExceeds = true,
         AddSentryBusterWhenKillTimeExceeds = true,
         Templates = true,
         Mission = true,
+        RandomPlacement = true,
+        PeriodicSpawn = true,
         Wave = true,
     },
     Wave = {
@@ -496,6 +527,8 @@ local STRICT_SCHEMA = {
         Support = true,
         RandomSpawn = true,
         Where = true,
+        ClosestPoint = true,
+        Template = true,
         StartWaveWarningSound = true,
         FirstSpawnWarningSound = true,
         LastSpawnWarningSound = true,
@@ -520,7 +553,13 @@ local STRICT_SCHEMA = {
         RunForThisManyWaves = true,
         DesiredCount = true,
         Where = true,
+        ClosestPoint = true,
         TFBot = true,
+        Tank = true,
+        SentryGun = true,
+        Squad = true,
+        RandomChoice = true,
+        Mob = true,
     },
     TFBot = {
         Class = true,
@@ -557,6 +596,62 @@ local STRICT_SCHEMA = {
         OnBombDroppedOutput = true,
         OnSpawnOutput = true,
     },
+    SentryGun = {
+        Level = true,
+    },
+    Squad = {
+        FormationSize = true,
+        ShouldPreserveSquad = true,
+        TFBot = true,
+        Tank = true,
+        SentryGun = true,
+        Squad = true,
+        RandomChoice = true,
+        Mob = true,
+    },
+    RandomChoice = {
+        TFBot = true,
+        Tank = true,
+        SentryGun = true,
+        Squad = true,
+        RandomChoice = true,
+        Mob = true,
+    },
+    Mob = {
+        Count = true,
+        TFBot = true,
+        Tank = true,
+        SentryGun = true,
+        Squad = true,
+        RandomChoice = true,
+        Mob = true,
+    },
+    RandomPlacement = {
+        Count = true,
+        MinimumSeparation = true,
+        NavAreaFilter = true,
+        TFBot = true,
+        Tank = true,
+        SentryGun = true,
+        Squad = true,
+        RandomChoice = true,
+        Mob = true,
+    },
+    PeriodicSpawn = {
+        Where = true,
+        ClosestPoint = true,
+        When = true,
+        TFBot = true,
+        Tank = true,
+        SentryGun = true,
+        Squad = true,
+        RandomChoice = true,
+        Mob = true,
+    },
+    When = {
+        MinInterval = true,
+        MaxInterval = true,
+    },
 }
 
 local REQUIRED_KEYS = {
@@ -572,10 +667,53 @@ end
 local function ChildNodeContext(parentCtx, key)
     if parentCtx == "WaveSchedule" and key == "Wave" then return "Wave" end
     if parentCtx == "WaveSchedule" and key == "Mission" then return "Mission" end
+    if parentCtx == "WaveSchedule" and key == "RandomPlacement" then return "RandomPlacement" end
+    if parentCtx == "WaveSchedule" and key == "PeriodicSpawn" then return "PeriodicSpawn" end
     if parentCtx == "Wave" and key == "WaveSpawn" then return "WaveSpawn" end
     if parentCtx == "Wave" and key == "Mission" then return "Mission" end
     if parentCtx == "WaveSpawn" and key == "TFBot" then return "TFBot" end
     if parentCtx == "WaveSpawn" and key == "Tank" then return "Tank" end
+    if parentCtx == "WaveSpawn" and key == "SentryGun" then return "SentryGun" end
+    if parentCtx == "WaveSpawn" and key == "Squad" then return "Squad" end
+    if parentCtx == "WaveSpawn" and key == "RandomChoice" then return "RandomChoice" end
+    if parentCtx == "WaveSpawn" and key == "Mob" then return "Mob" end
+    if parentCtx == "Mission" and key == "TFBot" then return "TFBot" end
+    if parentCtx == "Mission" and key == "Tank" then return "Tank" end
+    if parentCtx == "Mission" and key == "SentryGun" then return "SentryGun" end
+    if parentCtx == "Mission" and key == "Squad" then return "Squad" end
+    if parentCtx == "Mission" and key == "RandomChoice" then return "RandomChoice" end
+    if parentCtx == "Mission" and key == "Mob" then return "Mob" end
+    if parentCtx == "RandomPlacement" and key == "TFBot" then return "TFBot" end
+    if parentCtx == "RandomPlacement" and key == "Tank" then return "Tank" end
+    if parentCtx == "RandomPlacement" and key == "SentryGun" then return "SentryGun" end
+    if parentCtx == "RandomPlacement" and key == "Squad" then return "Squad" end
+    if parentCtx == "RandomPlacement" and key == "RandomChoice" then return "RandomChoice" end
+    if parentCtx == "RandomPlacement" and key == "Mob" then return "Mob" end
+    if parentCtx == "PeriodicSpawn" and key == "When" then return "When" end
+    if parentCtx == "PeriodicSpawn" and key == "TFBot" then return "TFBot" end
+    if parentCtx == "PeriodicSpawn" and key == "Tank" then return "Tank" end
+    if parentCtx == "PeriodicSpawn" and key == "SentryGun" then return "SentryGun" end
+    if parentCtx == "PeriodicSpawn" and key == "Squad" then return "Squad" end
+    if parentCtx == "PeriodicSpawn" and key == "RandomChoice" then return "RandomChoice" end
+    if parentCtx == "PeriodicSpawn" and key == "Mob" then return "Mob" end
+    if parentCtx == "Squad" and key == "TFBot" then return "TFBot" end
+    if parentCtx == "Squad" and key == "Tank" then return "Tank" end
+    if parentCtx == "Squad" and key == "SentryGun" then return "SentryGun" end
+    if parentCtx == "Squad" and key == "Squad" then return "Squad" end
+    if parentCtx == "Squad" and key == "RandomChoice" then return "RandomChoice" end
+    if parentCtx == "Squad" and key == "Mob" then return "Mob" end
+    if parentCtx == "RandomChoice" and key == "TFBot" then return "TFBot" end
+    if parentCtx == "RandomChoice" and key == "Tank" then return "Tank" end
+    if parentCtx == "RandomChoice" and key == "SentryGun" then return "SentryGun" end
+    if parentCtx == "RandomChoice" and key == "Squad" then return "Squad" end
+    if parentCtx == "RandomChoice" and key == "RandomChoice" then return "RandomChoice" end
+    if parentCtx == "RandomChoice" and key == "Mob" then return "Mob" end
+    if parentCtx == "Mob" and key == "TFBot" then return "TFBot" end
+    if parentCtx == "Mob" and key == "Tank" then return "Tank" end
+    if parentCtx == "Mob" and key == "SentryGun" then return "SentryGun" end
+    if parentCtx == "Mob" and key == "Squad" then return "Squad" end
+    if parentCtx == "Mob" and key == "RandomChoice" then return "RandomChoice" end
+    if parentCtx == "Mob" and key == "Mob" then return "Mob" end
     if parentCtx == "TFBot" and key == "EventChangeAttributes" then return "EventChangeAttributes" end
     if parentCtx == "EventChangeAttributes" then return "TFBot" end
     if key == "WaveSchedule" then return "WaveSchedule" end
@@ -653,8 +791,19 @@ function PARSER:Parse(path, scope)
         WaveSchedule = schedule,
         Templates = CollectTemplates(schedule.Templates),
         GlobalMissions = ToArray(schedule.Mission),
+        RandomPlacements = ToArray(schedule.RandomPlacement),
+        PeriodicSpawns = ToArray(schedule.PeriodicSpawn),
         Waves = ToArray(schedule.Wave),
         StartingCurrency = tonumber(schedule.StartingCurrency or 600) or 600,
+        RespawnWaveTime = tonumber(schedule.RespawnWaveTime or 10) or 10,
+        CanBotsAttackWhileInSpawnRoom = schedule.CanBotsAttackWhileInSpawnRoom,
+        FixedRespawnWaveTime = schedule.FixedRespawnWaveTime,
+        Advanced = schedule.Advanced,
+        EventPopfile = schedule.EventPopfile,
+        IsEndless = schedule.IsEndless,
+        AddSentryBusterWhenDamageDealtExceeds = tonumber(schedule.AddSentryBusterWhenDamageDealtExceeds or 0) or 0,
+        AddSentryBusterWhenKillCountExceeds = tonumber(schedule.AddSentryBusterWhenKillCountExceeds or 0) or 0,
+        AddSentryBusterWhenKillTimeExceeds = tonumber(schedule.AddSentryBusterWhenKillTimeExceeds or 0) or 0,
         Warnings = warnings,
     }
 

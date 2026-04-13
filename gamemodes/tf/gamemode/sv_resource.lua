@@ -5,13 +5,24 @@ resource.AddFile("resource/fonts/tf2build.ttf")
 resource.AddFile("resource/fonts/tf2professor.ttf")
 resource.AddFile("resource/fonts/tf2secondary.ttf")
 
--- TF2 panel scheme and .res files (non-MvM)
-resource.AddFile("resource/clientscheme.res")
+local function ShouldDistributeResourceFile(name, pattern)
+	local lowerName = string.lower(name or "")
+	if not string.match(lowerName, pattern) then
+		return false
+	end
+
+	-- Keep editor backups out of the live client resource set.
+	if string.find(lowerName, ".backup.", 1, true) or string.find(lowerName, "_backup", 1, true) then
+		return false
+	end
+
+	return true
+end
 
 local function AddResourceFilesRecursive(baseDir, pattern)
 	local files, dirs = file.Find(baseDir .. "/*", "GAME")
 	for _, name in ipairs(files) do
-		if string.match(string.lower(name), pattern) then
+		if ShouldDistributeResourceFile(name, pattern) then
 			resource.AddFile(baseDir .. "/" .. name)
 		end
 	end
@@ -20,8 +31,9 @@ local function AddResourceFilesRecursive(baseDir, pattern)
 	end
 end
 
--- Distribute every bundled non-MvM TF2 .res file.
-AddResourceFilesRecursive("resource/ui", "%.res$")
+-- Distribute the full bundled TF2 .res tree so top-level, roundinfo, and
+-- MvM-specific panels resolve the same way Valve ships them.
+AddResourceFilesRecursive("resource", "%.res$")
 
 -- Send needed materials to the client
 

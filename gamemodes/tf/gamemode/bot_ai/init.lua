@@ -23,6 +23,7 @@ SafeInclude("config.lua")
 SafeInclude("base.lua")
 SafeInclude("state.lua")
 SafeInclude("perf.lua")
+SafeInclude("world.lua")
 SafeInclude("vision.lua")
 SafeInclude("threat.lua")
 SafeInclude("mvm.lua")
@@ -40,6 +41,7 @@ local cfg = TFBotValveAI.Config
 local base = TFBotValveAI.Base
 local state = TFBotValveAI.State
 local perf = TFBotValveAI.Perf
+local world = TFBotValveAI.World
 local threat = TFBotValveAI.Threat
 local objective = TFBotValveAI.Objective
 local mvm = TFBotValveAI.MvM
@@ -47,7 +49,7 @@ local hints = TFBotValveAI.Hints
 local movement = TFBotValveAI.Movement
 local combat = TFBotValveAI.Combat
 
-if not cfg or not base or not state or not perf or not threat or not objective or not mvm or not hints or not movement or not combat then
+if not cfg or not base or not state or not perf or not world or not threat or not objective or not mvm or not hints or not movement or not combat then
 	_G.TFBOT_VALVE_AI_ACTIVE = false
 	MsgN("[tf_bot_valve_ai] disabled due to missing modules")
 	return

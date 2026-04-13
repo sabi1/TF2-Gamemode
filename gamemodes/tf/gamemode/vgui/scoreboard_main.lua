@@ -417,11 +417,15 @@ function PANEL:Paint()
 
 		local waveCurrent = 1
 		local waveTotal = 1
+		local isEndless = false
 		if TF_MVMState and TF_MVMState.Get then
 			waveCurrent = math.max(1, tonumber(TF_MVMState:Get("wave_current", 1)) or 1)
-			waveTotal = math.max(waveCurrent, tonumber(TF_MVMState:Get("wave_total", waveCurrent)) or waveCurrent)
+			waveTotal = math.max(0, tonumber(TF_MVMState:Get("wave_total", waveCurrent)) or waveCurrent)
+			isEndless = TF_MVMState:Get("is_endless", false) and true or false
 		end
-		MvMWave.text = "WAVE " .. tostring(waveCurrent) .. " / " .. tostring(waveTotal)
+		MvMWave.text = isEndless
+			and ("WAVE " .. tostring(waveCurrent) .. " / ENDLESS")
+			or ("WAVE " .. tostring(waveCurrent) .. " / " .. tostring(math.max(waveCurrent, waveTotal)))
 		draw.Text(MvMWave)
 
 		ServerName.text = tf_lang.GetFormatted("#Scoreboard_Server", GetHostName())

@@ -541,10 +541,16 @@ end
 local function GetWaveText()
 	local waveCurrent = 1
 	local waveTotal = 1
+	local isEndless = false
 	if TF_MVMState and TF_MVMState.Get then
 		waveCurrent = math.max(1, tonumber(TF_MVMState:Get("wave_current", 1)) or 1)
-		waveTotal = math.max(waveCurrent, tonumber(TF_MVMState:Get("wave_total", waveCurrent)) or waveCurrent)
+		waveTotal = math.max(0, tonumber(TF_MVMState:Get("wave_total", waveCurrent)) or waveCurrent)
+		isEndless = TF_MVMState:Get("is_endless", false) and true or false
 	end
+	if isEndless then
+		return "WAVE " .. tostring(waveCurrent) .. " / ENDLESS"
+	end
+	waveTotal = math.max(waveCurrent, waveTotal)
 	return "WAVE " .. tostring(waveCurrent) .. " / " .. tostring(waveTotal)
 end
 
@@ -1124,9 +1130,14 @@ function WAVE_PANEL:Think()
 
 	local waveCurrent = 1
 	local waveTotal = 1
+	local isEndless = false
 	if TF_MVMState and TF_MVMState.Get then
 		waveCurrent = math.max(1, tonumber(TF_MVMState:Get("wave_current", 1)) or 1)
-		waveTotal = math.max(waveCurrent, tonumber(TF_MVMState:Get("wave_total", waveCurrent)) or waveCurrent)
+		waveTotal = math.max(0, tonumber(TF_MVMState:Get("wave_total", waveCurrent)) or waveCurrent)
+		isEndless = TF_MVMState:Get("is_endless", false) and true or false
+	end
+	if not isEndless then
+		waveTotal = math.max(waveCurrent, waveTotal)
 	end
 
 	if self._waveCount ~= waveCurrent or self._maxWaveCount ~= waveTotal then

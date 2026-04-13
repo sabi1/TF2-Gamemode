@@ -63,8 +63,9 @@ end
 
 function M:GetActiveFuncHintsForBot(bot)
 	if not IsValid(bot) then return {} end
+	local world = TFBotValveAI and TFBotValveAI.World or nil
 	local out = {}
-	for _, hint in ipairs(ents.FindByClass("func_tfbot_hint")) do
+	for _, hint in ipairs(world and world:GetEntitiesByClass("func_tfbot_hint", 0.20) or ents.FindByClass("func_tfbot_hint")) do
 		if not IsValid(hint) then continue end
 		if not isHintEnabled(hint) then continue end
 		if not inTeam(hint, bot) then continue end
@@ -76,9 +77,10 @@ end
 
 function M:GetNearestHint(classname, bot, maxRange)
 	if not IsValid(bot) then return nil end
+	local world = TFBotValveAI and TFBotValveAI.World or nil
 	local best, bestDist
 	local maxSqr = (maxRange or 6000) ^ 2
-	for _, hint in ipairs(ents.FindByClass(classname)) do
+	for _, hint in ipairs(world and world:GetEntitiesByClass(classname, 0.20) or ents.FindByClass(classname)) do
 		if not IsValid(hint) then continue end
 		if not isHintEnabled(hint) then continue end
 		if not inTeam(hint, bot) then continue end
@@ -128,7 +130,7 @@ end
 
 function M:ReleaseSentryHint(hint, bot)
 	if not IsValid(hint) then return end
-	if hint.GetPlayerOwner and hint:SetPlayerOwner and hint:GetPlayerOwner() == bot then
+	if hint.GetPlayerOwner and hint.SetPlayerOwner and hint:GetPlayerOwner() == bot then
 		hint:SetPlayerOwner(nil)
 	elseif hint._tfbotOwner == bot then
 		hint._tfbotOwner = nil
@@ -142,8 +144,9 @@ end
 
 function M:SelectEngineerSentryHint(bot)
 	if not IsValid(bot) then return nil end
+	local world = TFBotValveAI and TFBotValveAI.World or nil
 	local best, bestDist
-	for _, hint in ipairs(ents.FindByClass("bot_hint_sentrygun")) do
+	for _, hint in ipairs(world and world:GetEntitiesByClass("bot_hint_sentrygun", 0.20) or ents.FindByClass("bot_hint_sentrygun")) do
 		if not self:IsSentryHintAvailable(hint, bot) then continue end
 		local dist = bot:GetPos():DistToSqr(hint:GetPos())
 		if not bestDist or dist < bestDist then
@@ -163,8 +166,9 @@ local function sameName(a, b)
 end
 
 function M:SelectEngineerTeleExitHint(bot, sentryHint)
+	local world = TFBotValveAI and TFBotValveAI.World or nil
 	local best, bestDist
-	for _, hint in ipairs(ents.FindByClass("bot_hint_teleporter_exit")) do
+	for _, hint in ipairs(world and world:GetEntitiesByClass("bot_hint_teleporter_exit", 0.20) or ents.FindByClass("bot_hint_teleporter_exit")) do
 		if not IsValid(hint) then continue end
 		if not isHintEnabled(hint) then continue end
 		if not inTeam(hint, bot) then continue end

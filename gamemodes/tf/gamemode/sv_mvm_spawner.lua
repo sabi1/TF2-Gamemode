@@ -28,6 +28,20 @@ local function NumValue(v, fallback)
     return n
 end
 
+local function BoolValue(v, fallback)
+    local lower = string.lower(string.Trim(tostring(ScalarValue(v) or "")))
+    if lower == "" then
+        return fallback and true or false
+    end
+    if lower == "0" or lower == "false" or lower == "no" or lower == "off" then
+        return false
+    end
+    if lower == "1" or lower == "true" or lower == "yes" or lower == "on" then
+        return true
+    end
+    return true
+end
+
 local function DeepCopy(v, seen)
     if type(v) ~= "table" then return v end
     seen = seen or {}
@@ -375,6 +389,27 @@ local function ResolveMissionClass(missionDef, rawBot)
     return OBJECTIVE_CLASS[objective]
 end
 
+local function SpawnWhereField(def, explicitWhere)
+    if explicitWhere ~= nil then
+        return explicitWhere
+    end
+    if not istable(def) then
+        return nil
+    end
+    return def.ClosestPoint or def.closestpoint or def.Where or def.where
+end
+
+local function NormalizeNavAreaFilter(value)
+    local lower = string.lower(string.Trim(tostring(ScalarValue(value) or "")))
+    if lower == "sentry_spot" or lower == "sentryspot" then
+        return "sentry_spot"
+    end
+    if lower == "sniper_spot" or lower == "sniperspot" then
+        return "sniper_spot"
+    end
+    return lower ~= "" and lower or nil
+end
+
 local function ResolveTemplateRecursive(rawDef, templates, stack)
     if not istable(rawDef) then
         return rawDef
@@ -518,16 +553,38 @@ local function GetDefaultSpawns()
     return out
 end
 
-local function ResolveSafeSpawnPos(spawnEnt)
+local function GetNearestNavAnchor(pos, useClosestPoint)
+    if not isvector(pos) then return nil end
+    if not navmesh or not navmesh.IsLoaded or not navmesh.IsLoaded() or not navmesh.GetNearestNavArea then
+        return nil
+    end
+
+    local area = navmesh.GetNearestNavArea(pos, true, 1500, true, true)
+    if not IsValid(area) then
+        return nil
+    end
+
+    if useClosestPoint and area.GetClosestPointOnArea then
+        local ok, closest = pcall(area.GetClosestPointOnArea, area, pos)
+        if ok and isvector(closest) then
+            return closest
+        end
+    end
+
+    if area.GetCenter then
+        return area:GetCenter()
+    end
+
+    return nil
+end
+
+local function ResolveSafeSpawnPos(spawnEnt, useClosestPoint)
     local pos = IsValid(spawnEnt) and spawnEnt:GetPos() or Vector(0, 0, 32)
 
     -- Prefer nav area anchors to mirror bot-grounded spawn behavior.
-    if navmesh and navmesh.IsLoaded and navmesh.IsLoaded() and navmesh.GetNearestNavArea then
-        local area = navmesh.GetNearestNavArea(pos, true, 1500, true, true)
-        if IsValid(area) then
-            local center = area:GetCenter()
-            pos = Vector(center.x, center.y, center.z + 8)
-        end
+    local navPoint = GetNearestNavAnchor(pos, useClosestPoint)
+    if navPoint then
+        pos = Vector(navPoint.x, navPoint.y, navPoint.z + 8)
     end
 
     -- Fallback/validation: project to floor.
@@ -687,6 +744,103 @@ function SPAWNER:ResolveSpawnEntity(whereField, classHint)
         return nil
     end
     return table.Random(candidates)
+end
+
+function SPAWNER:PickSeparatedSpawnEntities(whereField, classHint, count, minSeparation)
+    local candidates = self:ResolveSpawnEntities(whereField, classHint)
+    if #candidates <= 0 then
+        return {}
+    end
+
+    local wanted = math.max(0, math.floor(tonumber(count) or 0))
+    if wanted <= 0 then
+        return {}
+    end
+
+    local minSepSqr = math.max(0, tonumber(minSeparation) or 0)
+    minSepSqr = minSepSqr * minSepSqr
+
+    local shuffled = table.Copy(candidates)
+    table.Shuffle(shuffled)
+
+    local picked = {}
+    for _, ent in ipairs(shuffled) do
+        if #picked >= wanted then
+            break
+        end
+
+        local pos = IsValid(ent) and ent:GetPos() or nil
+        local valid = true
+        if pos and minSepSqr > 0 then
+            for _, chosen in ipairs(picked) do
+                if IsValid(chosen) and chosen:GetPos():DistToSqr(pos) < minSepSqr then
+                    valid = false
+                    break
+                end
+            end
+        end
+
+        if valid then
+            picked[#picked + 1] = ent
+        end
+    end
+
+    return picked
+end
+
+function SPAWNER:PickSeparatedNavAreaPositions(navAreaFilter, count, minSeparation)
+    local attrName = NormalizeNavAreaFilter(navAreaFilter)
+    if not attrName or not navmesh or not navmesh.GetAllNavAreas then
+        return {}
+    end
+
+    local wanted = math.max(0, math.floor(tonumber(count) or 0))
+    if wanted <= 0 then
+        return {}
+    end
+
+    local minSepSqr = math.max(0, tonumber(minSeparation) or 0)
+    minSepSqr = minSepSqr * minSepSqr
+
+    local candidates = {}
+    for _, area in ipairs(navmesh.GetAllNavAreas() or {}) do
+        if IsValid(area) and area.HasTFAttribute and area:HasTFAttribute(attrName) then
+            candidates[#candidates + 1] = area
+        end
+    end
+    if #candidates <= 0 then
+        return {}
+    end
+
+    table.Shuffle(candidates)
+
+    local picked = {}
+    for _, area in ipairs(candidates) do
+        if #picked >= wanted then
+            break
+        end
+
+        local center = area.GetCenter and area:GetCenter() or nil
+        if not isvector(center) then
+            continue
+        end
+
+        local valid = true
+        if minSepSqr > 0 then
+            for _, chosenPos in ipairs(picked) do
+                if isvector(chosenPos) and chosenPos:DistToSqr(center) < minSepSqr then
+                    valid = false
+                    break
+                end
+            end
+        end
+
+        if valid then
+            picked[#picked + 1] = center
+        end
+    end
+
+    return picked
 end
 
 local function TrimLower(v)
@@ -1429,7 +1583,7 @@ local function ShouldUseNextBotSpawner()
     return backend == "nextbot" or backend == "hybrid"
 end
 
-function SPAWNER:SpawnTFBot(runtime, rawDef, spawnState, whereOverride, missionId, fixedSpawnEnt, selectorState, randomSpawn)
+function SPAWNER:SpawnTFBot(runtime, rawDef, spawnState, whereOverride, missionId, fixedSpawnEnt, selectorState, randomSpawn, spawnPosOverride)
     local def = self:BuildBotDef(runtime, rawDef)
     local eventDefs = ParseEventChangeAttributes(def.EventChangeAttributes or def.eventchangeattributes)
     local runtimeDefaultEventName = runtime and runtime.GetDefaultEventChangeAttributesName and runtime:GetDefaultEventChangeAttributesName() or nil
@@ -1447,13 +1601,15 @@ function SPAWNER:SpawnTFBot(runtime, rawDef, spawnState, whereOverride, missionI
         if useRandom == nil then
             useRandom = true
         end
-        spawnEnt = self:PickSpawnEntity(whereOverride or def.Where, spawnClassHint, selectorState, useRandom)
+        spawnEnt = self:PickSpawnEntity(SpawnWhereField(def, whereOverride), spawnClassHint, selectorState, useRandom)
     end
-    if not IsValid(spawnEnt) then
+    if not IsValid(spawnEnt) and not isvector(spawnPosOverride) then
         return nil, "no_spawnpoint"
     end
-    local spawnPos = ResolveSafeSpawnPos(spawnEnt)
-    local spawnAng = spawnEnt:GetAngles()
+    local spawnPos = isvector(spawnPosOverride)
+        and Vector(spawnPosOverride.x, spawnPosOverride.y, spawnPosOverride.z + 8)
+        or ResolveSafeSpawnPos(spawnEnt, BoolValue(def.ClosestPoint or def.closestpoint, false))
+    local spawnAng = IsValid(spawnEnt) and spawnEnt:GetAngles() or Angle(0, 0, 0)
 
     local useNextBotBase = ShouldUseNextBotSpawner()
     local bot
@@ -1617,7 +1773,7 @@ function SPAWNER:ApplyBotEventChange(bot, eventName)
     return true
 end
 
-function SPAWNER:SpawnTank(runtime, rawDef, spawnState, fixedSpawnEnt, selectorState, randomSpawn)
+function SPAWNER:SpawnTank(runtime, rawDef, spawnState, fixedSpawnEnt, selectorState, randomSpawn, spawnPosOverride)
     local def = self:BuildBotDef(runtime, rawDef)
 
     local spawnEnt = fixedSpawnEnt
@@ -1626,7 +1782,7 @@ function SPAWNER:SpawnTank(runtime, rawDef, spawnState, fixedSpawnEnt, selectorS
         if useRandom == nil then
             useRandom = true
         end
-        spawnEnt = self:PickSpawnEntity(def.Where, "tank", selectorState, useRandom)
+        spawnEnt = self:PickSpawnEntity(SpawnWhereField(def), "tank", selectorState, useRandom)
     end
     local tank = ents.Create("tank_boss")
     if not IsValid(tank) then
@@ -1634,15 +1790,20 @@ function SPAWNER:SpawnTank(runtime, rawDef, spawnState, fixedSpawnEnt, selectorS
     end
 
     tank.MvMManaged = true
-    tank.MvMPathTrackName = tostring(ScalarValue(def.PathTrack or def.path_track or def.PathTrackName) or "")
+    tank.MvMPathTrackName = tostring(ScalarValue(def.StartingPathTrackNode or def.PathTrack or def.path_track or def.PathTrackName) or "")
     tank.MvMTankHealth = NumValue(def.Health or def.MaxHealth, 10000)
     tank.MvMMoveSpeed = NumValue(def.Speed or def.MoveSpeed, 75)
+    tank.MvMSkin = math.max(0, math.floor(NumValue(def.Skin, 0) or 0))
+    tank.MvMOnSpawnOutput = def.OnSpawnOutput
     tank.MvMOnKilledOutput = def.OnKilledOutput
     tank.MvMOnBombDroppedOutput = def.OnBombDroppedOutput
 
     if IsValid(spawnEnt) then
         tank:SetPos(spawnEnt:GetPos())
         tank:SetAngles(spawnEnt:GetAngles())
+    elseif isvector(spawnPosOverride) then
+        tank:SetPos(spawnPosOverride)
+        tank:SetAngles(Angle(0, 0, 0))
     end
 
     if runtime then
@@ -1668,7 +1829,7 @@ function SPAWNER:SpawnTank(runtime, rawDef, spawnState, fixedSpawnEnt, selectorS
     return tank
 end
 
-function SPAWNER:SpawnSentryGun(runtime, rawDef, spawnState, fixedSpawnEnt, selectorState, randomSpawn)
+function SPAWNER:SpawnSentryGun(runtime, rawDef, spawnState, fixedSpawnEnt, selectorState, randomSpawn, spawnPosOverride)
     local def = self:BuildBotDef(runtime, rawDef)
 
     local spawnEnt = fixedSpawnEnt
@@ -1677,14 +1838,16 @@ function SPAWNER:SpawnSentryGun(runtime, rawDef, spawnState, fixedSpawnEnt, sele
         if useRandom == nil then
             useRandom = true
         end
-        spawnEnt = self:PickSpawnEntity(def.Where, "sentrygun", selectorState, useRandom)
+        spawnEnt = self:PickSpawnEntity(SpawnWhereField(def), "sentrygun", selectorState, useRandom)
     end
-    if not IsValid(spawnEnt) then
+    if not IsValid(spawnEnt) and not isvector(spawnPosOverride) then
         return nil, "no_spawnpoint"
     end
 
-    local pos = ResolveSafeSpawnPos(spawnEnt)
-    local ang = spawnEnt:GetAngles()
+    local pos = isvector(spawnPosOverride)
+        and Vector(spawnPosOverride.x, spawnPosOverride.y, spawnPosOverride.z + 8)
+        or ResolveSafeSpawnPos(spawnEnt, BoolValue(def.ClosestPoint or def.closestpoint, false))
+    local ang = IsValid(spawnEnt) and spawnEnt:GetAngles() or Angle(0, 0, 0)
     local sentry = ents.Create("obj_sentrygun")
     if not IsValid(sentry) then
         return nil, "failed_create_sentry"

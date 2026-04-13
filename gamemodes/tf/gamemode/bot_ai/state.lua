@@ -59,7 +59,11 @@ end
 
 function M:Get(bot)
 	if not IsValid(bot) then return nil end
-	bot._tfbot_ai = bot._tfbot_ai or defaultState()
+	if not bot._tfbot_ai then
+		bot._tfbot_ai = defaultState()
+		local offset = (bot:EntIndex() % 7) * 0.03
+		bot._tfbot_ai.perf.nextSense = (CurTime and CurTime() or 0) + offset
+	end
 	return bot._tfbot_ai
 end
 

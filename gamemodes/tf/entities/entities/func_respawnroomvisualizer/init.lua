@@ -216,6 +216,11 @@ local function IsDoorAllowedForTeam(playerTeam, doorTeam)
 	return IsAllowedInVisualizer(playerTeam, doorTeam)
 end
 
+local function ShouldUseSpawnDoorGuard()
+	local map = string.lower(game.GetMap() or "")
+	return not string.StartWith(map, "mvm_")
+end
+
 local function ResolveSpawnDoorTeam(door)
 	if not IsValid(door) then return nil end
 
@@ -247,6 +252,10 @@ local function ResolveSpawnDoorTeam(door)
 end
 
 local function ScanSpawnDoors()
+	if not ShouldUseSpawnDoorGuard() then
+		return {}
+	end
+
 	local doors = {}
 
 	for _, className in ipairs({"func_door", "func_door_rotating"}) do
@@ -582,6 +591,10 @@ if SERVER then
 	end)
 
 	hook.Add("Think", "TF_RespawnRoomSpawnDoorGuard", function()
+		if not ShouldUseSpawnDoorGuard() then
+			return
+		end
+
 		if spawnDoors == nil then
 			spawnDoors = ScanSpawnDoors()
 		end

@@ -87,13 +87,15 @@ end
 
 local function nearestAmmoPack(bot)
 	if not IsValid(bot) then return nil end
+	local world = TFBotValveAI and TFBotValveAI.World or nil
 	local origin = bot:GetPos()
 	local maxDist = math.max(256, cv_ammo_seek_range:GetFloat())
 	local maxDist2 = maxDist * maxDist
 	local best, bestDist
 
 	for _, cls in ipairs({"item_ammopack_small", "item_ammopack_medium", "item_ammopack_full"}) do
-		for _, ent in ipairs(ents.FindByClass(cls)) do
+		local entities = world and world:GetEntitiesByClass(cls, 0.15) or ents.FindByClass(cls)
+		for _, ent in ipairs(entities) do
 			if not IsValid(ent) then continue end
 			if ent.GetNoDraw and ent:GetNoDraw() then continue end
 			if ent.CanPickup and not ent:CanPickup(bot) then continue end
@@ -416,7 +418,7 @@ function M:Update(bot, cmd, state)
 	if mvm and mvm:TrySentryBusterDetonate(bot, state, cmd) then
 		return
 	end
-	if mvm and mvm:IsCombatSuppressed(state) then
+	if mvm and mvm:IsCombatSuppressed(bot, state) then
 		local mvmState = state.mvm or {}
 		local mode = tostring(mvmState.mode or "")
 		local carrierCanFight = mvmState.isCarrier == true

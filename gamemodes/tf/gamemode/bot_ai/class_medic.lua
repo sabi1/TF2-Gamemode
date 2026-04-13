@@ -108,10 +108,11 @@ local function findPatient(bot, currentPatient)
 end
 
 local function findNearbyInjuredFriendly(bot, primaryPatient, inCombat)
+	local world = TFBotValveAI and TFBotValveAI.World or nil
 	local best
 	local bestRatio = 1.0
 	local maxRange = cv_max_heal:GetFloat() * 0.9
-	for _, ply in ipairs(player.GetAll()) do
+	for _, ply in ipairs(world and world:GetAlivePlayers() or player.GetAll()) do
 		if not IsValid(ply) or not ply:IsPlayer() or not ply:Alive() then continue end
 		if ply == bot or not ply:IsFriendly(bot) then continue end
 		if bot:GetPos():Distance(ply:GetPos()) > maxRange then continue end

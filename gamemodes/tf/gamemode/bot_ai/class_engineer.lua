@@ -4,7 +4,8 @@ TFBotValveAI.ClassEngineer = TFBotValveAI.ClassEngineer or {}
 local M = TFBotValveAI.ClassEngineer
 
 local function findMySentry(bot)
-	for _, sentry in ipairs(ents.FindByClass("obj_sentrygun")) do
+	local world = TFBotValveAI and TFBotValveAI.World or nil
+	for _, sentry in ipairs(world and world:GetEntitiesByClass("obj_sentrygun", 0.15) or ents.FindByClass("obj_sentrygun")) do
 		if IsValid(sentry) and IsValid(sentry:GetBuilder()) and sentry:GetBuilder():EntIndex() == bot:EntIndex() then
 			return sentry
 		end
@@ -13,7 +14,8 @@ local function findMySentry(bot)
 end
 
 local function findMyTeleExit(bot)
-	for _, tele in ipairs(ents.FindByClass("obj_teleporter")) do
+	local world = TFBotValveAI and TFBotValveAI.World or nil
+	for _, tele in ipairs(world and world:GetEntitiesByClass("obj_teleporter", 0.15) or ents.FindByClass("obj_teleporter")) do
 		if IsValid(tele) and IsValid(tele:GetBuilder()) and tele:GetBuilder():EntIndex() == bot:EntIndex() then
 			if tele.GetObjectMode and tele:GetObjectMode() == MODE_TELEPORTER_EXIT then
 				return tele
@@ -123,7 +125,9 @@ function M:Update(bot, state)
 		return true
 	end
 
-	local hint = ents.FindByClass("bot_hint_sentrygun")[1]
+	local world = TFBotValveAI and TFBotValveAI.World or nil
+	local hintList = world and world:GetEntitiesByClass("bot_hint_sentrygun", 0.20) or ents.FindByClass("bot_hint_sentrygun")
+	local hint = hintList[1]
 	if IsValid(hint) then
 		bot.SentryGunHint = hint
 		state.objective.mode = "engineer_seek_hint"

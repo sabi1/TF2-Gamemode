@@ -124,7 +124,341 @@ local function shouldForceJumpAtObstacle(bot, targetAng)
 	return tr.HitNormal.z <= 0.65
 end
 
-local function resetPathState(st)
+local function isDynamicBarricadeEntity(ent)
+	if not IsValid(ent) then return false end
+	local class = string.lower(tostring(ent:GetClass() or ""))
+	if class == "func_brush" or class == "func_door" or class == "func_door_rotating" or class == "func_movelinear" then
+		return true
+	end
+	if class == "prop_dynamic" or class == "prop_dynamic_override" then
+		return true
+	end
+	if string.find(class, "barricade", 1, true) or string.find(class, "barrier", 1, true) then
+		return true
+	end
+	return false
+end
+
+local function traceDynamicBarricadeAhead(bot, targetAng)
+	if not IsValid(bot) then return nil end
+	local startPos = bot:GetPos() + Vector(0, 0, 18)
+	local tr = util.TraceHull({
+		start = startPos,
+		endpos = startPos + targetAng:Forward() * 56,
+		filter = bot,
+		mask = MASK_PLAYERSOLID,
+		mins = Vector(-16, -16, 0),
+		maxs = Vector(16, 16, 56),
+	})
+	if not tr.Hit or not isDynamicBarricadeEntity(tr.Entity) then
+		return nil
+	end
+	return tr.Entity, tr
+end
+
+local resetPathState
+
+local function computeBarricadeHoldPos(bot, blocker, targetPos)
+	if not IsValid(bot) or not IsValid(blocker) then return nil end
+	local mins, maxs = blocker:WorldSpaceAABB()
+	if not (isvector(mins) and isvector(maxs)) then return nil end
+
+	local center = (mins + maxs) * 0.5
+	local away = bot:GetPos() - center
+	away.z = 0
+	if away:LengthSqr() < 1 then
+		away = isvector(targetPos) and (center - targetPos) or Vector(1, 0, 0)
+		away.z = 0
+	end
+	if away:LengthSqr() < 1 then
+		away = Vector(1, 0, 0)
+	end
+	away:Normalize()
+
+	local lateral = Vector(-away.y, away.x, 0)
+	local side = (bot:EntIndex() % 2 == 0) and 1 or -1
+	local clearance = math.max(maxs.x - mins.x, maxs.y - mins.y, 48)
+
+	local holdPos = center + away * (clearance * 0.65 + 96) + lateral * side * (clearance * 0.25 + 56)
+	holdPos.z = bot:GetPos().z
+	return holdPos
+end
+
+local function isPointInsideExpandedAABB(pos, mins, maxs, expand)
+	expand = tonumber(expand) or 0
+	return pos.x >= (mins.x - expand) and pos.x <= (maxs.x + expand)
+		and pos.y >= (mins.y - expand) and pos.y <= (maxs.y + expand)
+		and pos.z >= (mins.z - expand) and pos.z <= (maxs.z + expand)
+end
+
+local function traceHitsSpecificBlocker(bot, startPos, endPos, blocker)
+	if not (IsValid(bot) and isvector(startPos) and isvector(endPos) and IsValid(blocker)) then
+		return false
+	end
+	local tr = util.TraceHull({
+		start = startPos,
+		endpos = endPos,
+		filter = bot,
+		mask = MASK_PLAYERSOLID,
+		mins = Vector(-16, -16, 0),
+		maxs = Vector(16, 16, 56),
+	})
+	return tr.Hit and tr.Entity == blocker
+end
+
+local function getAreaListBetween(startArea, goalArea, parentsById)
+	if not (IsValid(startArea) and IsValid(goalArea) and istable(parentsById)) then return nil end
+	local path = {goalArea}
+	local cursorId = goalArea:GetID()
+	local guard = 0
+	while cursorId ~= startArea:GetID() and guard < 512 do
+		local parentId = parentsById[cursorId]
+		if not parentId then return nil end
+		local parentArea = navmesh.GetNavAreaByID and navmesh.GetNavAreaByID(parentId) or nil
+		if not IsValid(parentArea) then return nil end
+		table.insert(path, 1, parentArea)
+		cursorId = parentId
+		guard = guard + 1
+	end
+	return path
+end
+
+local function getWaypointFromAreaPath(bot, blocker, targetPos, areaPath)
+	if not (IsValid(bot) and IsValid(blocker) and isvector(targetPos) and istable(areaPath) and #areaPath >= 2) then
+		return nil
+	end
+
+	local origin = bot:GetPos()
+	local originDist = origin:DistToSqr(targetPos)
+	local startIndex = math.min(2, #areaPath)
+	for i = startIndex, #areaPath do
+		local area = areaPath[i]
+		if not IsValid(area) then continue end
+		local center = area:GetCenter()
+		if origin:DistToSqr(center) <= (72 * 72) then continue end
+		if center:DistToSqr(targetPos) >= (originDist - (96 * 96)) then continue end
+		if not traceHitsSpecificBlocker(bot, center + Vector(0, 0, 18), targetPos + Vector(0, 0, 18), blocker) then
+			return center
+		end
+	end
+
+	local fallbackIndex = math.min(math.max(2, math.floor(#areaPath * 0.5)), #areaPath)
+	local fallbackArea = areaPath[fallbackIndex]
+	return IsValid(fallbackArea) and fallbackArea:GetCenter() or nil
+end
+
+local function computeBarricadeRouteDetourPos(bot, blocker, targetPos)
+	if not (IsValid(bot) and IsValid(blocker) and isvector(targetPos)) then return nil end
+	if not (navmesh and navmesh.GetNearestNavArea and navmesh.GetNavAreaByID) then return nil end
+
+	local startArea = getNearestAreaForTeam(bot:GetPos(), bot:Team())
+	local goalArea = getNearestAreaForTeam(targetPos, bot:Team())
+	if not (IsValid(startArea) and IsValid(goalArea)) then return nil end
+	if startArea == goalArea then return nil end
+
+	local mins, maxs = blocker:WorldSpaceAABB()
+	if not (isvector(mins) and isvector(maxs)) then return nil end
+
+	local frontier = {startArea}
+	local frontierScores = {[startArea:GetID()] = 0}
+	local costSoFar = {[startArea:GetID()] = 0}
+	local parentsById = {}
+	local visited = {}
+	local targetDir = targetPos - bot:GetPos()
+	targetDir.z = 0
+	local targetDirNorm = targetDir:LengthSqr() > 1 and targetDir:GetNormalized() or Vector(1, 0, 0)
+	local expandedAABB = 72
+	local maxVisited = (string.lower(game.GetMap() or "") == "mvm_rottenburg") and 420 or 260
+
+	local function canUseArea(area)
+		if not IsValid(area) then return false end
+		local center = area:GetCenter()
+		if math.abs(center.z - bot:GetPos().z) > 320 then return false end
+		if isPointInsideExpandedAABB(center, mins, maxs, expandedAABB) then return false end
+		local toArea = center - bot:GetPos()
+		toArea.z = 0
+		if toArea:LengthSqr() > 1 then
+			local dot = toArea:GetNormalized():Dot(targetDirNorm)
+			if dot < -0.25 then
+				return false
+			end
+		end
+		return true
+	end
+
+	local function edgeBlocked(fromArea, toArea)
+		if not (IsValid(fromArea) and IsValid(toArea)) then return true end
+		return traceHitsSpecificBlocker(bot, fromArea:GetCenter() + Vector(0, 0, 18), toArea:GetCenter() + Vector(0, 0, 18), blocker)
+	end
+
+	while #frontier > 0 and table.Count(visited) < maxVisited do
+		table.sort(frontier, function(a, b)
+			return (frontierScores[a:GetID()] or math.huge) < (frontierScores[b:GetID()] or math.huge)
+		end)
+
+		local current = table.remove(frontier, 1)
+		local currentId = current:GetID()
+		if not visited[currentId] then
+			visited[currentId] = true
+
+			if current == goalArea then
+				local areaPath = getAreaListBetween(startArea, goalArea, parentsById)
+				local waypoint = getWaypointFromAreaPath(bot, blocker, targetPos, areaPath)
+				if isvector(waypoint) then
+					return waypoint
+				end
+			end
+
+			local adjacent = current.GetAdjacentAreas and current:GetAdjacentAreas() or nil
+			if istable(adjacent) then
+				for _, neighbor in ipairs(adjacent) do
+					if not canUseArea(neighbor) then continue end
+					if edgeBlocked(current, neighbor) then continue end
+
+					local neighborId = neighbor:GetID()
+					local stepCost = current:GetCenter():Distance(neighbor:GetCenter())
+					local candidateCost = (costSoFar[currentId] or 0) + stepCost
+					if candidateCost >= (costSoFar[neighborId] or math.huge) then continue end
+
+					costSoFar[neighborId] = candidateCost
+					parentsById[neighborId] = currentId
+
+					local heuristic = neighbor:GetCenter():Distance(targetPos)
+					local neighborCenter = neighbor:GetCenter()
+					local progressBonus = math.max(0, bot:GetPos():Distance(targetPos) - neighborCenter:Distance(targetPos))
+					frontierScores[neighborId] = candidateCost + heuristic - math.min(progressBonus * 0.35, 220)
+					table.insert(frontier, neighbor)
+				end
+			end
+		end
+	end
+
+	return nil
+end
+
+local function computeBarricadeDetourPos(bot, blocker, targetPos)
+	if not (IsValid(bot) and IsValid(blocker) and isvector(targetPos)) then return nil end
+	local routeDetour = computeBarricadeRouteDetourPos(bot, blocker, targetPos)
+	if isvector(routeDetour) then
+		return routeDetour
+	end
+	if not (navmesh and navmesh.GetAllNavAreas) then
+		return computeBarricadeHoldPos(bot, blocker, targetPos)
+	end
+
+	local mins, maxs = blocker:WorldSpaceAABB()
+	if not (isvector(mins) and isvector(maxs)) then
+		return computeBarricadeHoldPos(bot, blocker, targetPos)
+	end
+
+	local origin = bot:GetPos()
+	local blockerCenter = (mins + maxs) * 0.5
+	local direct = targetPos - origin
+	direct.z = 0
+	local directNorm = direct:LengthSqr() > 1 and direct:GetNormalized() or Vector(1, 0, 0)
+	local originTargetDist = origin:DistToSqr(targetPos)
+	local forwardDotMin = (string.lower(game.GetMap() or "") == "mvm_rottenburg") and 0.20 or -0.10
+	local minProgressGain = (string.lower(game.GetMap() or "") == "mvm_rottenburg") and (180 * 180) or (96 * 96)
+
+	local bestPos, bestScore
+	for _, area in ipairs(navmesh.GetAllNavAreas()) do
+		if not IsValid(area) then continue end
+		local center = area:GetCenter()
+		if math.abs(center.z - origin.z) > 220 then continue end
+		if origin:DistToSqr(center) > (1600 * 1600) then continue end
+		if center:DistToSqr(blockerCenter) > (2200 * 2200) then continue end
+		if isPointInsideExpandedAABB(center, mins, maxs, 56) then continue end
+
+		local toCenter = center - origin
+		toCenter.z = 0
+		if toCenter:LengthSqr() <= (80 * 80) then continue end
+
+		local forwardDot = toCenter:GetNormalized():Dot(directNorm)
+		if forwardDot < forwardDotMin then continue end
+		local progressGain = originTargetDist - center:DistToSqr(targetPos)
+		if progressGain < minProgressGain then continue end
+		if traceHitsSpecificBlocker(bot, origin + Vector(0, 0, 18), center + Vector(0, 0, 18), blocker) then continue end
+		if traceHitsSpecificBlocker(bot, center + Vector(0, 0, 18), targetPos + Vector(0, 0, 18), blocker) then continue end
+
+		local score = origin:DistToSqr(center) * 0.45 + center:DistToSqr(targetPos) * 0.75 - progressGain * 0.35 - math.max(0, forwardDot) * 50000
+		if not bestScore or score < bestScore then
+			bestScore = score
+			bestPos = center
+		end
+	end
+
+	return bestPos or computeBarricadeHoldPos(bot, blocker, targetPos)
+end
+
+local function clearBarricadeState(st)
+	st.path.blockerEntIndex = -1
+	st.path.blockerClass = nil
+	st.path.blockerHits = 0
+	st.path.blockedUntil = 0
+	st.path.blockedTargetPos = nil
+end
+
+local function isBarricadeStillBlocking(bot, st, targetPos)
+	if not (IsValid(bot) and st and st.path) then return false end
+	local entIndex = tonumber(st.path.blockerEntIndex or -1)
+	if entIndex < 0 then return false end
+	local blocker = Entity(entIndex)
+	if not IsValid(blocker) then return false end
+	if not isDynamicBarricadeEntity(blocker) then return false end
+	if not isvector(targetPos) then return false end
+
+	return traceHitsSpecificBlocker(bot, bot:GetPos() + Vector(0, 0, 18), targetPos + Vector(0, 0, 18), blocker)
+end
+
+local function startBarricadeHold(bot, st, blocker, now, targetPos)
+	st.path.blockerEntIndex = IsValid(blocker) and blocker:EntIndex() or -1
+	st.path.blockerClass = IsValid(blocker) and tostring(blocker:GetClass() or "unknown") or "unknown"
+	st.path.blockerHits = tonumber(st.path.blockerHits or 0) + 1
+	st.path.blockedUntil = now + math.min(1.5 + (st.path.blockerHits * 0.6), 5.5)
+	st.path.blockedTargetPos = computeBarricadeDetourPos(bot, blocker, targetPos) or bot:GetPos()
+	st.path.nextRepath = math.max(tonumber(st.path.nextRepath or 0), st.path.blockedUntil)
+	st.path.route = nil
+	resetPathState(st)
+	debugLog(bot, "path_blocked_barricade", 0.45, string.format(
+		"blocked=dynamic_barricade class=%s hits=%d pos=%s detour=%s target=%s",
+		tostring(st.path.blockerClass),
+		tonumber(st.path.blockerHits) or 0,
+		fmtVec(bot:GetPos()),
+		fmtVec(st.path.blockedTargetPos),
+		fmtVec(targetPos)
+	))
+end
+
+local function applyBarricadeHold(bot, cmd, st, now)
+	if now >= tonumber(st.path.blockedUntil or 0) then
+		clearBarricadeState(st)
+		return false
+	end
+	local detourPos = st.path.blockedTargetPos
+	if not isvector(detourPos) then
+		cmd:SetForwardMove(-40)
+		cmd:SetSideMove(0)
+		cmd:RemoveKey(IN_JUMP)
+		return true
+	end
+
+	local dir = detourPos - bot:GetPos()
+	dir.z = 0
+	if dir:LengthSqr() <= (42 * 42) then
+		cmd:SetForwardMove(0)
+		cmd:SetSideMove(0)
+		return true
+	end
+
+	local ang = dir:GetNormalized():Angle()
+	cmd:SetViewAngles(ang)
+	cmd:SetForwardMove(220)
+	cmd:SetSideMove(0)
+	cmd:RemoveKey(IN_JUMP)
+	return true
+end
+
+resetPathState = function(st)
 	st.path.targetArea = nil
 	st.path.segmentAreaId = nil
 	st.path.segmentBestDist = nil
@@ -174,14 +508,16 @@ local function isMvMMap()
 end
 
 local function getBombIntel()
-	for _, intel in ipairs(ents.FindByClass("item_teamflag_mvm")) do
+	local world = TFBotValveAI and TFBotValveAI.World or nil
+	for _, intel in ipairs(world and world:GetEntitiesByClass("item_teamflag_mvm", 0.20) or ents.FindByClass("item_teamflag_mvm")) do
 		if IsValid(intel) then return intel end
 	end
 	return nil
 end
 
 local function getDeployZonePos()
-	for _, zone in ipairs(ents.FindByClass("func_capturezone")) do
+	local world = TFBotValveAI and TFBotValveAI.World or nil
+	for _, zone in ipairs(world and world:GetEntitiesByClass("func_capturezone", 0.20) or ents.FindByClass("func_capturezone")) do
 		if IsValid(zone) then
 			local pos = getEntGoalPos(zone, nil)
 			if isvector(pos) then
@@ -327,6 +663,24 @@ end
 
 function M:ResolveTargetPos(bot, state)
 	if not IsValid(bot) or not state then return nil end
+	if state.path and tonumber(state.path.blockerEntIndex or -1) >= 0 then
+		local now = CurTime and CurTime() or 0
+		local realTarget = state.objective and state.objective.targetPos or nil
+		if isBarricadeStillBlocking(bot, state, realTarget) then
+			state.path.blockedUntil = math.max(tonumber(state.path.blockedUntil or 0), now + 1.0)
+			if not isvector(state.path.blockedTargetPos) or bot:GetPos():DistToSqr(state.path.blockedTargetPos) <= (80 * 80) or now >= tonumber(state.path.blockedUntil or 0) - 0.2 then
+				local blocker = Entity(tonumber(state.path.blockerEntIndex or -1))
+				if IsValid(blocker) then
+					state.path.blockedTargetPos = computeBarricadeDetourPos(bot, blocker, realTarget) or state.path.blockedTargetPos
+				end
+			end
+			if isvector(state.path.blockedTargetPos) then
+				return state.path.blockedTargetPos
+			end
+		else
+			clearBarricadeState(state)
+		end
+	end
 	local target = state.objective.targetPos
 	if IsValid(state.objective.targetEnt) then
 		target = getEntGoalPos(state.objective.targetEnt, target)
@@ -346,7 +700,35 @@ end
 
 function M:NeedRepath(bot, state, now)
 	if not IsValid(bot) or not state then return false end
-	return now >= (state.path.nextRepath or 0) or not istable(state.path.route)
+	if not istable(state.path.route) then
+		return true
+	end
+
+	local routeType = tostring(bot.routeType or "default")
+	if tostring(state.path.lastRouteType or "") ~= routeType then
+		return true
+	end
+
+	local targetPos = state.objective and state.objective.targetPos or nil
+	local lastTargetPos = state.path.lastBuildTargetPos
+	if isvector(targetPos) and isvector(lastTargetPos) then
+		local shift2 = targetPos:DistToSqr(lastTargetPos)
+		local threshold = (routeType == "fastest" and 80 or 140)
+		if shift2 >= (threshold * threshold) then
+			return true
+		end
+	elseif isvector(targetPos) ~= isvector(lastTargetPos) then
+		return true
+	end
+
+	local targetEnt = state.objective and state.objective.targetEnt or nil
+	local lastTargetEntIndex = tonumber(state.path.lastTargetEntIndex or -1)
+	local targetEntIndex = IsValid(targetEnt) and targetEnt:EntIndex() or -1
+	if targetEntIndex ~= lastTargetEntIndex then
+		return true
+	end
+
+	return now >= (state.path.nextRepath or 0)
 end
 
 function M:RefreshRepathDeadline(state, now)
@@ -385,6 +767,9 @@ function M:BuildPath(bot, state, targetPos, now)
 	state.path.consecutiveBuildFails = 0
 	state.path.lastRepath = now
 	state.path.lastRepathTry = now
+	state.path.lastBuildTargetPos = targetPos
+	state.path.lastTargetEntIndex = IsValid(state.objective and state.objective.targetEnt or nil) and state.objective.targetEnt:EntIndex() or -1
+	state.path.lastRouteType = tostring(bot.routeType or "default")
 	resetPathState(state)
 	return true
 end
@@ -394,6 +779,7 @@ local function progressMonitor(bot, cmd, st, distToArea, targetPos)
 	local now = CurTime()
 	st.path.stuckEvents = tonumber(st.path.stuckEvents or 0)
 	st.path.stuckEventWindowAt = tonumber(st.path.stuckEventWindowAt or 0)
+	local blockerEnt, blockerTrace = traceDynamicBarricadeAhead(bot, bot:EyeAngles())
 	if now - st.path.stuckEventWindowAt > 6.0 then
 		st.path.stuckEvents = 0
 	end
@@ -406,6 +792,13 @@ local function progressMonitor(bot, cmd, st, distToArea, targetPos)
 		st.path.segmentBestDist = distToArea
 		st.path.segmentBestStamp = now
 	elseif now - (st.path.segmentBestStamp or now) > 0.85 and bot:IsOnGround() then
+		if IsValid(blockerEnt) then
+			startBarricadeHold(bot, st, blockerEnt, now, targetPos)
+			if blockerTrace and blockerTrace.Normal then
+				cmd:SetViewAngles((targetPos - bot:GetPos()):Angle())
+			end
+			return true
+		end
 		st.path.route = nil
 		resetPathState(st)
 		st.path.nextRepath = 0
@@ -440,6 +833,10 @@ local function progressMonitor(bot, cmd, st, distToArea, targetPos)
 	if bot:IsOnGround() and distToArea > 120 and speed2D < 28 then
 		st.path.stuckSince = st.path.stuckSince or now
 		if now - st.path.stuckSince > 0.9 then
+			if IsValid(blockerEnt) then
+				startBarricadeHold(bot, st, blockerEnt, now, targetPos)
+				return true
+			end
 			st.path.route = nil
 			resetPathState(st)
 			st.path.nextRepath = 0
@@ -512,6 +909,10 @@ function M:Drive(bot, cmd, state)
 	state.path.lastRepathTry = state.path.lastRepathTry or 0
 	state.path.nextRepath = state.path.nextRepath or 0
 
+	if applyBarricadeHold(bot, cmd, state, now) then
+		return
+	end
+
 	if applySoftStuckRecover(bot, cmd, state, now) then
 		return
 	end
@@ -531,6 +932,14 @@ function M:Drive(bot, cmd, state)
 		local ang = dir:GetNormalized():Angle()
 		local failCount = tonumber(state.path.consecutiveBuildFails or 0)
 		local probeSpeed = math.max(60, cv_no_route_probe_speed:GetFloat())
+		local blockerEnt = traceDynamicBarricadeAhead(bot, ang)
+		if IsValid(blockerEnt) then
+			startBarricadeHold(bot, state, blockerEnt, now, targetPos)
+			cmd:SetForwardMove(-40)
+			cmd:SetSideMove(0)
+			cmd:RemoveKey(IN_JUMP)
+			return
+		end
 		cmd:SetForwardMove((failCount >= 2) and (probeSpeed * 0.5) or probeSpeed)
 		if failCount >= 2 then
 			cmd:SetSideMove((bot:EntIndex() % 2 == 0) and 120 or -120)

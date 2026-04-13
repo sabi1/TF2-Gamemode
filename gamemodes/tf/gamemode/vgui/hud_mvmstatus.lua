@@ -38,6 +38,7 @@ function PANEL:Paint(w, h)
 
     local waveCurrent = 1
     local waveTotal = 1
+    local isEndless = false
     local inSetup = false
     local setupEnd = 0
     local readyCount = 0
@@ -45,7 +46,8 @@ function PANEL:Paint(w, h)
 
     if TF_MVMState and TF_MVMState.Get then
         waveCurrent = math.max(1, tonumber(TF_MVMState:Get("wave_current", 1)) or 1)
-        waveTotal = math.max(waveCurrent, tonumber(TF_MVMState:Get("wave_total", waveCurrent)) or waveCurrent)
+        waveTotal = math.max(0, tonumber(TF_MVMState:Get("wave_total", waveCurrent)) or waveCurrent)
+        isEndless = TF_MVMState:Get("is_endless", false) and true or false
         inSetup = TF_MVMState:Get("in_setup", false) and true or false
         setupEnd = tonumber(TF_MVMState:Get("setup_end_time", 0)) or 0
         readyCount = math.max(0, tonumber(TF_MVMState:Get("ready_count", 0)) or 0)
@@ -66,7 +68,10 @@ function PANEL:Paint(w, h)
     local selected = ply:GetNWString("TF_MVM_CanteenSelected", "crit")
     local selectedCharges = ply:GetNWInt("TF_MVM_Canteen_" .. selected, 0)
 
-    draw.SimpleText("WAVE " .. tostring(waveCurrent) .. " / " .. tostring(waveTotal), "Trebuchet24", 10, 8, Color(231, 218, 186), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+    local waveText = isEndless
+        and ("WAVE " .. tostring(waveCurrent) .. " / ENDLESS")
+        or ("WAVE " .. tostring(waveCurrent) .. " / " .. tostring(math.max(waveCurrent, waveTotal)))
+    draw.SimpleText(waveText, "Trebuchet24", 10, 8, Color(231, 218, 186), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
     draw.SimpleText(setupText, "DermaDefaultBold", w - 10, 10, Color(225, 207, 164), TEXT_ALIGN_RIGHT, TEXT_ALIGN_TOP)
 
     draw.SimpleText("Credits: " .. tostring(credits), "DermaDefaultBold", 10, 36, Color(252, 221, 118), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)

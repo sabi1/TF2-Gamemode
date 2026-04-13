@@ -4300,8 +4300,6 @@ else
             return table.concat(out, "|")
         end
 
-        local SetInfo
-
         local function RebuildTabButtons(force)
             local nextTabs = BuildTabsForPlayer(payload, subjectPly)
             local nextSignature = BuildTabsSignature(nextTabs)
@@ -4588,7 +4586,7 @@ else
             return table.concat(lines, "\n")
         end
 
-        SetInfo = function(up)
+        local function SetInfo(up)
             local activeTab
             for _, t in ipairs(tabs) do
                 if t.key == selectedTab then

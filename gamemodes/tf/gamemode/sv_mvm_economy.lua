@@ -27,7 +27,11 @@ end
 
 function ECON:AddCredits(ply, amount)
     if not IsValid(ply) then return end
-    self:SetCredits(ply, self:GetCredits(ply) + (tonumber(amount) or 0))
+    amount = tonumber(amount) or 0
+    self:SetCredits(ply, self:GetCredits(ply) + amount)
+    if amount > 0 and TF_MVMShop and TF_MVMShop.AwardRespecProgress then
+        TF_MVMShop:AwardRespecProgress(ply, amount)
+    end
 end
 
 function ECON:ResetAll(starting)

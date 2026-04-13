@@ -184,7 +184,8 @@ local function isInvader(bot)
 end
 
 getBombIntel = function()
-	for _, intel in ipairs(ents.FindByClass("item_teamflag_mvm")) do
+	local world = TFBotValveAI and TFBotValveAI.World or nil
+	for _, intel in ipairs(world and world:GetEntitiesByClass("item_teamflag_mvm", 0.20) or ents.FindByClass("item_teamflag_mvm")) do
 		if IsValid(intel) then
 			return intel
 		end
@@ -227,7 +228,8 @@ local function getDeployZone(bot)
 		anchor = bot:GetPos()
 	end
 	local best, bestDist
-	for _, zone in ipairs(ents.FindByClass("func_capturezone")) do
+	local world = TFBotValveAI and TFBotValveAI.World or nil
+	for _, zone in ipairs(world and world:GetEntitiesByClass("func_capturezone", 0.20) or ents.FindByClass("func_capturezone")) do
 		if not IsValid(zone) then continue end
 		if not isRedCaptureZone(zone) then continue end
 		if not isvector(anchor) then
@@ -242,7 +244,7 @@ local function getDeployZone(bot)
 		end
 	end
 	if IsValid(best) then return best end
-	for _, zone in ipairs(ents.FindByClass("func_capturezone")) do
+	for _, zone in ipairs(world and world:GetEntitiesByClass("func_capturezone", 0.20) or ents.FindByClass("func_capturezone")) do
 		if IsValid(zone) then
 			return zone
 		end
@@ -272,6 +274,19 @@ local function isInsideFriendlySpawnArea(bot)
 		area = navmesh.GetNearestNavArea(bot:GetPos(), true, 10000, true, true)
 	end
 	return hasAreaTFAttribute(area, attr)
+end
+
+local function canBotsAttackWhileInSpawnRoom()
+	local rt = TF_MVM and TF_MVM.Runtime or nil
+	local mission = rt and rt.Mission or nil
+	if not mission then
+		return true
+	end
+	return not (mission.CanBotsAttackWhileInSpawnRoom ~= nil and mission.CanBotsAttackWhileInSpawnRoom ~= ""
+		and tostring(mission.CanBotsAttackWhileInSpawnRoom):lower() ~= "1"
+		and tostring(mission.CanBotsAttackWhileInSpawnRoom):lower() ~= "true"
+		and tostring(mission.CanBotsAttackWhileInSpawnRoom):lower() ~= "yes"
+		and tostring(mission.CanBotsAttackWhileInSpawnRoom):lower() ~= "on")
 end
 
 local function getSpawnExitTargetPos(bot)
@@ -396,8 +411,9 @@ local function isSentryBuster(bot)
 end
 
 local function selectSentryBusterTarget(bot)
+	local world = TFBotValveAI and TFBotValveAI.World or nil
 	local best, bestScore
-	for _, ent in ipairs(ents.FindByClass("obj_sentrygun")) do
+	for _, ent in ipairs(world and world:GetEntitiesByClass("obj_sentrygun", 0.15) or ents.FindByClass("obj_sentrygun")) do
 		if not IsValid(ent) or ent:IsFriendly(bot) then continue end
 		local dist = bot:GetPos():DistToSqr(ent:GetPos())
 		local score = -dist + ((ent.GetLevel and ent:GetLevel() or 1) * 5000)
@@ -407,7 +423,7 @@ local function selectSentryBusterTarget(bot)
 		end
 	end
 	if IsValid(best) then return best end
-	for _, ent in ipairs(ents.FindByClass("obj_dispenser")) do
+	for _, ent in ipairs(world and world:GetEntitiesByClass("obj_dispenser", 0.15) or ents.FindByClass("obj_dispenser")) do
 		if IsValid(ent) and not ent:IsFriendly(bot) then
 			return ent
 		end
@@ -457,9 +473,10 @@ local function getManagedObjective(bot)
 end
 
 local function selectEnemyBuilding(bot)
+	local world = TFBotValveAI and TFBotValveAI.World or nil
 	for _, class in ipairs({"obj_sentrygun", "obj_dispenser", "obj_teleporter"}) do
 		local best, bestDist = nil, nil
-		for _, ent in ipairs(ents.FindByClass(class)) do
+		for _, ent in ipairs(world and world:GetEntitiesByClass(class, 0.15) or ents.FindByClass(class)) do
 			if not IsValid(ent) or ent:IsFriendly(bot) then continue end
 			local d = bot:GetPos():DistToSqr(ent:GetPos())
 			if not bestDist or d < bestDist then
@@ -493,7 +510,8 @@ local function canUseTeleporterInMvM(bot, state)
 
 	local myDist = bot:GetPos():DistToSqr(targetPos)
 	local best, bestDist
-	for _, tele in ipairs(ents.FindByClass("obj_teleporter")) do
+	local world = TFBotValveAI and TFBotValveAI.World or nil
+	for _, tele in ipairs(world and world:GetEntitiesByClass("obj_teleporter", 0.15) or ents.FindByClass("obj_teleporter")) do
 		if not IsValid(tele) or not tele:IsFriendly(bot) then continue end
 		if not tele.IsEntrance or not tele:IsEntrance() then continue end
 		if not tele.IsReady or not tele:IsReady() then continue end
@@ -526,7 +544,8 @@ local function applyCarrierDefenseBuffPulse(bot)
 	if not IsValid(bot) then return end
 	if not isnumber(TF_COND_DEFENSEBUFF_NO_CRIT_BLOCK) or not bot.AddCond then return end
 	local radius2 = 450 * 450
-	for _, ply in ipairs(player.GetAll()) do
+	local world = TFBotValveAI and TFBotValveAI.World or nil
+	for _, ply in ipairs(world and world:GetAlivePlayersForTeam(bot:Team()) or player.GetAll()) do
 		if not IsValid(ply) or not ply:Alive() then continue end
 		if ply:Team() ~= bot:Team() then continue end
 		if bot:GetPos():DistToSqr(ply:GetPos()) > radius2 then continue end
@@ -941,8 +960,14 @@ function M:ApplyDecision(bot, state, decision)
 	end
 end
 
-function M:IsCombatSuppressed(state)
-	return state and state.mvm and state.mvm.ignoreCombat == true
+function M:IsCombatSuppressed(bot, state)
+	if state and state.mvm and state.mvm.ignoreCombat == true then
+		return true
+	end
+	if IsValid(bot) and isInsideFriendlySpawnArea(bot) and not canBotsAttackWhileInSpawnRoom() then
+		return true
+	end
+	return false
 end
 
 function M:Tick(bot, state)

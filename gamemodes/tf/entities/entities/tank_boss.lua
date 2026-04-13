@@ -58,6 +58,9 @@ function ENT:Initialize()
 		self.lastThink = CurTime()
 		self:SetUseType(SIMPLE_USE)
 		self:SetPlaybackRate(1)
+		if self.SetSkin then
+			self:SetSkin(math.max(0, math.floor(tonumber(self.MvMSkin) or 0)))
+		end
 
 		-- Resolve path node from POP pathtrack name when provided.
 		self.currentNode = self:FindFirstPathNode()
@@ -127,6 +130,10 @@ function ENT:Initialize()
 			umsg.Start("TF_PlayGlobalSound")
 				umsg.String("MVM.TankStart")
 			umsg.End() 
+		end
+
+		if TF_MVM and TF_MVM.Outputs and self.MvMOnSpawnOutput then
+			TF_MVM.Outputs:Fire(self.MvMOnSpawnOutput)
 		end
 	end
 end
@@ -328,6 +335,7 @@ function ENT:Think()
 				end
 			end
 		end
+
 		for _, ent in ipairs(ents.FindInSphere(self:GetPos(), 100)) do
 			if ent:IsPlayer() or ent:GetClass():find("npc") then
 				local dmg = DamageInfo()
