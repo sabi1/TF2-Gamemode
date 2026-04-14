@@ -2344,7 +2344,7 @@ function GM:PlayerSpawn(ply)
 	else
 		ply:SetNWBool("IsDerpAim",false)
 	end
-	for k,v in ipairs(player.GetAll()) do
+
 		if (player.GetCount() == 1) then
 
 			if (!GAMEMODE.round_active and ply:Team() != TEAM_SPECTATOR and not string.find(string.lower(game.GetMap() or ""), "mvm_", 1, true)) then
@@ -2405,7 +2405,7 @@ function GM:PlayerSpawn(ply)
 			end 
 
 		end
-	end
+
 	ply:PrecacheGibs()
 	
 	ply:DoAnimationEvent(ACT_MP_ATTACK_STAND_POSTFIRE, true)
