@@ -122,7 +122,7 @@ end
 TF_RegisterCoreEngineerSWEPs()
 
 resource.AddWorkshop( "1932936017" )
-resource.AddWorkshop( "3323795558" )
+
 local LOGFILE = "tf/log_server.txt" 
 file.Delete(LOGFILE) 
 file.Append(LOGFILE, "Loading serverside script\n")
