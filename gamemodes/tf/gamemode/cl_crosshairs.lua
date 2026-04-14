@@ -1,7 +1,7 @@
 
 local crosshairs = surface.GetTextureID("sprites/tf_crosshairs")
 
-Crosshairs = {
+local Crosshairs = {
 
 tf_crosshair1={
 	x=0,
@@ -38,7 +38,7 @@ tf_crosshair6={
 	y=48,
 	w=24,
 	h=24,
-},
+}
 
 } -- Crosshairs
 
@@ -47,7 +47,7 @@ local function DrawCrosshair(crosshair, scale)
 	local s = scale or 1
 	local W,H = ScrW(), ScrH()
 	local pos = LocalPlayer():GetEyeTrace().HitPos:ToScreen()
-	surface.SetDrawColor(255,255,255,255)
+	surface.SetDrawColor(255, 255, 255)
 	if LocalPlayer():ShouldDrawLocalPlayer() then -- and !LocalPlayer().FirstReality then
 		tf_draw.ModTexture(crosshairs, pos.x - ((s*c.w) / 2), pos.y - ((s*c.w) / 2), s*c.w, s*c.h, c)
 	else
@@ -56,15 +56,15 @@ local function DrawCrosshair(crosshair, scale)
 end
 
 function GM:DrawCrosshair()
-	if GetConVarNumber("crosshair")==0 or LocalPlayer():GetNWBool("Taunting") or !file.Exists("gamemodes/tf/content/materials/sprites/tf_crosshairs.vtf","WORKSHOP") then return end
-	local w = LocalPlayer():GetActiveWeapon()
-	
-	-- false is not nil, this will exclude HL2 weapons, which do not have this property, but still have a crosshair
-	if w.DrawCrosshair==false then
-		return
-	end
-	
-	if IsValid(w) then
-		DrawCrosshair(w.Crosshair, w.CrosshairScale)
+	if GetConVarNumber("crosshair") == 0 or LocalPlayer():GetNWBool("Taunting") then return end
+	local wep = LocalPlayer():GetActiveWeapon()
+
+	if IsValid(wep) then
+		-- false is not nil, this will exclude HL2 weapons, which do not have this property, but still have a crosshair
+		if wep.DrawCrosshair == false then
+			return
+		end
+
+		DrawCrosshair(wep.Crosshair, wep.CrosshairScale)
 	end
 end
