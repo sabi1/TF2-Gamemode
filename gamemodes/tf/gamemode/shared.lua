@@ -243,7 +243,7 @@ if CLIENT then
 
 	include("cl_conflict.lua")
 
-	include("cl_entclientinit.lua")
+
 	include("cl_deathnotice.lua") 
 	include("cl_scheme.lua")
 

@@ -46,7 +46,7 @@ include("cl_debug_bridge.lua")
 include("cl_halloween_boss_notify.lua")
  
 include("shared.lua")
-include("cl_entclientinit.lua")
+
 include("cl_deathnotice.lua") 
 
 include("cl_player_other.lua")
@@ -3958,7 +3958,7 @@ include("cl_pickteam.lua")
 include("cl_conflict.lua")
 
 include("shared.lua")
-include("cl_entclientinit.lua")
+
 include("cl_deathnotice.lua") 
 include("cl_scheme.lua")
 
