@@ -3614,8 +3614,8 @@ function GM:ShouldCollide(ent1, ent2)
 	if IsValid(ent1:GetOwner()) and (ent1:GetOwner():IsPlayer() or ent1:GetOwner():IsNPC()) then ent1 = ent1:GetOwner() end
 	if IsValid(ent2:GetOwner()) and (ent2:GetOwner():IsPlayer() or ent2:GetOwner():IsNPC()) then ent2 = ent2:GetOwner() end
 	
-	local t1 = self:EntityTeam(ent1)
-	local t2 = self:EntityTeam(ent2)
+	--local t1 = self:EntityTeam(ent1)
+	--local t2 = self:EntityTeam(ent2)
 	--[[
 	if (ent1:IsPlayer() or ent2:IsPlayer()) and (t1==TEAM_RED or t1==TEAM_BLU or t1==TF_TEAM_PVE_INVADERS or t1==TEAM_INFECTED) and t1==t2 then
 		return false
