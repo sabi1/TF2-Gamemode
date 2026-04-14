@@ -148,15 +148,6 @@ util.AddNetworkString("TF_RomevisionOffer")
 --	getfenv()[args[1]] = pl:GetEyeTrace().Entity	
 --end) 
 
-hook.Add("Think", "NoAttackPuppet", function()
-		for k,v in ipairs(player.GetAll()) do 
-			if (v:WaterLevel() < 2 and !v.IsDrowning) then
-				timer.Stop("Drown"..v:EntIndex())
-				timer.Stop("DrownContinue"..v:EntIndex())
-			end
-		end 
-end) 
-
 
 concommand.Add("voicemenu_gesture", function(pl, cmd, args)
 	local a, b = tonumber(args[1]), tonumber(args[2])
@@ -1541,57 +1532,76 @@ local function PlayerGiantBotSpawn( ply, mv )
 		end
 	end)
 end 
+hook.Add( "PlayerSpawn", "PlayerGiantRoBotSpawn", PlayerGiantBotSpawn)
 
 concommand.Add("check_save_table_for_entity", function(ply)
 	PrintTable(ply:GetEyeTrace().Entity:GetSaveTable())
 end)
-hook.Add( "OnEntityWaterLevelChanged", "UnderwaterAmbience", function(ent,old,new)
-	if (new > 0 and !ent:IsFlagSet(FL_INWATER)) then
-		if (ent:IsPlayer()) then
-			ent:EmitSound("Physics.WaterSplash")
-		end
+
+local drowning = {}
+hook.Add("OnEntityWaterLevelChanged", "UnderwaterAmbience", function(ent, old, new)
+	if not ent:IsPlayer() then return end
+
+	if new > 0 and old == 0 then
+		ent:EmitSound("Physics.WaterSplash")
 	end
-	if (new > 2) then
-		if (ent:IsPlayer()) then
-			ent:SendLua('LocalPlayer():StopSound("Player.AmbientUnderWater")')
-			ent:SetDSP(14)
-			ent:SendLua('LocalPlayer():EmitSound("Player.AmbientUnderWater")')
-			timer.Create("Drown"..ent:EntIndex(), 12, 1, function()
-				if (ent:WaterLevel() > 2 and !ent:HasGodMode()) then
-					ent.IsDrowning = true
-					ent:EmitSound("Player.DrownContinue")
-					ent:TakeDamage(8)
-					ent:ScreenFade( SCREENFADE.IN, Color( 0, 0, 100, 128 ), 1, 0 )
-					timer.Create("DrownContinue"..ent:EntIndex(), 1, 0, function()
-						if (!ent:Alive()) then
-							ent.IsDrowning = false
-						end
-						ent:TakeDamage(8)
-						ent:EmitSound("Player.DrownContinue")
-						ent:ScreenFade( SCREENFADE.IN, Color( 0, 0, 100, 128 ), 1, 0 )
-					end)
-				end
-			end)
-		end
+
+	if new > 2 then
+		ent:SetDSP(14)
+		ent:SendLua('LocalPlayer():StopSound("Player.AmbientUnderWater")')
+		ent:SendLua('LocalPlayer():EmitSound("Player.AmbientUnderWater")')
+
+		drowning[ent] = {
+			start = CurTime() + 12,
+			nextTick = 0
+		}
 	else
-		if (ent:IsPlayer()) then
-			if (new < 3) then
-				if (ent.IsDrowning) then
-					timer.Stop("Drown"..ent:EntIndex())
-					timer.Stop("DrownContinue"..ent:EntIndex())
-					ent:SetHealth(ent:Health() + ent:GetMaxHealth() * 0.5)
-					ent:EmitSound("Player.DrownStart")
-					ent.IsDrowning = false
-				end
-				ParticleEffectAttach("water_playeremerge", PATTACH_ABSORIGIN_FOLLOW, ent, 0)
+		if drowning[ent] then
+			if ent.IsDrowning then
+				ent:SetHealth(math.min(ent:Health() + ent:GetMaxHealth() * 0.5, ent:GetMaxHealth()))
+				ent:EmitSound("Player.DrownStart")
 			end
-			ent:SetDSP(0)
-			ent:SendLua('LocalPlayer():StopSound("Player.AmbientUnderWater")')
+
+			drowning[ent] = nil
+			ent.IsDrowning = false
+
+			ParticleEffectAttach("water_playeremerge", PATTACH_ABSORIGIN_FOLLOW, ent, 0)
+		end
+
+		ent:SetDSP(0)
+		ent:SendLua('LocalPlayer():StopSound("Player.AmbientUnderWater")')
+	end
+end)
+
+hook.Add("Tick", "DrowningSystem_Tick", function()
+	local ct = CurTime()
+
+	for ent, data in pairs(drowning) do
+		if not IsValid(ent) or not ent:Alive() then
+			drowning[ent] = nil
+			continue
+		end
+
+		if ent:WaterLevel() <= 2 or ent:HasGodMode() then
+			drowning[ent] = nil
+			ent.IsDrowning = false
+			continue
+		end
+
+		if not ent.IsDrowning then
+			ent.IsDrowning = data.start <= ct
+			continue
+		end
+
+		if data.nextTick <= ct then
+			data.nextTick = ct + 1
+
+			ent:TakeDamage(8)
+			ent:EmitSound("Player.DrownContinue")
+			ent:ScreenFade(SCREENFADE.IN, Color(0, 0, 100, 128), 1, 0)
 		end
 	end
 end)
-hook.Add( "PlayerSpawn", "PlayerGiantRoBotSpawn", PlayerGiantBotSpawn)
-
 
 concommand.Add( "random_team", function( ply, cmd, args )
 
