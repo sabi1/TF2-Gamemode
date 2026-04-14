@@ -513,7 +513,6 @@ end
 
 function SWEP:Think()
 	--self.BaseClass.Think(self)
-	self:TFViewModelFOV()
 
 	if CLIENT then
 		if self.Owner==LocalPlayer() then

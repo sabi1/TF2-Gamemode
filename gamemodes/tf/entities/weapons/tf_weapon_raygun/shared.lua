@@ -103,8 +103,6 @@ function SWEP:Reload()
 end
 
 function SWEP:Think()
-	self:TFViewModelFOV()
-	self:TFFlipViewmodel()
 	//deployspeed = math.Round(GetConVar("tf_weapon_deploy_speed"):GetFloat() - GetConVar("tf_weapon_deploy_speed"):GetInt(), 2)
 	//deployspeed = math.Round(GetConVar("tf_weapon_deploy_speed"):GetFloat(),2)
 	

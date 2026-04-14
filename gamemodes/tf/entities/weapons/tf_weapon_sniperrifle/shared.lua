@@ -351,7 +351,7 @@ end
 
 function SWEP:Think()
 	self:InspectAnimCheck()
-	self:TFViewModelFOV()
+
 	if (self:GetItemData()) then
 		if (self:GetItemData().name) then
 			if (self:GetItemData().name == "Machina" or self:GetItemData().name == "Shooting Star") then

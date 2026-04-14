@@ -220,8 +220,6 @@ function SWEP:Reload()
 end
 
 function SWEP:Think()
-	self:TFViewModelFOV()
-
 	if SERVER and self.NextReplayDeployAnim then
 		if CurTime() > self.NextReplayDeployAnim then
 			--MsgFN("Replaying deploy animation %d", self.VM_DRAW)

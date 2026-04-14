@@ -400,7 +400,6 @@ function SWEP:Think()
 		self.Owner:GetWeapons()[1]:ManipulateBoneAngles( 1, Angle(0,self.barrelRotation,0) )
 		
 	end
-	self:TFViewModelFOV()
 
 	if SERVER and self.NextReplayDeployAnim then
 		if CurTime() > self.NextReplayDeployAnim then

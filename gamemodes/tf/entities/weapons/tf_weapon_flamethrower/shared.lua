@@ -338,8 +338,6 @@ function SWEP:StopFiring()
 end
 
 function SWEP:Think()
-	self:TFViewModelFOV()
-	
 	if (IsValid(self.Owner) and string.find(self.Owner:GetModel(),"_boss.mdl")) then
 				
 		self.ShootSound = Sound("MVM.GiantPyro_FlameStart")

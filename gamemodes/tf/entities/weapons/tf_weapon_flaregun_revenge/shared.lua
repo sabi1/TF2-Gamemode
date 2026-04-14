@@ -94,8 +94,6 @@ function SWEP:ShootProjectile()
 end
 
 function SWEP:Think()
-	self:TFViewModelFOV()
-
 	if self.NextIdle and CurTime()>=self.NextIdle then
 		self:SendWeaponAnim(self.VM_IDLE)
 		self.NextIdle = nil

@@ -264,45 +264,58 @@ end
 
 end
 
--- Viewmodel FOV should be constant, don't change this
+if CLIENT then
+	SWEP.ViewModelFlip = false
 
-
-SWEP.ViewModelFlip	= false
-
-function SWEP:TFViewModelFOV()
-	if GetConVar("tf_use_viewmodel_fov"):GetInt() > 0 then
-		self.ViewModelFOV	= self.Owner:GetInfoNum("viewmodel_fov_tf",54)
-	else
-		self.ViewModelFOV	= self.Owner:GetInfoNum("viewmodel_fov",54)
-	end
-		
-	--eugh, another ugly hack.
-	if GetConVar("tf_righthand") then
-		if GetConVar("tf_righthand"):GetInt() == 0 then
-			if (self:GetClass() == "tf_weapon_compound_bow") then
-				self.ViewModelFlip = false
-			else 
-				self.ViewModelFlip = true
-			end
+	-- Viewmodel FOV should be constant, don't change this
+	function SWEP:TFViewModelFOV()
+		if GetConVar("tf_use_viewmodel_fov"):GetInt() > 0 then
+			self.ViewModelFOV = self:GetOwner():GetInfoNum("viewmodel_fov_tf", 54)
 		else
-			if (self:GetClass() == "tf_weapon_compound_bow") then
+			self.ViewModelFOV = self:GetOwner():GetInfoNum("viewmodel_fov", 54)
+		end
+	end
+
+	function SWEP:TFFlipViewmodel()
+		if GetConVar("tf_righthand"):GetInt() > 0 then
+			if self:GetClass() == "tf_weapon_compound_bow" then
 				self.ViewModelFlip = true
 			else
 				self.ViewModelFlip = false
 			end
+		else
+			if self:GetClass() == "tf_weapon_compound_bow" then
+				self.ViewModelFlip = false
+			else
+				self.ViewModelFlip = true
+			end
 		end
 	end
-end
 
-function SWEP:TFFlipViewmodel()
-	if GetConVar("tf_righthand"):GetInt() > 0 then
-		self.ViewModelFlip = false
-	else
-		self.ViewModelFlip = true
-	end
-end
+	cvars.AddChangeCallback("tf_righthand", function()
+		local wep = LocalPlayer():GetActiveWeapon()
 
-if CLIENT then
+		if IsValid(wep) then
+			wep:TFFlipViewmodel()
+		end
+	end)
+	
+	cvars.AddChangeCallback("tf_use_viewmodel_fov", function()
+		local wep = LocalPlayer():GetActiveWeapon()
+
+		if IsValid(wep) then
+			wep:TFViewModelFOV()
+		end
+	end)
+
+	cvars.AddChangeCallback("viewmodel_fov_tf", function()
+		local wep = LocalPlayer():GetActiveWeapon()
+
+		if IsValid(wep) then
+			wep:TFViewModelFOV()
+		end
+	end)
+
 	function SWEP:GetOffhandProjectileModel()
 		if self.OffhandProjectileModel then
 			return self.OffhandProjectileModel
@@ -989,8 +1002,12 @@ function SWEP:Deploy()
 	if (self.Owner.anim_Deployed) then
 		self.Owner:DoAnimationEvent(ACT_MP_ATTACK_STAND_POSTFIRE)
 	end
-	self:TFViewModelFOV()
-	self:TFFlipViewmodel()
+
+	if CLIENT then
+		self:TFViewModelFOV()
+		self:TFFlipViewmodel()
+	end
+
 	self:InspectAnimCheck()
 	if (self.MarkForDeath) then
 		self.Owner:AddPlayerState(PLAYERSTATE_MARKED, true)
@@ -1307,13 +1324,6 @@ function SWEP:Deploy()
 	end
 	self:StopTimers()
 	self.DeployPlayed = nil
-	if GetConVar("tf_righthand") and not self:GetClass() == "tf_weapon_compound_bow" then
-	if GetConVar("tf_righthand"):GetInt() == 0	then
-		self.ViewModelFlip = true
-	else
-		self.ViewModelFlip = false
-	end
-	end
 
 	if SERVER then
 		----MsgN(Format("Deploy %s (owner:%s)",tostring(self),tostring(self:GetOwner())))
@@ -1947,8 +1957,7 @@ function TranslateKilliconName(name)
 end
 
 
-function SWEP:Think() 
-	self:TFViewModelFOV()
+function SWEP:Think()
 	self:Inspect()
 	self:InspectAnimCheck()
 	if (self:GetNWFloat("ReloadTimeMultiplier",1.0) > 0.0) then

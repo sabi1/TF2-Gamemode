@@ -573,8 +573,6 @@ function SWEP:StopFiring()
 end
 
 function SWEP:Think()
-	self:TFViewModelFOV()
-
 	if CLIENT then
 		if self.Owner==LocalPlayer() then
 			if self.dt.TargetEntity ~= self.LastTargetEntity then
