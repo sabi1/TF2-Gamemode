@@ -308,6 +308,9 @@ local function chooseWeapon(bot, threat, state)
 	if not weapons or #weapons == 0 then return nil, {} end
 	local dist = IsValid(threat) and bot:GetPos():Distance(threat:GetPos()) or 99999
 	local restriction = string.lower(tostring(bot.TF_MVM_WeaponRestriction or ""))
+	local objectiveMode = string.lower(tostring(state and state.objective and state.objective.mode or ""))
+	local forceMelee = objectiveMode == "melee_attack"
+		or objectiveMode == "spy_attack_knife"
 
 	local medicTarget = state and state.class and state.class.healTarget or nil
 	local botClass = string.lower(tostring((bot.GetPlayerClass and bot:GetPlayerClass()) or bot.playerclass or ""))
@@ -376,7 +379,9 @@ local function chooseWeapon(bot, threat, state)
 	end
 
 	local fallback = preferred
-	if dist <= cv_melee_engage_dist:GetFloat() and wepValid(meleeWep) then
+	if forceMelee and wepValid(meleeWep) then
+		preferred = meleeWep
+	elseif dist <= cv_melee_engage_dist:GetFloat() and wepValid(meleeWep) then
 		preferred = meleeWep
 	elseif wepValid(rangedWithAmmo) then
 		preferred = rangedWithAmmo
@@ -451,11 +456,33 @@ function M:Update(bot, cmd, state)
 	bot:SetEyeAngles(lookAng)
 
 	local dist = bot:GetPos():Distance(threat:GetPos())
+	local objectiveMode = string.lower(tostring(state.objective and state.objective.mode or ""))
+	local sourceManagedMode = objectiveMode == "retreat_to_cover"
+		or objectiveMode == "get_health"
+		or objectiveMode == "get_ammo"
+		or objectiveMode == "melee_attack"
+		or objectiveMode == "use_teleporter"
+		or objectiveMode == "use_teleporter_exit"
+		or objectiveMode == "destroy_enemy_sentry"
+		or objectiveMode == "spy_attack_knife"
+		or objectiveMode == "spy_attack_pistol"
+		or objectiveMode == "spy_sap"
+		or objectiveMode == "spy_sap_move"
 	local desiredRange = (istable(active) and tonumber(active.range)) or (active and active.IsMeleeWeapon and 95) or 550
 	local meleeUsable = wepValid(ctx and ctx.melee)
 	local outOfRangedAmmo = ctx and ctx.outOfRangedAmmo == true
-	local lowAmmoNow = IsValid(active) and isLowAmmo(bot, active)
+	local lowAmmoNow = wepValid(active) and isLowAmmo(bot, active)
 	local isMvMCarrier = state and state.mvm and state.mvm.isCarrier == true
+
+	if objectiveMode == "retreat_to_cover" then
+		cmd:RemoveKey(IN_ATTACK)
+		cmd:RemoveKey(IN_ATTACK2)
+		return
+	end
+
+	if objectiveMode == "use_teleporter" or objectiveMode == "use_teleporter_exit" then
+		cmd:RemoveKey(IN_ATTACK2)
+	end
 
 	if (not isMvMCarrier) and outOfRangedAmmo and dist > cv_melee_engage_dist:GetFloat() then
 		local ammo = nearestAmmoPack(bot)
@@ -507,7 +534,7 @@ function M:Update(bot, cmd, state)
 	local los = bot:Visible(threat)
 
 	-- Source-style pursuit: keep pushing to LOS/desired range while fighting.
-	if (not los) or (not inRange) then
+	if ((not los) or (not inRange)) and not sourceManagedMode then
 		state.objective.mode = "attack_pursue"
 		state.objective.targetEnt = threat
 		state.objective.targetPos = threat:GetPos()
@@ -519,12 +546,15 @@ function M:Update(bot, cmd, state)
 	end
 
 	-- Source-style close-range circle movement.
-	if isCloseRangeWeapon(active) and los and dist <= math.max(desiredRange * 1.1, 110) then
+	if isCloseRangeWeapon(active) and los and dist <= math.max(desiredRange * 1.1, 110) and objectiveMode ~= "retreat_to_cover" then
 		local seed = math.floor(CurTime() * 2 + bot:EntIndex()) % 2
 		cmd:SetSideMove(seed == 0 and 220 or -220)
 	end
 
 	local shouldAttack = dist <= 2200 and bot:Visible(threat)
+	if objectiveMode == "melee_attack" or objectiveMode == "spy_attack_knife" then
+		shouldAttack = shouldAttack and dist <= math.max(cv_melee_engage_dist:GetFloat(), 115)
+	end
 	if bot.TF_MVM_HoldFireUntilFullReload then
 		-- Source behavior is weapon-state based; in Lua we approximate by waiting for close engagement.
 		shouldAttack = shouldAttack and dist <= 700

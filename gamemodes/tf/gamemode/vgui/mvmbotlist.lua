@@ -97,6 +97,28 @@ local PlayerPing = {
 	yalign=TEXT_ALIGN_CENTER,
 }
 
+local function getScoreboardPlayersForTeam(teamNum)
+	local players = team.GetPlayers(teamNum)
+	local merged = {}
+	local seen = {}
+
+	for _, pl in ipairs(players) do
+		if IsValid(pl) then
+			merged[#merged + 1] = pl
+			seen[pl] = true
+		end
+	end
+
+	for _, bot in ipairs(ents.FindByClass("tf_bot_base_nextbot")) do
+		if IsValid(bot) and bot.TFBot == true and bot.Team and bot:Team() == teamNum and not seen[bot] then
+			merged[#merged + 1] = bot
+			seen[bot] = true
+		end
+	end
+
+	return merged
+end
+
 function PANEL:Init()
 	self:SetPaintBackgroundEnabled(false)
 	self:SetVisible(true)
@@ -127,13 +149,13 @@ function PANEL:Paint()
 	local ypos = math.floor(23*Scale)
 	
 	local col = team.GetColor(self.PlayerTeam)
-	local players = team.GetPlayers(self.PlayerTeam)
+	local players = getScoreboardPlayersForTeam(self.PlayerTeam)
 	
 	table.sort(players, function(a, b) return a:Frags() > b:Frags() end)
 	
 	for i,pl in ipairs(players) do
-		local c = pl:GetPlayerClassTable()
-		local d = not pl:Alive()
+		local c = pl.GetPlayerClassTable and pl:GetPlayerClassTable() or nil
+		local d = not (pl.Alive and pl:Alive())
 		
 		if pl == LocalPlayer() then
 			surface.SetDrawColor(Colors.HudPanelBorder)
@@ -145,12 +167,12 @@ function PANEL:Paint()
 		else
 			col.a = 255
 		end
-		PlayerName.text = pl:GetName()
+		PlayerName.text = (pl.GetName and pl:GetName()) or (pl.Nick and pl:Nick()) or "TFBot"
 		PlayerName.color = col
 		PlayerName.pos[2] = ypos
 		draw.Text(PlayerName)
 
-		PlayerClass.text = string.upper((pl:GetPlayerClass() or "?"):sub(1, 8))
+		PlayerClass.text = string.upper(((pl.GetPlayerClass and pl:GetPlayerClass()) or "?"):sub(1, 8))
 		PlayerClass.color = col
 		PlayerClass.pos[2] = ypos
 		draw.Text(PlayerClass)
@@ -165,12 +187,12 @@ function PANEL:Paint()
 		PlayerDamage.pos[2] = ypos
 		draw.Text(PlayerDamage)
 
-		PlayerMoney.text = tostring(pl:GetNWInt("TF_MVM_Credits", 0))
+		PlayerMoney.text = tostring(pl.GetNWInt and pl:GetNWInt("TF_MVM_Credits", 0) or 0)
 		PlayerMoney.color = col
 		PlayerMoney.pos[2] = ypos
 		draw.Text(PlayerMoney)
 
-		PlayerPing.text = pl:IsBot() and "BOT" or tostring(pl:Ping())
+		PlayerPing.text = (pl.IsBot and pl:IsBot()) and "BOT" or tostring((pl.Ping and pl:Ping()) or 0)
 		PlayerPing.color = col
 		PlayerPing.pos[2] = ypos
 		draw.Text(PlayerPing)

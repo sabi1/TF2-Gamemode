@@ -322,6 +322,28 @@ end
 
 loadMvMScoreboardRes()
 
+local function getScoreboardPlayersForTeam(teamNum)
+	local players = team.GetPlayers(teamNum)
+	local merged = {}
+	local seen = {}
+
+	for _, pl in ipairs(players) do
+		if IsValid(pl) then
+			merged[#merged + 1] = pl
+			seen[pl] = true
+		end
+	end
+
+	for _, bot in ipairs(ents.FindByClass("tf_bot_base_nextbot")) do
+		if IsValid(bot) and bot.TFBot == true and bot.Team and bot:Team() == teamNum and not seen[bot] then
+			merged[#merged + 1] = bot
+			seen[bot] = true
+		end
+	end
+
+	return merged
+end
+
 function PANEL:Init()
 	self:SetPaintBackgroundEnabled(false)
 	self:SetVisible(false)
@@ -393,7 +415,7 @@ function PANEL:Paint()
 		local mainH = MvMScoreboardRes.mainH * Scale
 		local centerX = (MvMScoreboardRes.panelW * 0.5) * Scale
 
-		local humanCount = #team.GetPlayers(TEAM_RED)
+		local humanCount = #getScoreboardPlayersForTeam(TEAM_RED)
 		local credits = LocalPlayer():GetNWInt("TF_MVM_Credits", 0)
 
 		surface.SetDrawColor(255, 255, 255, 255)
@@ -469,7 +491,7 @@ function PANEL:Paint()
 	BlueTeamScore.text = team.GetScore(TEAM_BLU)
 	draw.Text(BlueTeamScore)
 	
-	num = #team.GetPlayers(TEAM_BLU)
+	num = #getScoreboardPlayersForTeam(TEAM_BLU)
 	if num > 0 then
 		if num == 1 then
 			BlueTeamPlayerCount.text = tf_lang.GetFormatted("#TF_ScoreBoard_Player", num)
@@ -493,7 +515,7 @@ function PANEL:Paint()
 	RedTeamScore.text = team.GetScore(TEAM_RED)
 	draw.Text(RedTeamScore)
 	
-	num = #team.GetPlayers(TEAM_RED)
+	num = #getScoreboardPlayersForTeam(TEAM_RED)
 	if num > 0 then
 		if num == 1 then
 			RedTeamPlayerCount.text = tf_lang.GetFormatted("#TF_ScoreBoard_Player", num)

@@ -376,6 +376,10 @@ function ENT:Initialize()
 	self._tfTeam = TEAM_RED
 	self._spawnTime = CurTime()
 	self.routeType = "default"
+	self:SetNWInt("TFBotScore", 0)
+	self:SetNWInt("TFBotDeaths", 0)
+	self:SetNWInt("TFBotTeam", self._tfTeam)
+	self:SetNWString("PlayerClass", self._tfClass)
 	self:BuildDefaultClassLoadout()
 	startBestActivity(self, IDLE_ACTS)
 	self.ControllerBot = ents.Create("ctf_bot_navigator")
@@ -401,11 +405,19 @@ function ENT:IsBot()
 	return true
 end
 
+function ENT:IsTFPlayer()
+	return true
+end
+
 function ENT:Nick()
 	return tostring(self:GetNWString("TF_BotDisplayName", self._tfBotManagerName or self.PrintName or "TFBot"))
 end
 
 function ENT:Name()
+	return self:Nick()
+end
+
+function ENT:GetName()
 	return self:Nick()
 end
 
@@ -428,12 +440,53 @@ function ENT:KillSilent()
 	self:Kill()
 end
 
+function ENT:Frags()
+	return tonumber(self:GetNWInt("TFBotScore", self._tfBotFrags or 0)) or 0
+end
+
+function ENT:Deaths()
+	return tonumber(self:GetNWInt("TFBotDeaths", self._tfBotDeaths or 0)) or 0
+end
+
+function ENT:SetFrags(n)
+	self._tfBotFrags = math.floor(tonumber(n) or 0)
+	if SERVER then
+		self:SetNWInt("TFBotScore", self._tfBotFrags)
+	end
+end
+
+function ENT:AddFrags(n)
+	self:SetFrags(self:Frags() + (tonumber(n) or 0))
+end
+
+function ENT:SetDeaths(n)
+	self._tfBotDeaths = math.floor(tonumber(n) or 0)
+	if SERVER then
+		self:SetNWInt("TFBotDeaths", self._tfBotDeaths)
+	end
+end
+
+function ENT:AddDeaths(n)
+	self:SetDeaths(self:Deaths() + (tonumber(n) or 0))
+end
+
+function ENT:Ping()
+	return 0
+end
+
+function ENT:GetFriendStatus()
+	return "none"
+end
+
 function ENT:Team()
-	return self._tfTeam or TEAM_RED
+	return tonumber(self:GetNWInt("TFBotTeam", self._tfTeam or TEAM_RED)) or TEAM_RED
 end
 
 function ENT:SetTeam(teamId)
 	self._tfTeam = tonumber(teamId) or TEAM_RED
+	if SERVER then
+		self:SetNWInt("TFBotTeam", self._tfTeam)
+	end
 	self:SetSkin((self:Team() == TEAM_BLU or self:Team() == TF_TEAM_PVE_INVADERS) and 1 or 0)
 end
 
@@ -446,12 +499,21 @@ function ENT:IsFriendly(other)
 end
 
 function ENT:GetPlayerClass()
-	return self._tfClass or "scout"
+	return tostring(self:GetNWString("PlayerClass", self._tfClass or "scout"))
+end
+
+function ENT:GetPlayerClassTable()
+	local gm = GAMEMODE or GM
+	local classes = gm and gm.PlayerClasses or nil
+	return classes and classes[self:GetPlayerClass()] or nil
 end
 
 function ENT:SetPlayerClass(className)
 	self._tfClass = string.lower(tostring(className or "scout"))
 	self.playerclass = self._tfClass
+	if SERVER then
+		self:SetNWString("PlayerClass", self._tfClass)
+	end
 	self:SetModel(pickModelForClass(self._tfClass, self:IsMiniBoss()))
 	self:SetSkin((self:Team() == TEAM_BLU or self:Team() == TF_TEAM_PVE_INVADERS) and 1 or 0)
 	self._wearableModelOverride = nil
@@ -876,10 +938,45 @@ end
 
 function ENT:SpawnFunction(ply, tr, className)
 	if not tr.Hit then return end
+
+	if isfunction(TF_CreateManagedMapBot) then
+		local teamNum = IsValid(ply) and ply:Team() or TEAM_RED
+		local botClass = IsValid(ply) and ply.GetPlayerClass and ply:GetPlayerClass() or "scout"
+		local bot = TF_CreateManagedMapBot(nil, teamNum, botClass, nil, nil, {
+			backend = "nextbot",
+			useTeamSpawn = true,
+			SpawnedViaSpawnMenu = true,
+		})
+		if IsValid(bot) then
+			return bot
+		end
+	end
+
 	local ent = ents.Create(className)
-	ent:SetPos(tr.HitPos + tr.HitNormal * 16)
 	ent:Spawn()
 	ent:Activate()
+	if ent.SetTeam then
+		ent:SetTeam(IsValid(ply) and ply:Team() or TEAM_RED)
+	end
+	if ent.SetPlayerClass then
+		ent:SetPlayerClass(IsValid(ply) and ply.GetPlayerClass and ply:GetPlayerClass() or "scout")
+	end
+	local gm = GAMEMODE or GM
+	if gm and gm.PlayerSelectSpawn then
+		local ok, spawn = pcall(gm.PlayerSelectSpawn, gm, ent)
+		if ok and IsValid(spawn) then
+			ent:SetPos(spawn:GetPos() + Vector(0, 0, 8))
+			ent:SetAngles(Angle(0, spawn:GetAngles().y, 0))
+			if ent.DropToFloor then
+				ent:DropToFloor()
+			end
+			return ent
+		end
+	end
+	if tr and tr.Hit and isvector(tr.HitPos) and isvector(tr.HitNormal) then
+		ent:SetPos(tr.HitPos + tr.HitNormal * 16)
+		ent:SetAngles(IsValid(ply) and ply:EyeAngles() or angle_zero)
+	end
 	return ent
 end
 

@@ -70,6 +70,42 @@ include("proxies/sniperriflecharge.lua")
 include("proxies/weapon_invis.lua")
 include("shd_gravitygun.lua")
 RunConsoleCommand("tf_merge_loadout")
+
+local function TF_IsLegacyPlayerBotNPC(className)
+	className = string.lower(tostring(className or ""))
+	if className == "" then return false end
+
+	return string.StartWith(className, "tf_red_bot")
+		or string.StartWith(className, "tf_blue_bot")
+		or string.StartWith(className, "mvm_bot")
+		or className == "mvm_mob_director"
+		or className == "mvm_robot_spawner"
+		or className == "mob_zombie_director"
+		or className == "mob_xen_director"
+		or className == "tf_red_team_spawner"
+		or className == "tf_blue_team_spawner"
+end
+
+local function TF_RefreshBotSpawnmenuCategories()
+	local npcList = list.Get("NPC")
+	if not istable(npcList) then return end
+
+	for className, data in pairs(npcList) do
+		if not istable(data) then continue end
+
+		if className == "tf_bot_base_nextbot" then
+			data.Name = "TFBot (NextBot)"
+			data.Category = "TFBots"
+		elseif TF_IsLegacyPlayerBotNPC(className) then
+			data.Category = "TFBots Legacy"
+		end
+	end
+end
+
+timer.Simple(0, TF_RefreshBotSpawnmenuCategories)
+hook.Add("OnReloaded", "TF_RefreshBotSpawnmenuCategories", TF_RefreshBotSpawnmenuCategories)
+hook.Add("InitPostEntity", "TF_RefreshBotSpawnmenuCategories", TF_RefreshBotSpawnmenuCategories)
+
 local TFBlueBotNameCache = TFBlueBotNameCache or {}
 local tfBlueBotNameCacheNext = 0
 local TFBlueBotSeenNames = TFBlueBotSeenNames or {}

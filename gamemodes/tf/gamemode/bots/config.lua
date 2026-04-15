@@ -4,7 +4,7 @@ TFBots.Config = TFBots.Config or {}
 local M = TFBots.Config
 
 M.cv_enable = CreateConVar("tf_bot_manager_enable", "1", {FCVAR_ARCHIVE, FCVAR_NOTIFY}, "Enable the cleaned bot manager bootstrap.")
-M.cv_backend = CreateConVar("tf_bot_manager_backend", "nextbot", {FCVAR_ARCHIVE, FCVAR_NOTIFY}, "Bot manager backend: nextbot|player|hybrid. Player/hybrid remain skeleton modes for future work.")
+M.cv_backend = CreateConVar("tf_bot_manager_backend", "nextbot", {FCVAR_ARCHIVE, FCVAR_NOTIFY}, "Bot manager backend: nextbot|player|hybrid.")
 M.cv_quota = CreateConVar("tf_bot_manager_quota_target", "0", {FCVAR_ARCHIVE, FCVAR_NOTIFY}, "Target number of manager-owned bots to keep alive.")
 M.cv_debug = CreateConVar("tf_bot_manager_debug", "0", {FCVAR_ARCHIVE, FCVAR_NOTIFY}, "Enable debug logs for the cleaned bot manager.")
 
@@ -49,4 +49,3 @@ function M:Debug(msg)
 end
 
 return M
-

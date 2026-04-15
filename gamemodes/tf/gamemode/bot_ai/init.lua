@@ -48,6 +48,7 @@ local mvm = TFBotValveAI.MvM
 local hints = TFBotValveAI.Hints
 local movement = TFBotValveAI.Movement
 local combat = TFBotValveAI.Combat
+local source = _G.TFBotSource
 
 if not cfg or not base or not state or not perf or not world or not threat or not objective or not mvm or not hints or not movement or not combat then
 	_G.TFBOT_VALVE_AI_ACTIVE = false
@@ -91,6 +92,9 @@ local function aiThink()
 	for _, bot in ipairs(base:GetManagedAgents()) do
 		if not base:IsAlive(bot) then continue end
 		local st = state:Get(bot)
+		if source and source.PreUpdate then
+			source:PreUpdate(bot, st)
+		end
 		if not perf:CanRun(now, st.perf.nextSense) then continue end
 
 		st.perf.nextSense = now + perf:GetInterval("sense")
@@ -98,6 +102,9 @@ local function aiThink()
 		objective:Select(bot, st)
 		mvm:Tick(bot, st)
 		hints:Apply(bot, st)
+		if source and source.PostUpdate then
+			source:PostUpdate(bot, st)
+		end
 		runClassHandlers(bot, st)
 		syncLegacyPlayerBotFields(bot, st)
 		if base:IsNextBotAgent(bot) then
@@ -112,6 +119,9 @@ local function aiStartCommand(bot, cmd)
 	if not base:IsPlayerAgent(bot) or not bot:Alive() then return end
 
 	local st = state:Get(bot)
+	if source and source.ApplyPlayerCommand then
+		source:ApplyPlayerCommand(bot, cmd, st)
+	end
 	movement:Apply(bot, cmd, st)
 	combat:Update(bot, cmd, st)
 end
@@ -126,29 +136,37 @@ hook.Add("PostCleanupMap", "TFBot_ValveAI_PostCleanupMap", aiCleanup)
 
 concommand.Add("tf_bot_valve_ai_add_nextbot", function(ply, _, args)
 	if IsValid(ply) and not ply:IsAdmin() then return end
-	local tr
-	if IsValid(ply) then
-		tr = ply:GetEyeTrace()
-	end
-	local spawnPos = nil
-	if tr and tr.Hit and isvector(tr.HitPos) and isvector(tr.HitNormal) then
-		spawnPos = tr.HitPos + tr.HitNormal * 20
-	end
-	if not isvector(spawnPos) then
-		local host = Entity(1)
-		spawnPos = IsValid(host) and (host:GetPos() + Vector(64, 0, 8)) or Vector(0, 0, 32)
-	end
-
-	local ent = ents.Create("tf_bot_base_nextbot")
-	if not IsValid(ent) then return end
-	ent:SetPos(spawnPos)
-	ent:Spawn()
-	ent:Activate()
-
 	local cls = string.lower(tostring(args and args[1] or "scout"))
 	local teamId = tonumber(args and args[2] or TEAM_RED) or TEAM_RED
-	ent:SetPlayerClass(cls)
-	ent:SetTeam(teamId)
+	local ent = nil
+
+	if isfunction(TF_CreateManagedMapBot) then
+		ent = TF_CreateManagedMapBot(nil, teamId, cls, nil, nil, {
+			backend = "nextbot",
+			useTeamSpawn = true,
+		})
+	end
+
+	if not IsValid(ent) then
+		ent = ents.Create("tf_bot_base_nextbot")
+		if not IsValid(ent) then return end
+		ent:Spawn()
+		ent:Activate()
+		ent:SetPlayerClass(cls)
+		ent:SetTeam(teamId)
+		local gm = GAMEMODE or GM
+		if gm and gm.PlayerSelectSpawn then
+			local ok, spawn = pcall(gm.PlayerSelectSpawn, gm, ent)
+			if ok and IsValid(spawn) then
+				ent:SetPos(spawn:GetPos() + Vector(0, 0, 8))
+				ent:SetAngles(Angle(0, spawn:GetAngles().y, 0))
+				if ent.DropToFloor then
+					ent:DropToFloor()
+				end
+			end
+		end
+	end
+
 	cfg:Debug("spawned tf_bot_base_nextbot class=" .. tostring(cls) .. " team=" .. tostring(teamId))
 end, nil, "Spawn a modular-AI NextBot base bot. Usage: tf_bot_valve_ai_add_nextbot [class] [team]")
 

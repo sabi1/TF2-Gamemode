@@ -68,6 +68,28 @@ local PlayerPing = {
 	yalign=TEXT_ALIGN_CENTER,
 }
 
+local function getScoreboardPlayersForTeam(teamNum)
+	local players = team.GetPlayers(teamNum)
+	local merged = {}
+	local seen = {}
+
+	for _, pl in ipairs(players) do
+		if IsValid(pl) then
+			merged[#merged + 1] = pl
+			seen[pl] = true
+		end
+	end
+
+	for _, bot in ipairs(ents.FindByClass("tf_bot_base_nextbot")) do
+		if IsValid(bot) and bot.TFBot == true and bot.Team and bot:Team() == teamNum and not seen[bot] then
+			merged[#merged + 1] = bot
+			seen[bot] = true
+		end
+	end
+
+	return merged
+end
+
 function PANEL:Init()
 	self:SetPaintBackgroundEnabled(false)
 	self:SetVisible(true)
@@ -112,13 +134,13 @@ function PANEL:Paint()
 	local ypos = math.floor(23*Scale)
 	
 	local col = team.GetColor(self.PlayerTeam)
-	local players = team.GetPlayers(self.PlayerTeam)
+	local players = getScoreboardPlayersForTeam(self.PlayerTeam)
 	
 	table.sort(players, function(a, b) return a:Frags() > b:Frags() end)
 	
 	for i,pl in ipairs(players) do
-		local c = pl:GetPlayerClassTable()
-		local d = not pl:Alive()
+		local c = pl.GetPlayerClassTable and pl:GetPlayerClassTable() or nil
+		local d = not (pl.Alive and pl:Alive())
 		
 		if pl == LocalPlayer() then
 			surface.SetDrawColor(Colors.HudPanelBorder)
@@ -141,7 +163,7 @@ function PANEL:Paint()
 			col.a = 255
 		end
 		
-		PlayerName.text = pl:GetName()
+		PlayerName.text = (pl.GetName and pl:GetName()) or (pl.Nick and pl:Nick()) or "TFBot"
 		PlayerName.color = col
 		PlayerName.pos[2] = ypos
 		draw.Text(PlayerName)
@@ -186,7 +208,7 @@ function PANEL:Paint()
 		surface.DrawTexturedRect(PlayerPing.pos[1] - 25, PlayerPing.pos[2] - 10, 25, 20)
 		end
 		
-		if pl:GetFriendStatus() == "friend" then
+		if pl.GetFriendStatus and pl:GetFriendStatus() == "friend" then
 			surface.SetTexture(ico_friend_indicator_scoreboard)
 			surface.DrawTexturedRect(math.floor(3*Scale), ypos-math.floor(8.5*Scale), 30*Scale, 30*Scale)
 		end

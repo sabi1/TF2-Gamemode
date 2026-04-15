@@ -18,10 +18,18 @@ function M:IsManagedBot(bot)
 	return bot:IsPlayer() and bot:IsBot() and bot.TFBot == true
 end
 
-function M:CreateManagedMapBot(name, teamNum, className, spawnPos, spawnAng)
-	return TFBots.Spawn and TFBots.Spawn:CreateBot(name, teamNum, className, spawnPos, spawnAng, {
+function M:CreateManagedMapBot(name, teamNum, className, spawnPos, spawnAng, options)
+	local spawnOptions = {
 		TFBotMapOwned = true,
-	}) or nil
+	}
+
+	if istable(options) then
+		for key, value in pairs(options) do
+			spawnOptions[key] = value
+		end
+	end
+
+	return TFBots.Spawn and TFBots.Spawn:CreateBot(name, teamNum, className, spawnPos, spawnAng, spawnOptions) or nil
 end
 
 function M:RemoveManagedBot(bot, reason, silent)
@@ -36,8 +44,8 @@ _G.TF_IsManagedBot = function(bot)
 	return M:IsManagedBot(bot)
 end
 
-_G.TF_CreateManagedMapBot = function(name, teamNum, className, spawnPos, spawnAng)
-	return M:CreateManagedMapBot(name, teamNum, className, spawnPos, spawnAng)
+_G.TF_CreateManagedMapBot = function(name, teamNum, className, spawnPos, spawnAng, options)
+	return M:CreateManagedMapBot(name, teamNum, className, spawnPos, spawnAng, options)
 end
 
 _G.TF_RemoveManagedBot = function(bot, reason, silent)
@@ -45,4 +53,3 @@ _G.TF_RemoveManagedBot = function(bot, reason, silent)
 end
 
 return M
-

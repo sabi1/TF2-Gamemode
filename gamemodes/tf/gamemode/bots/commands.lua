@@ -2,6 +2,7 @@ TFBots = TFBots or {}
 TFBots.Commands = TFBots.Commands or {}
 
 local M = TFBots.Commands
+M._registered = M._registered or false
 
 local function get_bots()
 	return (TF_GetManagedBots and TF_GetManagedBots()) or player.GetBots()
@@ -47,14 +48,24 @@ local function normalize_team(teamNum)
 end
 
 function M:Register()
+	if self._registered then return end
+	self._registered = true
+
 	concommand.Add("tf_bot_add", function(ply, _, args)
 		if game.SinglePlayer() or not is_admin(ply) then return end
 		local count = parse_count(args[1])
 		local className = normalize_class(args[2] or "scout")
 		local teamNum = normalize_team(args[3] or get_red_team())
 		for _ = 1, count do
-			TFBots.Spawn:CreateBot(nil, teamNum, className)
+			TFBots.Spawn:CreateBot(nil, teamNum, className, nil, nil, {
+				useTeamSpawn = true,
+			})
 		end
+	end)
+
+	concommand.Add("tf_bot_spawn", function(ply, _, args)
+		if game.SinglePlayer() or not is_admin(ply) then return end
+		RunConsoleCommand("tf_bot_add", args[1] or "1", args[2] or "scout", args[3] or tostring(get_red_team()))
 	end)
 
 	concommand.Add("tf_bot_quota", function(ply, _, args)
@@ -151,6 +162,8 @@ function M:Register()
 		ply:KillSilent()
 		ply:Spawn()
 	end)
+
+	MsgN("[TFBots] registered bot console commands: tf_bot_add, tf_bot_spawn, tf_bot_quota, tf_bot_kick_all, tf_bot_kill_all")
 end
 
 return M

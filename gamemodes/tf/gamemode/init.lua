@@ -18,6 +18,87 @@ include("shd_taunts.lua")
 include("sv_debug_bridge.lua")
 AddCSLuaFile("cl_vsh_hud.lua")
 
+
+if not _G.TF_BOT_ADD_FALLBACK_REGISTERED then
+	_G.TF_BOT_ADD_FALLBACK_REGISTERED = true
+
+	local function TF_NormalizeBotClassName(className)
+		local key = string.lower(string.Trim(tostring(className or "scout")))
+		if key == "demo" then return "demoman" end
+		if key == "heavyweapons" then return "heavy" end
+		return key
+	end
+
+	local function TF_NormalizeBotTeam(teamNum)
+		local text = string.lower(string.Trim(tostring(teamNum or "")))
+		if text == "blu" or text == "blue" or text == "team_blue" then
+			return TEAM_BLU
+		end
+		local num = tonumber(teamNum)
+		if num == TEAM_BLU or num == 3 then
+			return TEAM_BLU
+		end
+		return TEAM_RED
+	end
+
+	local function TF_FallbackCreateNextBot(name, teamNum, className, spawnPos, spawnAng)
+		local bot = ents.Create("tf_bot_base_nextbot")
+		if not IsValid(bot) then return nil end
+		if isvector(spawnPos) then
+			bot:SetPos(spawnPos)
+		end
+		if isangle(spawnAng) then
+			bot:SetAngles(spawnAng)
+		end
+		bot:Spawn()
+		bot:Activate()
+		bot.TFBot = true
+		bot.TFBotManagerOwned = true
+		bot:SetNWString("TF_BotDisplayName", tostring(name or "TFBot"))
+		if bot.SetTeam then
+			bot:SetTeam(teamNum)
+		end
+		if bot.SetPlayerClass then
+			bot:SetPlayerClass(className)
+		end
+		return bot
+	end
+
+	concommand.Add("tf_bot_add", function(ply, _, args)
+		if IsValid(ply) and not (ply:IsAdmin() or ply:IsSuperAdmin()) then return end
+
+		local count = math.max(1, math.floor(tonumber(args[1] or 1) or 1))
+		local className = TF_NormalizeBotClassName(args[2] or "scout")
+		local teamNum = TF_NormalizeBotTeam(args[3] or TEAM_RED)
+
+		for _ = 1, count do
+			local bot = nil
+			if isfunction(TF_CreateManagedMapBot) then
+				bot = TF_CreateManagedMapBot(nil, teamNum, className, nil, nil, {
+					backend = "nextbot",
+					useTeamSpawn = true,
+				})
+			end
+			if not IsValid(bot) then
+				bot = TF_FallbackCreateNextBot("TFBot", teamNum, className)
+				if IsValid(bot) and (GAMEMODE or GM) and (GAMEMODE or GM).PlayerSelectSpawn then
+					local gm = GAMEMODE or GM
+					local ok, spawn = pcall(gm.PlayerSelectSpawn, gm, bot)
+					if ok and IsValid(spawn) then
+						bot:SetPos(spawn:GetPos() + Vector(0, 0, 8))
+						bot:SetAngles(Angle(0, spawn:GetAngles().y, 0))
+						if bot.DropToFloor then
+							bot:DropToFloor()
+						end
+					end
+				end
+			end
+		end
+	end)
+
+	print("[TFBots] fallback tf_bot_add registered from gamemode/init.lua")
+end
+
 local function TF_RegisterSWEPFromShared(className)
 	if not isstring(className) or className == "" then return false end
 	if weapons.GetStored(className) then return true end

@@ -42,40 +42,163 @@ function M:GetNextBotName()
 	return "TFBot"
 end
 
+local function resolve_spawn_transform(bot, teamNum, className, spawnPos, spawnAng, options)
+	local opts = istable(options) and options or nil
+	local forceTeamSpawn = opts and opts.useTeamSpawn == true
+	if isvector(spawnPos) and not forceTeamSpawn then
+		return spawnPos, isangle(spawnAng) and spawnAng or angle_zero, nil
+	end
+
+	if not IsValid(bot) then
+		return spawnPos, spawnAng, nil
+	end
+
+	if bot.SetTeam then
+		bot:SetTeam(normalize_team(teamNum))
+	end
+	if bot.SetPlayerClass then
+		bot:SetPlayerClass(normalize_class(className))
+	end
+
+	local gm = GAMEMODE or GM
+	local chosen = nil
+	if gm and gm.PlayerSelectSpawn then
+		local ok, result = pcall(gm.PlayerSelectSpawn, gm, bot)
+		if ok and IsValid(result) then
+			chosen = result
+		end
+	end
+
+	if not IsValid(chosen) then
+		for _, candidate in ipairs(ents.FindByClass("info_player_teamspawn")) do
+			if not IsValid(candidate) then continue end
+			if candidate.IsAvailableForTeam and not candidate:IsAvailableForTeam(normalize_team(teamNum), false) then
+				continue
+			end
+			chosen = candidate
+			break
+		end
+	end
+
+	if not IsValid(chosen) then
+		return spawnPos, spawnAng, nil
+	end
+
+	local pos = chosen.GetPos and (chosen:GetPos() + Vector(0, 0, 8)) or spawnPos
+	local ang = chosen.GetAngles and chosen:GetAngles() or spawnAng
+	if isangle(ang) then
+		ang = Angle(0, ang.y, 0)
+	end
+	return pos, ang, chosen
+end
+
+local function apply_spawn_transform(bot, teamNum, className, spawnPos, spawnAng, options)
+	if not IsValid(bot) then return nil end
+	local pos, ang, chosen = resolve_spawn_transform(bot, teamNum, className, spawnPos, spawnAng, options)
+	if isvector(pos) then
+		bot:SetPos(pos)
+	end
+	if isangle(ang) then
+		if bot.SetEyeAngles then
+			bot:SetEyeAngles(ang)
+		else
+			bot:SetAngles(ang)
+		end
+	end
+	if bot.DropToFloor then
+		bot:DropToFloor()
+	end
+	return chosen
+end
+
 function M:CreateBot(name, teamNum, className, spawnPos, spawnAng, options)
 	local cfg = TFBots.Config
 	if not (cfg and cfg:IsEnabled()) then return nil end
-	if not cfg:UseNextBotBackend() then
-		cfg:Debug("player backend requested, but the clean manager only spawns nextbots right now")
-		return nil
-	end
 
 	local botName = string.Trim(tostring(name or ""))
 	if botName == "" then
 		botName = self:GetNextBotName()
 	end
 
-	local bot = ents.Create("tf_bot_base_nextbot")
-	if not IsValid(bot) then
-		ErrorNoHalt("[TFBots] Failed to create tf_bot_base_nextbot.\n")
-		return nil
+	local requestedBackend = istable(options) and string.lower(tostring(options.backend or "")) or ""
+	local usePlayerBackend = cfg:UsePlayerBackend()
+	if requestedBackend == "nextbot" then
+		usePlayerBackend = false
+	elseif requestedBackend == "player" then
+		usePlayerBackend = true
 	end
 
-	if isvector(spawnPos) then
-		bot:SetPos(spawnPos)
-	end
-	if isangle(spawnAng) then
-		bot:SetAngles(spawnAng)
-	end
+	local bot
+	if usePlayerBackend then
+		if not (navmesh and navmesh.IsLoaded and navmesh.IsLoaded()) then
+			ErrorNoHalt("[TFBots] Player bots require a loaded navmesh.\n")
+			return nil
+		end
 
-	bot:Spawn()
-	bot:Activate()
-	bot.TFBot = true
-	bot.TFBotManagerOwned = true
-	bot._tfBotManagerName = botName
-	bot:SetNWString("TF_BotDisplayName", botName)
-	bot:SetTeam(normalize_team(teamNum))
-	bot:SetPlayerClass(normalize_class(className))
+		bot = player.CreateNextBot(botName)
+		if not IsValid(bot) then
+			ErrorNoHalt("[TFBots] Failed to create player bot.\n")
+			return nil
+		end
+
+		if not IsValid(bot.ControllerBot) then
+			bot.ControllerBot = ents.Create("ctf_bot_navigator")
+			if IsValid(bot.ControllerBot) then
+				bot.ControllerBot:Spawn()
+				bot.ControllerBot:SetOwner(bot)
+			end
+		end
+
+		bot.TFBot = true
+		bot.TFBotManagerOwned = true
+		bot._tfBotManagerName = botName
+		bot:SetNWString("TF_BotDisplayName", botName)
+		bot.LastPath = nil
+		bot.CurSegment = 2
+		bot:SetTeam(normalize_team(teamNum))
+		bot:SetPlayerClass(normalize_class(className))
+		if isvector(spawnPos) then
+			bot:SetPos(spawnPos)
+		end
+		if isangle(spawnAng) then
+			bot:SetAngles(spawnAng)
+		end
+		apply_spawn_transform(bot, teamNum, className, spawnPos, spawnAng, options)
+
+		timer.Simple(0.1, function()
+			if not IsValid(bot) then return end
+			bot.TFBot = true
+			bot.TFBotManagerOwned = true
+			bot._tfBotManagerName = botName
+			bot:SetNWString("TF_BotDisplayName", botName)
+			bot:SetTeam(normalize_team(teamNum))
+			bot:SetPlayerClass(normalize_class(className))
+			apply_spawn_transform(bot, teamNum, className, spawnPos, spawnAng, options)
+		end)
+	else
+		bot = ents.Create("tf_bot_base_nextbot")
+		if not IsValid(bot) then
+			ErrorNoHalt("[TFBots] Failed to create tf_bot_base_nextbot.\n")
+			return nil
+		end
+
+		if isvector(spawnPos) then
+			bot:SetPos(spawnPos)
+		end
+		if isangle(spawnAng) then
+			bot:SetAngles(spawnAng)
+		end
+
+		bot:Spawn()
+		bot:Activate()
+		bot.TFBot = true
+		bot.TFBotManagerOwned = true
+		bot._tfBotManagerName = botName
+		bot:SetNWString("TF_BotDisplayName", botName)
+		bot:SetTeam(normalize_team(teamNum))
+		bot:SetPlayerClass(normalize_class(className))
+		apply_spawn_transform(bot, teamNum, className, spawnPos, spawnAng, options)
+	end
 
 	if TFBots.Registry then
 		TFBots.Registry:Register(bot)
