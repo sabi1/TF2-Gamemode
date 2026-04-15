@@ -293,26 +293,38 @@ if CLIENT then
 	end
 
 	cvars.AddChangeCallback("tf_righthand", function()
-		local wep = LocalPlayer():GetActiveWeapon()
+		local ply = LocalPlayer()
 
-		if IsValid(wep) then
-			wep:TFFlipViewmodel()
+		if IsValid(ply) then
+			local wep = ply:GetActiveWeapon()
+
+			if IsValid(wep) then
+				wep:TFFlipViewmodel()
+			end
 		end
 	end)
 	
 	cvars.AddChangeCallback("tf_use_viewmodel_fov", function()
-		local wep = LocalPlayer():GetActiveWeapon()
+		local ply = LocalPlayer()
 
-		if IsValid(wep) then
-			wep:TFViewModelFOV()
+		if IsValid(ply) then
+			local wep = ply:GetActiveWeapon()
+
+			if IsValid(wep) then
+				wep:TFViewModelFOV()
+			end
 		end
 	end)
 
 	cvars.AddChangeCallback("viewmodel_fov_tf", function()
-		local wep = LocalPlayer():GetActiveWeapon()
+		local ply = LocalPlayer()
 
-		if IsValid(wep) then
-			wep:TFViewModelFOV()
+		if IsValid(ply) then
+			local wep = ply:GetActiveWeapon()
+
+			if IsValid(wep) then
+				wep:TFViewModelFOV()
+			end
 		end
 	end)
 
