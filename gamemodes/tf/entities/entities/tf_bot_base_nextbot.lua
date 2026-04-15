@@ -401,8 +401,31 @@ function ENT:IsBot()
 	return true
 end
 
+function ENT:Nick()
+	return tostring(self:GetNWString("TF_BotDisplayName", self._tfBotManagerName or self.PrintName or "TFBot"))
+end
+
+function ENT:Name()
+	return self:Nick()
+end
+
 function ENT:Alive()
 	return self:Health() > 0
+end
+
+function ENT:Kick()
+	self:Remove()
+end
+
+function ENT:Kill()
+	if self:Health() > 0 then
+		self:SetHealth(0)
+	end
+	self:Remove()
+end
+
+function ENT:KillSilent()
+	self:Kill()
 end
 
 function ENT:Team()

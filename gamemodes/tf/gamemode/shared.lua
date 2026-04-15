@@ -179,6 +179,30 @@ do
 	end
 end
 
+local legacyL4DContent = CreateConVar(
+	"tf_enable_legacy_l4d_content",
+	"0",
+	{FCVAR_ARCHIVE, FCVAR_NOTIFY, FCVAR_REPLICATED},
+	"Enable legacy Left 4 Dead-era classes, sounds, and optional integrations."
+)
+
+TEAM_INFECTED = rawget(_G, "TEAM_INFECTED") or 8
+
+function TF_LegacyL4DEnabled()
+	return legacyL4DContent ~= nil and legacyL4DContent:GetBool()
+end
+
+function TF_CreateOptionalEntity(className)
+	if not isstring(className) or className == "" then return nil end
+
+	local ent = ents.Create(className)
+	if not IsValid(ent) then
+		return nil
+	end
+
+	return ent
+end
+
 local mp_friendlyfire = CreateConVar("mp_friendlyfire", "0", {FCVAR_ARCHIVE, FCVAR_NOTIFY, FCVAR_REPLICATED}, "Enables/Disables Friendly fire (for some reason, Rubat deleted this cvar. This broke TF2 Gamemode and CStrike gamemode.)")
 resource.AddFile("models/weapons/c_models/c_scout_arms_empty.dx90.vtx")
 resource.AddFile("models/weapons/c_models/c_scout_arms_empty.dx80.vtx")
@@ -2188,7 +2212,9 @@ end
 sound.AddSoundOverrides(GM.Folder.."/gamemode/contents/game_sounds_mvm.lua") 
 sound.AddSoundOverrides(GM.Folder.."/gamemode/contents/game_sounds_weapons_tf.lua")
 sound.AddSoundOverrides(GM.Folder.."/gamemode/contents/game_sounds_weapons_tf2.lua")
-sound.AddSoundOverrides(GM.Folder.."/gamemode/contents/game_sounds_weapons_l4d1.lua") 
+if TF_LegacyL4DEnabled() then
+	sound.AddSoundOverrides(GM.Folder.."/gamemode/contents/game_sounds_weapons_l4d1.lua")
+end
 sound.AddSoundOverrides(GM.Folder.."/gamemode/contents/game_sounds_player.lua")
 sound.AddSoundOverrides(GM.Folder.."/gamemode/contents/game_sounds_music.lua")
 sound.AddSoundOverrides(GM.Folder.."/gamemode/contents/game_sounds_vo.lua") 
@@ -3443,6 +3469,12 @@ function GM:CreateTeams()
 	team.SetUp(TEAM_NEUTRAL, "Neutral", Color(110, 255, 80))
 	SetTeamSecondaryColor(TEAM_NEUTRAL, Color(74, 130, 54))
 	team.SetSpawnPoint(TEAM_NEUTRAL, "info_player_start")
+
+	if TF_LegacyL4DEnabled() then
+		team.SetUp(TEAM_INFECTED, "Infected", Color(132, 196, 96))
+		SetTeamSecondaryColor(TEAM_INFECTED, Color(82, 122, 62))
+		team.SetSpawnPoint(TEAM_INFECTED, "info_player_start")
+	end
 	
 	team.SetUp(TEAM_FRIENDLY, "Friendly", Color(255, 192, 203))
 	SetTeamSecondaryColor(TEAM_FRIENDLY, Color(255, 192, 203))

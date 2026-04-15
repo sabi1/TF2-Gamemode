@@ -170,7 +170,7 @@ function ENT:RemoveBots()
 	for _, bot in ipairs(self.SpawnedBots or {}) do
 		if IsValid(bot) then
 			bot.BotGeneratorOwner = nil
-			bot:Kick("Removed by bot_generator")
+			TF_RemoveManagedBot(bot, "Removed by bot_generator", true)
 		end
 	end
 	self.SpawnedBots = {}

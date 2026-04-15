@@ -7,7 +7,7 @@ M.cv_enable = CreateConVar("tf_bot_valve_ai_enable", "1", {FCVAR_ARCHIVE, FCVAR_
 M.cv_debug = CreateConVar("tf_bot_valve_ai_debug", "0", {FCVAR_ARCHIVE, FCVAR_NOTIFY}, "Enable debug logs for modular Valve-style bot AI.")
 M.cv_compat_legacy_path = CreateConVar("tf_bot_valve_ai_compat_legacy_path", "0", {FCVAR_ARCHIVE, FCVAR_NOTIFY}, "When enabled, keep legacy path ownership while modular AI handles targeting/combat.")
 M.cv_perf_mode = CreateConVar("tf_bot_valve_ai_perf_mode", "max", {FCVAR_ARCHIVE, FCVAR_NOTIFY}, "Performance profile for modular bot AI: max|balanced|ultra.")
-M.cv_backend = CreateConVar("tf_bot_valve_ai_backend", "player", {FCVAR_ARCHIVE, FCVAR_NOTIFY}, "AI backend: player|nextbot|hybrid")
+M.cv_backend = CreateConVar("tf_bot_valve_ai_backend", "nextbot", {FCVAR_ARCHIVE, FCVAR_NOTIFY}, "AI backend: player|nextbot|hybrid")
 
 local function clampPerfMode(value)
 	local v = string.lower(tostring(value or "max"))
@@ -34,9 +34,9 @@ function M:GetPerfMode()
 end
 
 function M:GetBackend()
-	local v = string.lower(tostring(self.cv_backend:GetString() or "player"))
+	local v = string.lower(tostring(self.cv_backend:GetString() or "nextbot"))
 	if v ~= "player" and v ~= "nextbot" and v ~= "hybrid" then
-		return "player"
+		return "nextbot"
 	end
 	return v
 end

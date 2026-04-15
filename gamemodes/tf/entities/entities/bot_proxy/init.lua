@@ -71,53 +71,10 @@ local function create_proxy_bot(proxy)
 end
 
 function TF_CreateManagedMapBot(name, teamNum, className, spawnPos, spawnAng)
-	if not (navmesh and navmesh.IsLoaded and navmesh.IsLoaded()) then
-		ErrorNoHalt("Map bot entities require a loaded navmesh.\n")
-		return nil
+	if TFBots and TFBots.Compat and TFBots.Compat.CreateManagedMapBot then
+		return TFBots.Compat:CreateManagedMapBot(name, teamNum, className, spawnPos, spawnAng)
 	end
-
-	local botName = string.Trim(tostring(name or ""))
-	if botName == "" and isfunction(GetNextBotName) then
-		botName = GetNextBotName()
-	end
-	if botName == "" then
-		botName = "TFMapBot"
-	end
-
-	local bot = player.CreateNextBot(botName)
-	if not IsValid(bot) then
-		ErrorNoHalt("[TF map bot] Player limit reached.\n")
-		return nil
-	end
-
-	if not IsValid(bot.ControllerBot) then
-		bot.ControllerBot = ents.Create("ctf_bot_navigator")
-		if IsValid(bot.ControllerBot) then
-			bot.ControllerBot:Spawn()
-			bot.ControllerBot:SetOwner(bot)
-		end
-	end
-
-	bot.TFBot = true
-	bot.LastPath = nil
-	bot.CurSegment = 2
-	bot:SetTeam(teamNum or TEAM_RED)
-	bot:SetPlayerClass(className or "scout")
-	if isvector(spawnPos) then
-		bot:SetPos(spawnPos)
-	end
-	if isangle(spawnAng) then
-		bot:SetAngles(spawnAng)
-	end
-
-	timer.Simple(0.1, function()
-		if not IsValid(bot) then return end
-		bot.TFBot = true
-		bot:SetTeam(teamNum or TEAM_RED)
-		bot:SetPlayerClass(className or "scout")
-	end)
-
-	return bot
+	return nil
 end
 
 function ENT:Initialize()
@@ -208,7 +165,7 @@ function ENT:DeleteProxyBot()
 		local bot = self.SpawnedBot
 		self.SpawnedBot = nil
 		bot.BotProxyOwner = nil
-		bot:Kick("Removed by bot_proxy")
+		TF_RemoveManagedBot(bot, "Removed by bot_proxy", true)
 		return true
 	end
 	return false

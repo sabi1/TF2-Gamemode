@@ -25,7 +25,9 @@ local modeProfiles = {
 }
 
 function M:GetAdaptiveScale()
-	local botCount = math.max(#player.GetBots(), 1)
+	local base = TFBotValveAI and TFBotValveAI.Base or nil
+	local botCount = base and base.GetManagedAgents and #base:GetManagedAgents() or #player.GetBots()
+	botCount = math.max(botCount, 1)
 	if botCount <= 8 then return 1 end
 	if botCount <= 16 then return 1.3 end
 	if botCount <= 24 then return 1.7 end

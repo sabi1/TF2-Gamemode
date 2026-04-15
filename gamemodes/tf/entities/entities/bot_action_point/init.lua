@@ -140,7 +140,8 @@ end
 
 if SERVER then
 	hook.Add("Think", "TF_BotActionPointThink", function()
-		for _, bot in ipairs(player.GetBots()) do
+		local bots = TF_GetManagedBots and TF_GetManagedBots() or player.GetBots()
+		for _, bot in ipairs(bots) do
 			local point = bot.TFBotActionPoint
 			if not IsValid(point) then continue end
 			bot.botPos = point:GetPos()

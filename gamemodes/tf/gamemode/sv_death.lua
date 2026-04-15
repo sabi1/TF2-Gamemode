@@ -1362,10 +1362,12 @@ function GM:DoPlayerDeath(ply, attacker, dmginfo)
 		end
 	end
 	if (ply:GetPlayerClass() == "spitter") then
-		local spit = ents.Create("obj_vj_l4d_spit")
-		spit:SetPos(ply:GetPos() +Vector(0,0,15))
-		spit:Spawn()
-		spit:SetCount(4)
+		local spit = TF_CreateOptionalEntity("obj_vj_l4d_spit")
+		if IsValid(spit) then
+			spit:SetPos(ply:GetPos() +Vector(0,0,15))
+			spit:Spawn()
+			spit:SetCount(4)
+		end
 	end
 	if dmginfo:IsFallDamage() then -- Fall damage
 		ply.FallDeath = true

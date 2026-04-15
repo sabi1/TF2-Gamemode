@@ -1255,7 +1255,8 @@ function SWEP:SecondaryAttack()
 		self:SendWeaponAnim(self.Owner:GetViewModel():GetSequenceActivity(self.Owner:GetViewModel():LookupSequence("spit")))
 		if SERVER then
 			timer.Simple(0.5, function()
-				local grenade = ents.Create("obj_vj_l4d_spit")
+				local grenade = TF_CreateOptionalEntity("obj_vj_l4d_spit")
+				if not IsValid(grenade) then return end
 				grenade:SetPos(self.Owner:GetShootPos())
 				grenade:SetAngles(self.Owner:EyeAngles())
 				if self:Critical() then
@@ -1835,7 +1836,8 @@ function SWEP:PrimaryAttack()
 		self:SendWeaponAnim(self.Owner:GetViewModel():GetSequenceActivity(self.Owner:GetViewModel():LookupSequence("spit")))
 		if SERVER then
 			timer.Simple(0.5, function()
-				local grenade = ents.Create("obj_vj_l4d_spit")
+				local grenade = TF_CreateOptionalEntity("obj_vj_l4d_spit")
+				if not IsValid(grenade) then return end
 				grenade:SetPos(self.Owner:GetShootPos())
 				grenade:SetAngles(self.Owner:EyeAngles())
 				if self:Critical() then

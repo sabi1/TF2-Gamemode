@@ -1568,7 +1568,7 @@ end
 local function ShouldUseNextBotSpawner()
     local forcePlayer = GetConVar("tf_mvm_force_player_bots")
     if forcePlayer == nil then
-        CreateConVar("tf_mvm_force_player_bots", "1", {FCVAR_ARCHIVE, FCVAR_NOTIFY}, "Force MvM spawner to use player bots instead of tf_bot_base_nextbot.")
+        CreateConVar("tf_mvm_force_player_bots", "0", {FCVAR_ARCHIVE, FCVAR_NOTIFY}, "Force MvM spawner to use player bots instead of tf_bot_base_nextbot.")
         forcePlayer = GetConVar("tf_mvm_force_player_bots")
     end
     if forcePlayer and forcePlayer:GetBool() then

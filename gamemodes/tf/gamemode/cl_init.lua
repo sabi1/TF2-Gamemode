@@ -308,7 +308,7 @@ end)
 		panel:NumSlider( "TF2 SWEPS: Viewmodel FOV", "viewmodel_fov_tf", 52, 120 )
 		panel:CheckBox( "TF2 CLASSES: Force HEV Hud", "tf_forcehl2hud" )
 		panel:CheckBox( "Enable Debugging for TF Bots", "z_debug" )
-		if (IsMounted("left4dead2")) then
+		if TF_LegacyL4DEnabled() and (IsMounted("left4dead2")) then
 			panel:CheckBox( "Enable L4D2 Footsteps for GMOD Player", "civ2_enable_survivor_steps" )
 		end
 		panel:Button("Toggle Thirdperson","tf_tp_simulation_toggle","")
@@ -354,7 +354,9 @@ if (IsValid(LocalPlayer())) then
 	LocalPlayer():PrintMessage(HUD_PRINTCENTER, "SERVER IS RELOADING THE GAMEMODE DUE TO AN EDIT IN THE GAMEMODE'S CLIENTSIDE CODE - GRAPHICAL OR GAME-BREAKING GLITCHES MAY OCCUR")
 end
 
-CreateClientConVar("civ2_enable_survivor_steps", "0", {FCVAR_CLIENTCMD_CAN_EXECUTE, FCVAR_ARCHIVE})
+if TF_LegacyL4DEnabled() then
+	CreateClientConVar("civ2_enable_survivor_steps", "0", {FCVAR_CLIENTCMD_CAN_EXECUTE, FCVAR_ARCHIVE})
+end
 CreateClientConVar("civ2_first_person_deathcam", "0", {FCVAR_CLIENTCMD_CAN_EXECUTE, FCVAR_ARCHIVE})
 CreateClientConVar( "tf_haltinspect", "1", {FCVAR_CLIENTCMD_CAN_EXECUTE, FCVAR_ARCHIVE}, "Whether or not players can inspect while no-clipping." )
 CreateClientConVar( "tf_maxhealth_hud", "1", {FCVAR_CLIENTCMD_CAN_EXECUTE, FCVAR_ARCHIVE}, "Enable maxhealth above health when hurt." )
@@ -362,12 +364,14 @@ CreateClientConVar( "tf_robot", "0", {FCVAR_CLIENTCMD_CAN_EXECUTE, FCVAR_ARCHIVE
 CreateClientConVar( "tf_usehwmmodels", "0", {FCVAR_CLIENTCMD_CAN_EXECUTE, FCVAR_ARCHIVE}, "Become a higher quality version of your current playermodel after respawning." )
 CreateClientConVar( "tf_usehwmvcds", "0", {FCVAR_CLIENTCMD_CAN_EXECUTE, FCVAR_ARCHIVE} )
 CreateClientConVar( "tf_useadvhwmmodels", "0", {FCVAR_CLIENTCMD_CAN_EXECUTE, FCVAR_ARCHIVE}, "Become a advanced, higher quality version of your current playermodel after respawning." )
-CreateClientConVar( "tank_l4d1_skin", "0", {FCVAR_CLIENTCMD_CAN_EXECUTE, FCVAR_ARCHIVE} )
-CreateClientConVar( "tank_dlc3_skin", "0", {FCVAR_CLIENTCMD_CAN_EXECUTE, FCVAR_ARCHIVE} )
-CreateClientConVar( "tank_use_dark_carnival_finale_music", "0", {FCVAR_CLIENTCMD_CAN_EXECUTE, FCVAR_ARCHIVE} )
-CreateClientConVar( "boomer_l4d1_skin", "0", {FCVAR_CLIENTCMD_CAN_EXECUTE, FCVAR_ARCHIVE} )
-CreateClientConVar( "hunter_l4d1_skin", "0", {FCVAR_CLIENTCMD_CAN_EXECUTE, FCVAR_ARCHIVE} )
-CreateClientConVar( "smoker_l4d1_skin", "0", {FCVAR_CLIENTCMD_CAN_EXECUTE, FCVAR_ARCHIVE} )
+if TF_LegacyL4DEnabled() then
+	CreateClientConVar( "tank_l4d1_skin", "0", {FCVAR_CLIENTCMD_CAN_EXECUTE, FCVAR_ARCHIVE} )
+	CreateClientConVar( "tank_dlc3_skin", "0", {FCVAR_CLIENTCMD_CAN_EXECUTE, FCVAR_ARCHIVE} )
+	CreateClientConVar( "tank_use_dark_carnival_finale_music", "0", {FCVAR_CLIENTCMD_CAN_EXECUTE, FCVAR_ARCHIVE} )
+	CreateClientConVar( "boomer_l4d1_skin", "0", {FCVAR_CLIENTCMD_CAN_EXECUTE, FCVAR_ARCHIVE} )
+	CreateClientConVar( "hunter_l4d1_skin", "0", {FCVAR_CLIENTCMD_CAN_EXECUTE, FCVAR_ARCHIVE} )
+	CreateClientConVar( "smoker_l4d1_skin", "0", {FCVAR_CLIENTCMD_CAN_EXECUTE, FCVAR_ARCHIVE} )
+end
 CreateClientConVar( "tf_special_dsp_type", "0", {FCVAR_CLIENTCMD_CAN_EXECUTE, FCVAR_ARCHIVE}, "Set your DSP for your Voice - Example: 154 - Engineer Fly Voice" )
 CreateClientConVar( "tf_tfc_model_override", "0", {FCVAR_CLIENTCMD_CAN_EXECUTE, /*FCVAR_ARCHIVE*/ FCVAR_DEVELOPMENTONLY}, "Become a TFC Merc after respawning." )
 CreateClientConVar( "tf_giant_robot", "0", {FCVAR_CLIENTCMD_CAN_EXECUTE, FCVAR_ARCHIVE}, "Become a mighty robot after respawning." )
@@ -385,6 +389,22 @@ CreateClientConVar( "civ2_playermodel_reference_pose_prevention", "0", {FCVAR_CL
 CreateClientConVar( "tf_fastweaponswitch", "0", {FCVAR_CLIENTCMD_CAN_EXECUTE, FCVAR_ARCHIVE}, "Instantly switch weapons when selecting slots or cycling." )
 CreateClientConVar( "tf_inspect_key", tostring(KEY_I), {FCVAR_CLIENTCMD_CAN_EXECUTE, FCVAR_ARCHIVE}, "Key code used to hold inspect weapon." )
 
+
+local function TF_OpenLegacyL4DMenu()
+	if not TF_LegacyL4DEnabled() then
+		notification.AddLegacy("Legacy L4D content is disabled. Set tf_enable_legacy_l4d_content 1 to re-enable it.", NOTIFY_HINT, 4)
+		surface.PlaySound("buttons/button10.wav")
+		return
+	end
+
+	if isfunction(L4DClassSelection) then
+		L4DClassSelection()
+		return
+	end
+
+	notification.AddLegacy("Legacy L4D class menu is no longer wired into the active TF2 UI.", NOTIFY_ERROR, 4)
+	surface.PlaySound("buttons/button10.wav")
+end
 
 concommand.Add("tf_upgradewep03clientonly", function(ply)
 	ply:GetActiveWeapon().Primary.Delay = 0.3
@@ -404,8 +424,8 @@ end)
 concommand.Add("tf_upgradeweprapidfire2clientonly", function(ply)
 	ply:GetActiveWeapon().Primary.Delay = 0.07
 end)
-concommand.Add("l4d_changeclass", L4DClassSelection)
-concommand.Add("l4d2_changeclass", L4DClassSelection)
+concommand.Add("l4d_changeclass", TF_OpenLegacyL4DMenu)
+concommand.Add("l4d2_changeclass", TF_OpenLegacyL4DMenu)
 concommand.Add("tf_changeclass", ClassSelection)
 concommand.Add("tf_door", DoorClose)
 concommand.Add("tf_hatpainter", HatPicker)
@@ -3826,8 +3846,8 @@ end)
 concommand.Add("tf_upgradeweprapidfire2clientonly", function(ply)
 	ply:GetActiveWeapon().Primary.Delay = 0.07
 end)
-concommand.Add("l4d_changeclass", L4DClassSelection)
-concommand.Add("l4d2_changeclass", L4DClassSelection)
+concommand.Add("l4d_changeclass", TF_OpenLegacyL4DMenu)
+concommand.Add("l4d2_changeclass", TF_OpenLegacyL4DMenu)
 concommand.Add("tf_changeclass", ClassSelection) 
 concommand.Add("tf_door", DoorClose)
 concommand.Add("tf_hatpainter", HatPicker)

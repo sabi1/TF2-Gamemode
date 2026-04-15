@@ -91,7 +91,7 @@ end
 function ENT:RespawnControlledBot()
 	if IsValid(self.ManagedBot) then
 		self.ManagedBot.BotControllerOwner = nil
-		self.ManagedBot:Kick("Respawned by bot_controller")
+		TF_RemoveManagedBot(self.ManagedBot, "Respawned by bot_controller", true)
 		self.ManagedBot = nil
 	end
 	return self:SpawnControlledBot()

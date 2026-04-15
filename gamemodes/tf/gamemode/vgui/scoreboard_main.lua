@@ -326,6 +326,7 @@ function PANEL:Init()
 	self:SetPaintBackgroundEnabled(false)
 	self:SetVisible(false)
 	self.IsMvM = string.find(game.GetMap(), "mvm_", 1, true) ~= nil
+	self.LegacyInfectedEnabled = TF_LegacyL4DEnabled and TF_LegacyL4DEnabled() or false
 	if self.IsMvM then
 		self.BluePlayerList = vgui.Create("TFMVMScoreboardPlayerList", self)
 		self.BluePlayerList:SetTeam(TEAM_RED)
@@ -338,8 +339,10 @@ function PANEL:Init()
 		self.RedPlayerList = vgui.Create("TFScoreboardPlayerList", self)
 		self.RedPlayerList:SetTeam(TEAM_RED)
 	end
-	self.InfectedPlayerList = vgui.Create("TFScoreboardPlayerList", self)
-	self.InfectedPlayerList:SetTeam(TEAM_INFECTED)	
+	if self.LegacyInfectedEnabled then
+		self.InfectedPlayerList = vgui.Create("TFScoreboardPlayerList", self)
+		self.InfectedPlayerList:SetTeam(TEAM_INFECTED)
+	end
 	
 	self.LocalStats = vgui.Create("TFScoreboardLocalStats", self)
 end
@@ -364,12 +367,16 @@ function PANEL:PerformLayout()
 		self.BluePlayerList:SetPos(MvMScoreboardRes.listX * Scale, MvMScoreboardRes.listY * Scale)
 		self.BluePlayerList:SetSize(MvMScoreboardRes.listW * Scale, MvMScoreboardRes.listH * Scale)
 		self.RedPlayerList:SetVisible(false)
-		self.InfectedPlayerList:SetVisible(false)
+		if IsValid(self.InfectedPlayerList) then
+			self.InfectedPlayerList:SetVisible(false)
+		end
 	else
 		self.BluePlayerList:SetPos(5*Scale, 72*Scale)
 		self.BluePlayerList:SetSize(290*Scale, 280*Scale)
-		self.InfectedPlayerList:SetPos(5*Scale, 72*Scale)
-		self.InfectedPlayerList:SetSize(290*Scale, 280*Scale)
+		if IsValid(self.InfectedPlayerList) then
+			self.InfectedPlayerList:SetPos(5*Scale, 72*Scale)
+			self.InfectedPlayerList:SetSize(290*Scale, 280*Scale)
+		end
 		self.RedPlayerList:SetPos(305*Scale, 72*Scale)
 		self.RedPlayerList:SetSize(290*Scale, 280*Scale)
 	end
