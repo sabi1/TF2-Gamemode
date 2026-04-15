@@ -802,16 +802,6 @@ function GM:EntityTakeDamage(  ent, dmginfo )
 		end
 	end
 
-	timer.Simple(0.1, function()
-	
-		if (ent:IsPlayer() and 2*ent:Health()<ent:GetMaxHealth()) then
-			if (!ent.Warned) then
-				ent:SendLua("surface.PlaySound(\"common/warning.wav\")")
-				ent.Warned = true
-			end
-		end
-
-	end)
 	-- Friendly fire
 	if (attacker:IsPlayer() and (attacker:GetPlayerClass() == "giantblastsoldier" || attacker:GetPlayerClass() == "steelgauntletpusher")) then
 		if ent.InCond and TF_COND_IMMUNE_TO_PUSHBACK and ent:InCond(TF_COND_IMMUNE_TO_PUSHBACK) then

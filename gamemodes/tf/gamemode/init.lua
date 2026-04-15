@@ -2634,7 +2634,6 @@ function GM:PlayerSpawn(ply)
 		ply:GiveItem("Grappling Hook")
 	end
 	ply:Speak("TLK_PLAYER_EXPRESSION", true)  
-	ply.Warned = false
 	
 	local playercolorconv = ply:GetInfo("cl_playercolor") 
 	local weaponcolorconv = ply:GetInfo("cl_weaponcolor") 
