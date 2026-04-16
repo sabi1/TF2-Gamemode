@@ -4,9 +4,14 @@ TFBots.Config = TFBots.Config or {}
 local M = TFBots.Config
 
 M.cv_enable = CreateConVar("tf_bot_manager_enable", "1", {FCVAR_ARCHIVE, FCVAR_NOTIFY}, "Enable the cleaned bot manager bootstrap.")
-M.cv_backend = CreateConVar("tf_bot_manager_backend", "nextbot", {FCVAR_ARCHIVE, FCVAR_NOTIFY}, "Bot manager backend: nextbot|player|hybrid.")
+-- Keep manager-owned spawns on player.CreateNextBot by default so bots are
+-- treated as player bots, with AI issuing commands behind the fake client.
+M.cv_backend = CreateConVar("tf_bot_manager_backend", "player", {FCVAR_ARCHIVE, FCVAR_NOTIFY}, "Bot manager backend: nextbot|player|hybrid.")
 M.cv_quota = CreateConVar("tf_bot_manager_quota_target", "0", {FCVAR_ARCHIVE, FCVAR_NOTIFY}, "Target number of manager-owned bots to keep alive.")
 M.cv_debug = CreateConVar("tf_bot_manager_debug", "0", {FCVAR_ARCHIVE, FCVAR_NOTIFY}, "Enable debug logs for the cleaned bot manager.")
+-- Matches TF2's tf_bot_melee_only server cvar so bot weapon code can safely
+-- query melee-only restrictions even after the legacy bot module removal.
+M.cv_melee_only = CreateConVar("tf_bot_melee_only", "0", {FCVAR_ARCHIVE, FCVAR_NOTIFY}, "If nonzero, TFBots will only use melee weapons.")
 
 function M:IsEnabled()
 	return self.cv_enable:GetBool()
@@ -17,9 +22,9 @@ function M:IsDebug()
 end
 
 function M:GetBackend()
-	local backend = string.lower(tostring(self.cv_backend:GetString() or "nextbot"))
+	local backend = string.lower(tostring(self.cv_backend:GetString() or "player"))
 	if backend ~= "nextbot" and backend ~= "player" and backend ~= "hybrid" then
-		return "nextbot"
+		return "player"
 	end
 	return backend
 end
@@ -36,6 +41,10 @@ end
 
 function M:GetQuotaTarget()
 	return math.max(math.floor(tonumber(self.cv_quota:GetString()) or 0), 0)
+end
+
+function M:IsMeleeOnly()
+	return self.cv_melee_only:GetBool()
 end
 
 function M:SetQuotaTarget(value)

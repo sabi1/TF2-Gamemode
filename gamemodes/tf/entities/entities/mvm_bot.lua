@@ -20,7 +20,7 @@ list.Set( "NPC", "mvm_bot", {
 	AdminOnly = true
 } )
 
-local function LeadBot_S_Add_Zombie(team,class,pos,ent)
+local function SpawnManagedMvMBot(team, class, pos, ent)
 	if !navmesh.IsLoaded() then
 		ErrorNoHalt("There is no navmesh! Generate one using \"nav_generate\"!\n")
 		return
@@ -29,16 +29,12 @@ local function LeadBot_S_Add_Zombie(team,class,pos,ent)
 	local name = string.upper(string.sub(class,1,1))..string.sub(class,2)
 	
 	local bot
+	local botName = ent.PrintName
 	if (ent.PZClass == "giantheavyheater") then
-		bot = player.CreateNextBot("Heavyweapons")
-	else
-		if (ent.PreferredName != nil) then
-			bot = player.CreateNextBot(ent.PreferredName)
-		else
-			bot = player.CreateNextBot(ent.PrintName)
-		end
+		botName = "Heavyweapons"
+	elseif (ent.PreferredName != nil) then
+		botName = ent.PreferredName
 	end
-	bot.VisionLimits = ent.VisionLimits
 	local teamv = TEAM_RED
 	if team == 1 then
 		if (ent.PZClass == "wtfdemoman") then
@@ -48,15 +44,13 @@ local function LeadBot_S_Add_Zombie(team,class,pos,ent)
 		end
 	end
 
+	bot = TF_CreateManagedMapBot and TF_CreateManagedMapBot(botName, teamv, class, pos, nil, {
+		useTeamSpawn = false,
+		TFBotMapOwned = true,
+	}) or nil
 	if !IsValid(bot) then ErrorNoHalt("[LeadBot] Player limit reached!\n") return end
 	bot.LastSegmented = CurTime() + 1
-
-	bot.ControllerBot = ents.Create("ctf_bot_navigator")
-	bot.ControllerBot:Spawn()
-	bot.ControllerBot:SetOwner(bot)
-
-	bot.LastPath = nil
-	bot.CurSegment = 2
+	bot.VisionLimits = ent.VisionLimits
 	bot.TFBot = true
 	bot.IsL4DZombie = true
 	bot.BotStrategy = math.random(0, 1)
@@ -118,7 +112,7 @@ function ENT:Initialize()
 	self.bots = {}
 	self.infected = {}
 	if SERVER then
-		local npc = LeadBot_S_Add_Zombie(1,self.PZClass,self:GetPos(),self)
+		local npc = SpawnManagedMvMBot(1, self.PZClass, self:GetPos(), self)
 		if (!IsValid(npc)) then 
 			ErrorNoHalt("The bot could not spawn because you are in singleplayer!") 
 			return 

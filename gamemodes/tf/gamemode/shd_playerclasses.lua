@@ -427,6 +427,13 @@ function meta:SetPlayerClass(class)
 	for k,v in pairs(self.AmmoMax or {}) do
 		self:SetAmmoCount(v, k)
 	end  
+
+	if self:GetMaxHealth() < 1 then
+		self:SetMaxHealth(c.Health or 1)
+	end
+	if self:Health() < 1 then
+		self:SetHealth(self:GetMaxHealth())
+	end
 	 
 	-- Capitalize player class because the talker system wants to :/
 	-- This is used for playing scenes

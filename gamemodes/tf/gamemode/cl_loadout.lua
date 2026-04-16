@@ -308,22 +308,12 @@ concommand.Add("open_charinfo_direct", function(ply, _, args)
 
     for id, item in pairs(tf_items.Items) do
         if istable(item) and item.used_by_classes and item.used_by_classes[oldclass] == 1 then
-            if ply:GetPlayerClass() != "demoman" then
-                if item.item_slot == "primary" then
-                    weapons[1][id] = item -- table.insert(weapons[1], ) --id) -- weapon1:AddChoice(item.name, item.id)
-                elseif item.item_slot == "secondary" then
-                    weapons[2][id] = item -- weapon2:AddChoice(item.name, item.id)
-                elseif item.item_slot == "melee" then
-                    weapons[3][id] = item -- weapon3:AddChoice(item.name, item.id)
-                end
-            else
-                if item.item_slot == "primary" then
-                    weapons[2][id] = item -- table.insert(weapons[1], ) --id) -- weapon1:AddChoice(item.name, item.id)
-                elseif item.item_slot == "secondary" then
-                    weapons[1][id] = item -- weapon2:AddChoice(item.name, item.id)
-                elseif item.item_slot == "melee" then
-                    weapons[3][id] = item -- weapon3:AddChoice(item.name, item.id)
-                end
+            if item.item_slot == "primary" then
+                weapons[1][id] = item -- table.insert(weapons[1], ) --id) -- weapon1:AddChoice(item.name, item.id)
+            elseif item.item_slot == "secondary" then
+                weapons[2][id] = item -- weapon2:AddChoice(item.name, item.id)
+            elseif item.item_slot == "melee" then
+                weapons[3][id] = item -- weapon3:AddChoice(item.name, item.id)
             end
         end
     end
@@ -337,11 +327,7 @@ concommand.Add("open_charinfo_direct", function(ply, _, args)
     weapon1:SetText("")
     weapon1:SetTextColor(Color(255, 255, 0))
     weapon1:SetPos(15, 35)
-    if ply:GetPlayerClass() != "demoman" then
-        weapon1.DoClick = function(self) surface.PlaySound("ui/buttonclick.wav")  itemSelector(1, weapons[1]) end
-    else
-        weapon1.DoClick = function(self) surface.PlaySound("ui/buttonclick.wav")  itemSelector(2, weapons[1]) end
-    end
+    weapon1.DoClick = function(self) surface.PlaySound("ui/buttonclick.wav")  itemSelector(1, weapons[1]) end
 	weapon1.OnCursorEntered = function()
             local standAnim
             if (IsValid(ply:GetWeapons()[1])) then
@@ -361,11 +347,7 @@ concommand.Add("open_charinfo_direct", function(ply, _, args)
     weapon2:SetText("")
     weapon2:SetTextColor(Color(255, 255, 0))
     weapon2:SetPos(15, 120)
-    if ply:GetPlayerClass() != "demoman" then
-        weapon2.DoClick = function(self) surface.PlaySound("ui/buttonclick.wav")  itemSelector(2, weapons[2]) end
-    else
-        weapon2.DoClick = function(self) surface.PlaySound("ui/buttonclick.wav")  itemSelector(1, weapons[2]) end
-    end
+    weapon2.DoClick = function(self) surface.PlaySound("ui/buttonclick.wav")  itemSelector(2, weapons[2]) end
 	-- Ensure font and text color changes are applied
 	weapon2.OnCursorEntered = function()
             local standAnim
@@ -417,47 +399,22 @@ concommand.Add("open_charinfo_direct", function(ply, _, args)
             loadout = string.Split(convar:GetString(), ",")
             -- oh no
             --print(":O")
-            if ply:GetPlayerClass() != "demoman" then
-
-                for name, wep in pairs(tf_items.Items) do
-                    if istable(wep) then
-                        if wep.id == tonumber(loadout[1]) then
-                            weapon1.text = name
-                            if wep.image_inventory then
-                                weapon1.icon = surface.GetTextureID(wep.image_inventory)
-                            end
-                        elseif wep.id == tonumber(loadout[2]) then
-                            weapon2.text = name
-                            if wep.image_inventory then
-                                weapon2.icon = surface.GetTextureID(wep.image_inventory)
-                            end
-                        elseif wep.id == tonumber(loadout[3]) then
-                            weapon3.text = name
-                            if wep.image_inventory then
-                                weapon3.icon = surface.GetTextureID(wep.image_inventory)
-                            end
+            for name, wep in pairs(tf_items.Items) do
+                if istable(wep) then
+                    if wep.id == tonumber(loadout[1]) then
+                        weapon1.text = name
+                        if wep.image_inventory then
+                            weapon1.icon = surface.GetTextureID(wep.image_inventory)
                         end
-                    end
-                end
-            else
-
-                for name, wep in pairs(tf_items.Items) do
-                    if istable(wep) then
-                        if wep.id == tonumber(loadout[2]) then
-                            weapon1.text = name
-                            if wep.image_inventory then
-                                weapon1.icon = surface.GetTextureID(wep.image_inventory)
-                            end
-                        elseif wep.id == tonumber(loadout[1]) then
-                            weapon2.text = name
-                            if wep.image_inventory then
-                                weapon2.icon = surface.GetTextureID(wep.image_inventory)
-                            end
-                        elseif wep.id == tonumber(loadout[3]) then
-                            weapon3.text = name
-                            if wep.image_inventory then
-                                weapon3.icon = surface.GetTextureID(wep.image_inventory)
-                            end
+                    elseif wep.id == tonumber(loadout[2]) then
+                        weapon2.text = name
+                        if wep.image_inventory then
+                            weapon2.icon = surface.GetTextureID(wep.image_inventory)
+                        end
+                    elseif wep.id == tonumber(loadout[3]) then
+                        weapon3.text = name
+                        if wep.image_inventory then
+                            weapon3.icon = surface.GetTextureID(wep.image_inventory)
                         end
                     end
                 end

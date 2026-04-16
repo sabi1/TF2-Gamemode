@@ -563,7 +563,9 @@ local function EnsureBonemergedChild(parentEnt, childEnt, modelPath, teamNum, ti
 	childEnt:SetParent(parentEnt)
 	childEnt:AddEffects(EF_BONEMERGE)
 	childEnt:AddEffects(EF_PARENT_ANIMATES)
-	childEnt:SetNoDraw(false)
+	-- Keep HUD preview attachments out of the main world render; the DModelPanel
+	-- draws them explicitly during its own 3D pass.
+	childEnt:SetNoDraw(true)
 	ApplyTeamSkin(childEnt, teamNum)
 	if childEnt.SetPreviewCosmeticTint then
 		childEnt:SetPreviewCosmeticTint(tint)

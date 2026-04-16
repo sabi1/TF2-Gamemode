@@ -1,3 +1,4 @@
+-- Separate mob/director system. This is not part of the managed TF bot project.
 if SERVER then AddCSLuaFile() end
 ENT.Base = "base_nextbot"
 ENT.Type = "nextbot"
@@ -53,7 +54,7 @@ function ENT:Health()
 	return nil
 end
 
-local function LeadBot_S_Add_Zombie(team,class,pos)
+local function SpawnDirectorRaidBot(team, class, pos)
 	if !navmesh.IsLoaded() then
 		ErrorNoHalt("There is no navmesh! Generate one using \"nav_generate\"!\n")
 		return

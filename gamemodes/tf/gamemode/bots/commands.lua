@@ -4,6 +4,13 @@ TFBots.Commands = TFBots.Commands or {}
 local M = TFBots.Commands
 M._registered = M._registered or false
 
+local function register_command(name, fn)
+	if concommand.Remove then
+		pcall(concommand.Remove, name)
+	end
+	concommand.Add(name, fn)
+end
+
 local function get_bots()
 	return (TF_GetManagedBots and TF_GetManagedBots()) or player.GetBots()
 end
@@ -12,20 +19,63 @@ local function get_owned_bots()
 	return (TFBots.Registry and TFBots.Registry:GetOwnedBots()) or {}
 end
 
+local function get_managed_bots()
+	local registry = TFBots.Registry
+	if registry and registry.GetAllBots then
+		local out = {}
+		for _, bot in ipairs(registry:GetAllBots()) do
+			if TF_IsManagedBot and TF_IsManagedBot(bot) then
+				out[#out + 1] = bot
+			end
+		end
+		return out
+	end
+	return get_owned_bots()
+end
+
 local function is_admin(ply)
 	return not IsValid(ply) or ply:IsAdmin() or ply:IsSuperAdmin()
 end
 
-local function parse_count(arg)
-	return math.max(math.floor(tonumber(arg or 1) or 1), 1)
-end
+local DIFFICULTY_STRINGS = {
+	easy = "easy",
+	normal = "normal",
+	hard = "hard",
+	expert = "expert",
+}
 
-local function normalize_class(className)
-	className = string.lower(string.Trim(tostring(className or "scout")))
-	if className == "demo" then return "demoman" end
-	if className == "heavyweapons" then return "heavy" end
-	return className
-end
+local CLASS_NAMES = {
+	scout = true,
+	sniper = true,
+	soldier = true,
+	demoman = true,
+	medic = true,
+	heavy = true,
+	pyro = true,
+	spy = true,
+	engineer = true,
+	demo = "demoman",  -- alias
+	heavyweapons = "heavy",  -- alias
+}
+
+local AVAILABLE_CLASSES = {
+	"scout",
+	"sniper",
+	"soldier",
+	"demoman",
+	"medic",
+	"heavy",
+	"pyro",
+	"spy",
+	"engineer",
+}
+
+local TEAM_STRINGS = {
+	red = "red",
+	blu = "blue",
+	blue = "blue",
+	auto = "auto",
+}
 
 local function get_red_team()
 	return rawget(_G, "TEAM_RED") or 2
@@ -35,40 +85,146 @@ local function get_blu_team()
 	return rawget(_G, "TEAM_BLU") or 3
 end
 
-local function normalize_team(teamNum)
-	local text = string.lower(string.Trim(tostring(teamNum or "")))
-	if text == "blu" or text == "blue" or text == "team_blue" then
+local function is_difficulty(arg)
+	return DIFFICULTY_STRINGS[string.lower(tostring(arg or ""))] ~= nil
+end
+
+local function is_classname(arg)
+	local lower = string.lower(tostring(arg or ""))
+	return CLASS_NAMES[lower] ~= nil
+end
+
+local function is_teamname(arg)
+	local lower = string.lower(tostring(arg or ""))
+	return TEAM_STRINGS[lower] ~= nil
+end
+
+local function is_noquota(arg)
+	return string.lower(tostring(arg or "")) == "noquota"
+end
+
+local function is_positive_integer(arg)
+	local num = tonumber(arg)
+	return num and num > 0 and math.floor(num) == num
+end
+
+local function normalize_class(className)
+	local lower = string.lower(string.Trim(tostring(className or "scout")))
+	local resolved = CLASS_NAMES[lower]
+	if resolved == true then
+		return lower
+	elseif isstring(resolved) then
+		return resolved
+	end
+	return "scout"
+end
+
+local function normalize_team(teamStr)
+	local lower = string.lower(string.Trim(tostring(teamStr or "auto")))
+	if lower == "red" or lower == "team_red" then
+		return get_red_team()
+	end
+	if lower == "blu" or lower == "blue" or lower == "team_blue" then
 		return get_blu_team()
 	end
-	local num = tonumber(teamNum)
-	if num == get_blu_team() or num == 3 then
-		return get_blu_team()
-	end
-	return get_red_team()
+	-- auto team selection - will be handled specially
+	return "auto"
 end
 
 function M:Register()
-	if self._registered then return end
 	self._registered = true
 
-	concommand.Add("tf_bot_add", function(ply, _, args)
+	register_command("tf_bot_add", function(ply, _, args)
 		if game.SinglePlayer() or not is_admin(ply) then return end
-		local count = parse_count(args[1])
-		local className = normalize_class(args[2] or "scout")
-		local teamNum = normalize_team(args[3] or get_red_team())
-		for _ = 1, count do
-			TFBots.Spawn:CreateBot(nil, teamNum, className, nil, nil, {
+
+		-- Parse arguments (order-independent like Valve's)
+		local botCount = 1
+		local classname = nil
+		local teamname = "auto"
+		local difficulty = "normal"
+		local bQuotaManaged = true
+		local botName = nil
+
+		for i = 1, #args do
+			local arg = args[i]
+
+			if is_positive_integer(arg) then
+				botCount = math.floor(tonumber(arg))
+				botName = nil  -- can't have custom name if spawning multiple
+			elseif is_classname(arg) then
+				classname = normalize_class(arg)
+			elseif is_teamname(arg) then
+				teamname = string.lower(arg)
+			elseif is_difficulty(arg) then
+				difficulty = string.lower(arg)
+			elseif is_noquota(arg) then
+				bQuotaManaged = false
+			elseif botCount == 1 then
+				-- If spawning only 1 bot and argument doesn't match other types, treat as custom name
+				botName = arg
+			end
+		end
+
+		-- Check tf_bot_force_class convar
+		local forcedClass = GetConVar("tf_bot_force_class")
+		if forcedClass and forcedClass:GetString() ~= "" then
+			classname = normalize_class(forcedClass:GetString())
+		end
+
+		-- Set difficulty from convar if not overridden
+		local difficultyVar = GetConVar("tf_bot_difficulty")
+		if difficultyVar then
+			local varDifficulty = string.lower(tostring(difficultyVar:GetString() or ""))
+			if DIFFICULTY_STRINGS[varDifficulty] then
+				difficulty = varDifficulty
+			end
+		end
+
+		MsgN("[TFBots] Adding " .. botCount .. " bots, class=" .. tostring(classname or "random") .. ", team=" .. teamname .. ", difficulty=" .. difficulty)
+
+		if bQuotaManaged and TFBots.Config and TFBots.Config.SetQuotaTarget and TFBots.Registry and TFBots.Registry.GetOwnedCount then
+			local currentOwned = TFBots.Registry:GetOwnedCount()
+			TFBots.Config:SetQuotaTarget(currentOwned + botCount)
+		end
+
+		-- Create bots
+		for idx = 1, botCount do
+			local resolvedTeam = teamname
+			if teamname == "auto" then
+				-- Auto team: pick team with fewer players
+				resolvedTeam = get_red_team()
+				local redCount = #team.GetPlayers(get_red_team())
+				local bluCount = #team.GetPlayers(get_blu_team())
+				if bluCount < redCount then
+					resolvedTeam = get_blu_team()
+				end
+			else
+				resolvedTeam = normalize_team(teamname)
+			end
+
+			-- If no class specified, pick a random one for this bot
+			local botClass = classname or table.Random(AVAILABLE_CLASSES)
+			MsgN("[TFBots] Bot " .. idx .. ": class=" .. botClass .. ", team=" .. resolvedTeam)
+
+			local bot = TFBots.Spawn:CreateBot(botName, resolvedTeam, botClass, nil, nil, {
 				useTeamSpawn = true,
+				TFBotQuotaOwned = bQuotaManaged,
+				difficulty = difficulty,
 			})
+
+			if IsValid(bot) and botName then
+				-- Only use custom name for the first bot when spawning multiple
+				botName = nil
+			end
 		end
 	end)
 
-	concommand.Add("tf_bot_spawn", function(ply, _, args)
+	register_command("tf_bot_spawn", function(ply, _, args)
 		if game.SinglePlayer() or not is_admin(ply) then return end
-		RunConsoleCommand("tf_bot_add", args[1] or "1", args[2] or "scout", args[3] or tostring(get_red_team()))
+		RunConsoleCommand("tf_bot_add", args[1] or "1", args[2] or "scout", args[3] or "auto")
 	end)
 
-	concommand.Add("tf_bot_quota", function(ply, _, args)
+	register_command("tf_bot_quota", function(ply, _, args)
 		if game.SinglePlayer() or not is_admin(ply) then return end
 		local target = math.max(math.floor(tonumber(args[1] or 0) or 0), 0)
 		TFBots.Config:SetQuotaTarget(target)
@@ -76,28 +232,37 @@ function M:Register()
 		MsgN("[TFBots] tf_bot_quota set to " .. tostring(target))
 	end)
 
-	concommand.Add("tf_bot_kick_all", function(ply)
+	register_command("tf_bot_kick_all", function(ply)
 		if not is_admin(ply) then return end
-		for _, bot in ipairs(get_owned_bots()) do
+		if TFBots.Config and TFBots.Config.SetQuotaTarget then
+			TFBots.Config:SetQuotaTarget(0)
+		end
+		for _, bot in ipairs(get_managed_bots()) do
 			TF_RemoveManagedBot(bot, "Kicked from server", true)
 		end
 	end)
 
-	concommand.Add("tf_bot_kill_all", function(ply)
+	register_command("tf_bot_kill_all", function(ply)
 		if not is_admin(ply) then return end
-		for _, bot in ipairs(get_owned_bots()) do
+		if TFBots.Config and TFBots.Config.SetQuotaTarget then
+			TFBots.Config:SetQuotaTarget(0)
+		end
+		for _, bot in ipairs(get_managed_bots()) do
 			TFBots.Spawn:KillBot(bot)
 		end
 	end)
 
-	concommand.Add("tf_bot_kill_bots", function(ply)
+	register_command("tf_bot_kill_bots", function(ply)
 		if not is_admin(ply) then return end
-		for _, bot in ipairs(get_owned_bots()) do
+		if TFBots.Config and TFBots.Config.SetQuotaTarget then
+			TFBots.Config:SetQuotaTarget(0)
+		end
+		for _, bot in ipairs(get_managed_bots()) do
 			TFBots.Spawn:KillBot(bot)
 		end
 	end)
 
-	concommand.Add("tf_bot_bring_all", function(ply)
+	register_command("tf_bot_bring_all", function(ply)
 		local target = IsValid(ply) and ply or Entity(1)
 		if not IsValid(target) then return end
 		for _, bot in ipairs(get_bots()) do
@@ -107,7 +272,7 @@ function M:Register()
 		end
 	end)
 
-	concommand.Add("tf_bot_goto", function(ply)
+	register_command("tf_bot_goto", function(ply)
 		if not IsValid(ply) then return end
 		local bots = get_bots()
 		if #bots == 0 then return end
@@ -117,7 +282,7 @@ function M:Register()
 		end
 	end)
 
-	concommand.Add("tf_bot_bring", function(ply)
+	register_command("tf_bot_bring", function(ply)
 		local bots = get_bots()
 		if #bots == 0 then return end
 		local area = navmesh.GetNavArea(Entity(1):GetPos(), 5)
@@ -128,7 +293,7 @@ function M:Register()
 		end
 	end)
 
-	concommand.Add("tf_bot_scramble", function(ply)
+	register_command("tf_bot_scramble", function(ply)
 		if not is_admin(ply) then return end
 		for _, bot in ipairs(get_bots()) do
 			if IsValid(bot) and bot.SetTeam then
@@ -137,7 +302,7 @@ function M:Register()
 		end
 	end)
 
-	concommand.Add("tf_spectate_bot", function(ply, _, args)
+	register_command("tf_spectate_bot", function(ply, _, args)
 		if not IsValid(ply) then return end
 		if args[1] == "2" then
 			ply:Spectate(OBS_MODE_CHASE)
@@ -156,7 +321,7 @@ function M:Register()
 		ply:Spectate(OBS_MODE_IN_EYE)
 	end)
 
-	concommand.Add("tf_unspectate_bot", function(ply)
+	register_command("tf_unspectate_bot", function(ply)
 		if not IsValid(ply) then return end
 		ply:UnSpectate()
 		ply:KillSilent()

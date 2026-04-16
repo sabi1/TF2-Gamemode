@@ -818,6 +818,21 @@ function META:GiveItem(itemname, properties)
 		class = class.."_"..self:GetPlayerClass()
 	end
 
+	local function giveStockFallbackForSlot(slotName)
+		local classTable = self.GetPlayerClassTable and self:GetPlayerClassTable() or nil
+		if not istable(classTable) or not istable(classTable.DefaultLoadout) then return false end
+
+		for _, fallbackName in ipairs(classTable.DefaultLoadout) do
+			local fallbackItem = Items[fallbackName]
+			if fallbackItem and fallbackItem.item_slot == slotName and fallbackName ~= itemname then
+				self:GiveItem(fallbackName)
+				return true
+			end
+		end
+
+		return false
+	end
+
 	if string.StartWith(class, "tf_weapon_") then
 		EnsureWeaponClassLoaded(class)
 	end
@@ -887,6 +902,13 @@ function META:GiveItem(itemname, properties)
 		if EnsureWeaponClassLoaded(class) then
 			weapon = self:Give(class)
 		end
+	end
+
+	if not IsValid(weapon) then
+		_G.TFWeaponItemOwner = nil
+		_G.TFWeaponItemIndex = nil
+		giveStockFallbackForSlot(item.item_slot)
+		return
 	end
 	
 	local quality, level, custom_name, custom_desc

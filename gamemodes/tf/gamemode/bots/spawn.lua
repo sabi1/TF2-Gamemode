@@ -111,9 +111,32 @@ local function apply_spawn_transform(bot, teamNum, className, spawnPos, spawnAng
 	return chosen
 end
 
+local function reset_player_bot_state(bot)
+	if not IsValid(bot) or not bot:IsPlayer() then return end
+
+	if bot.RemoveAllConds then
+		bot:RemoveAllConds()
+	end
+
+	if bot.SetNWBool then
+		bot:SetNWBool("Invulnerable", false)
+		bot:SetNWBool("SpawnGlows", false)
+	end
+
+	if bot.SetMaterial then
+		bot:SetMaterial("")
+	end
+
+	if bot.SetColor then
+		bot:SetColor(Color(255, 255, 255, 255))
+	end
+end
+
 function M:CreateBot(name, teamNum, className, spawnPos, spawnAng, options)
 	local cfg = TFBots.Config
 	if not (cfg and cfg:IsEnabled()) then return nil end
+
+	MsgN("[TFBots.Spawn] Creating bot: name=" .. tostring(name) .. ", team=" .. tostring(teamNum) .. ", class=" .. tostring(className))
 
 	local botName = string.Trim(tostring(name or ""))
 	if botName == "" then
@@ -155,6 +178,7 @@ function M:CreateBot(name, teamNum, className, spawnPos, spawnAng, options)
 		bot:SetNWString("TF_BotDisplayName", botName)
 		bot.LastPath = nil
 		bot.CurSegment = 2
+		reset_player_bot_state(bot)
 		bot:SetTeam(normalize_team(teamNum))
 		bot:SetPlayerClass(normalize_class(className))
 		if isvector(spawnPos) then
@@ -171,6 +195,7 @@ function M:CreateBot(name, teamNum, className, spawnPos, spawnAng, options)
 			bot.TFBotManagerOwned = true
 			bot._tfBotManagerName = botName
 			bot:SetNWString("TF_BotDisplayName", botName)
+			reset_player_bot_state(bot)
 			bot:SetTeam(normalize_team(teamNum))
 			bot:SetPlayerClass(normalize_class(className))
 			apply_spawn_transform(bot, teamNum, className, spawnPos, spawnAng, options)
@@ -198,6 +223,8 @@ function M:CreateBot(name, teamNum, className, spawnPos, spawnAng, options)
 		bot:SetTeam(normalize_team(teamNum))
 		bot:SetPlayerClass(normalize_class(className))
 		apply_spawn_transform(bot, teamNum, className, spawnPos, spawnAng, options)
+
+		MsgN("[TFBots.Spawn] Created NextBot: " .. botName .. " - class=" .. tostring(bot:GetPlayerClass()) .. " (intended: " .. tostring(className) .. ")")
 	end
 
 	if TFBots.Registry then

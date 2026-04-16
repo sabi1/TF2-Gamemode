@@ -14,9 +14,15 @@ function M:Update(bot, st, profile)
 	local teleporter = TFBotSource.Actions and TFBotSource.Actions.UseTeleporter or nil
 	local destroySentry = TFBotSource.Actions and TFBotSource.Actions.DestroyEnemySentry or nil
 	local seek = TFBotSource.Actions and TFBotSource.Actions.SeekAndDestroy or nil
+	local payloadPush = TFBotSource.Actions and TFBotSource.Actions.PayloadPush or nil
+	local payloadGuard = TFBotSource.Actions and TFBotSource.Actions.PayloadGuard or nil
+	local capturePoint = TFBotSource.Actions and TFBotSource.Actions.CapturePoint or nil
+	local defendPoint = TFBotSource.Actions and TFBotSource.Actions.DefendPoint or nil
 	local medic = TFBotSource.Actions and TFBotSource.Actions.MedicHeal or nil
 	local sniper = TFBotSource.Actions and TFBotSource.Actions.SniperLurk or nil
 	local flag = TFBotSource.Actions and TFBotSource.Actions.FetchFlag or nil
+	local deliver = TFBotSource.Actions and TFBotSource.Actions.DeliverFlag or nil
+	local pushToCapture = TFBotSource.Actions and TFBotSource.Actions.PushToCapturePoint or nil
 	local flagDefenders = TFBotSource.Actions and TFBotSource.Actions.AttackFlagDefenders or nil
 	local escort = TFBotSource.Actions and TFBotSource.Actions.EscortFlagCarrier or nil
 	local spyAttack = TFBotSource.Actions and TFBotSource.Actions.SpyAttack or nil
@@ -30,9 +36,15 @@ function M:Update(bot, st, profile)
 	if action == "MeleeAttack" and melee and melee.Update and melee:Update(bot, st, profile) then return end
 	if action == "UseTeleporter" and teleporter and teleporter.Update and teleporter:Update(bot, st, profile) then return end
 	if action == "DestroyEnemySentry" and destroySentry and destroySentry.Update and destroySentry:Update(bot, st, profile) then return end
+	if action == "PayloadPush" and payloadPush and payloadPush.Update and payloadPush:Update(bot, st, profile) then return end
+	if action == "PayloadGuard" and payloadGuard and payloadGuard.Update and payloadGuard:Update(bot, st, profile) then return end
+	if action == "CapturePoint" and capturePoint and capturePoint.Update and capturePoint:Update(bot, st, profile) then return end
+	if action == "DefendPoint" and defendPoint and defendPoint.Update and defendPoint:Update(bot, st, profile) then return end
 	if action == "MedicHeal" and medic and medic.Update and medic:Update(bot, st, profile) then return end
 	if action == "SniperLurk" and sniper and sniper.Update and sniper:Update(bot, st, profile) then return end
 	if action == "FetchFlag" and flag and flag.Update and flag:Update(bot, st, profile) then return end
+	if action == "DeliverFlag" and deliver and deliver.Update and deliver:Update(bot, st, profile) then return end
+	if action == "PushToCapturePoint" and pushToCapture and pushToCapture.Update and pushToCapture:Update(bot, st, profile) then return end
 	if action == "AttackFlagDefenders" and flagDefenders and flagDefenders.Update and flagDefenders:Update(bot, st, profile) then return end
 	if action == "EscortFlagCarrier" and escort and escort.Update and escort:Update(bot, st, profile) then return end
 	if action == "EngineerIdle" and engineer and engineer.Update and engineer:Update(bot, st, profile) then return end

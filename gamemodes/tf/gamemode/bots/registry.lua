@@ -35,13 +35,31 @@ end
 
 function M:GetOwnedBots()
 	local out = {}
+	local seen = {}
 	for bot in pairs(self._owned) do
 		if IsValid(bot) then
-			out[#out + 1] = bot
+			add_unique(out, bot, seen)
 		else
 			self._owned[bot] = nil
 		end
 	end
+
+	for _, bot in ipairs(player.GetBots()) do
+		if not IsValid(bot) then continue end
+		if bot.TFBot ~= true then continue end
+		if bot.TFBotManagerOwned ~= true and bot.TFBotQuotaOwned ~= true then continue end
+		self._owned[bot] = true
+		add_unique(out, bot, seen)
+	end
+
+	for _, bot in ipairs(ents.FindByClass("tf_bot_base_nextbot")) do
+		if not IsValid(bot) then continue end
+		if bot.TFBot ~= true then continue end
+		if bot.TFBotManagerOwned ~= true and bot.TFBotQuotaOwned ~= true then continue end
+		self._owned[bot] = true
+		add_unique(out, bot, seen)
+	end
+
 	return out
 end
 
@@ -66,4 +84,3 @@ function M:Clear()
 end
 
 return M
-

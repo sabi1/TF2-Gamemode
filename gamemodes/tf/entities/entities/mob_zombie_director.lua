@@ -14,6 +14,7 @@ list.Set( "NPC", "mob_zombie_director", {
 	AdminOnly = true
 } )
 
+-- Separate mob/director system. This is not part of the managed TF bot project.
 local function lookForNearestPlayer(bot)
 	local npcs = {}
 	for k,v in ipairs(ents.FindInSphere(bot:GetPos(), 25000)) do
@@ -64,7 +65,7 @@ function ENT:Health()
 	return nil
 end
 
-local function LeadBot_S_Add_Zombie(team,class,pos)
+local function SpawnDirectorZombieBot(team, class, pos)
 	if !navmesh.IsLoaded() then
 		ErrorNoHalt("There is no navmesh! Generate one using \"nav_generate\"!\n")
 		return

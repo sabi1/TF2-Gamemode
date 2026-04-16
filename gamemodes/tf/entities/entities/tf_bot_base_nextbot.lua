@@ -376,6 +376,8 @@ function ENT:Initialize()
 	self._tfTeam = TEAM_RED
 	self._spawnTime = CurTime()
 	self.routeType = "default"
+	self.IsTFBotValveBase = true
+	self.TFBot = true
 	self:SetNWInt("TFBotScore", 0)
 	self:SetNWInt("TFBotDeaths", 0)
 	self:SetNWInt("TFBotTeam", self._tfTeam)
@@ -387,6 +389,8 @@ function ENT:Initialize()
 		self.ControllerBot:Spawn()
 		self.ControllerBot:SetOwner(self)
 	end
+	self._botUpdateRate = 0.033  -- ~30Hz like Valve
+	self._lastBotUpdate = 0
 end
 
 function ENT:OnRemove()
@@ -734,8 +738,48 @@ function ENT:Think()
 		if IsValid(self._wearableProp) and self._wearableProp:GetParent() ~= self then
 			self:RefreshWearableAttachment()
 		end
+
+		local now = CurTime()
+		if self:Alive() and now >= (self._lastBotUpdate or 0) then
+			self._lastBotUpdate = now + self._botUpdateRate
+
+			self:RunModularAI()
+
+			local targetPos = self._tfbotDesiredPos
+			if not isvector(targetPos) or self:GetPos():DistToSqr(targetPos) <= (56 * 56) then
+				if IsValid(self.ControllerBot) and self.ControllerBot.FindSpot then
+					targetPos = self.ControllerBot:FindSpot("random", { radius = 1200, pos = self:GetPos(), type = "exposed" }) or targetPos
+					self._tfbotDesiredPos = targetPos
+				end
+			end
+			local desiredView = self._tfbotDesiredView
+			if isangle(desiredView) then
+				self.loco:FaceTowards(self:GetPos() + desiredView:Forward() * 120)
+			end
+
+			if self._tfbotWantsJump and self:IsOnGround() then
+				self.loco:Jump()
+			end
+			if self._tfbotWantsAttack then
+				self:TryFireAtThreat()
+			end
+
+			if isvector(targetPos) then
+				local smoothTarget = self:GetSoftSeparationTarget(targetPos)
+				self.loco:SetDesiredSpeed(math.Clamp(self._tfbotDesiredSpeed or 280, 120, 420))
+				startBestActivity(self, RUN_ACTS)
+				self.loco:Approach(smoothTarget, 1)
+				if self:IsOnGround() and self:GetVelocity():Length2D() < 22 and self:GetPos():DistToSqr(smoothTarget) > (120 * 120) then
+					self.loco:Jump()
+				end
+			else
+				startBestActivity(self, IDLE_ACTS)
+			end
+
+			self:ProcessTriggerVolumes()
+		end
 	end
-	self:NextThink(CurTime() + 0.25)
+	self:NextThink(CurTime() + 0.01)
 	return true
 end
 
@@ -943,7 +987,6 @@ function ENT:SpawnFunction(ply, tr, className)
 		local teamNum = IsValid(ply) and ply:Team() or TEAM_RED
 		local botClass = IsValid(ply) and ply.GetPlayerClass and ply:GetPlayerClass() or "scout"
 		local bot = TF_CreateManagedMapBot(nil, teamNum, botClass, nil, nil, {
-			backend = "nextbot",
 			useTeamSpawn = true,
 			SpawnedViaSpawnMenu = true,
 		})

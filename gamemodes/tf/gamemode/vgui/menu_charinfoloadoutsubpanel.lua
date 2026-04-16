@@ -926,30 +926,16 @@ function PANEL:PerformLayout()
 
 	for id, item in pairs(tf_items.Items) do
 		if istable(item) and itemUsableByClass(item, oldclass) then
-			if GetConVar("tf_hud_loadout_class"):GetInt() != 9 then
-				if item.item_slot == "primary" then
-					weapons[1][id] = item -- table.insert(weapons[1], ) --id) -- weapon1:AddChoice(item.name, item.id)
-				elseif item.item_slot == "secondary" then
-					weapons[2][id] = item -- weapon2:AddChoice(item.name, item.id)
-				elseif item.item_slot == "melee" then
-					weapons[3][id] = item -- weapon3:AddChoice(item.name, item.id)
-				elseif item.item_slot == "head" or item.item_slot == "misc" then
-					weapons[4][id] = item -- weapon3:AddChoice(item.name, item.id)
-				elseif isActionSlotItem(item) then
-					weapons[5][id] = item
-				end
-			else
-				if item.item_slot == "primary" then
-					weapons[2][id] = item -- table.insert(weapons[1], ) --id) -- weapon1:AddChoice(item.name, item.id)
-				elseif item.item_slot == "secondary" then
-					weapons[1][id] = item -- weapon2:AddChoice(item.name, item.id)
-				elseif item.item_slot == "melee" then
-					weapons[3][id] = item -- weapon3:AddChoice(item.name, item.id)
-				elseif item.item_slot == "head" or item.item_slot == "misc" then
-					weapons[4][id] = item -- weapon3:AddChoice(item.name, item.id)
-				elseif isActionSlotItem(item) then
-					weapons[5][id] = item
-				end
+			if item.item_slot == "primary" then
+				weapons[1][id] = item -- table.insert(weapons[1], ) --id) -- weapon1:AddChoice(item.name, item.id)
+			elseif item.item_slot == "secondary" then
+				weapons[2][id] = item -- weapon2:AddChoice(item.name, item.id)
+			elseif item.item_slot == "melee" then
+				weapons[3][id] = item -- weapon3:AddChoice(item.name, item.id)
+			elseif item.item_slot == "head" or item.item_slot == "misc" then
+				weapons[4][id] = item -- weapon3:AddChoice(item.name, item.id)
+			elseif isActionSlotItem(item) then
+				weapons[5][id] = item
 			end
 
 			if oldclass == "engineer" and item.item_slot == "pda" then
@@ -990,42 +976,22 @@ function PANEL:PerformLayout()
 
 	for name, wep in pairs(tf_items.Items) do
 		if istable(wep) then	
-			if GetConVar("tf_hud_loadout_class"):GetInt() != 9 then
-				if wep.id == tonumber(loadout[1]) then
-					Items[1] = makeLoadoutItemEntry(wep)
-				elseif wep.id == tonumber(loadout[2]) then
-					Items[2] = makeLoadoutItemEntry(wep)
-				elseif wep.id == tonumber(loadout[3]) then
-					Items[3] = makeLoadoutItemEntry(wep)
-				elseif wep.id == tonumber(loadout[4]) then
-					Items[4] = makeLoadoutItemEntry(wep)
-				elseif wep.id == tonumber(loadout[5]) then
-					Items[5] = makeLoadoutItemEntry(wep)
-				elseif wep.id == tonumber(loadout[6]) then
-					Items[6] = makeLoadoutItemEntry(wep)
-				elseif wep.id == tonumber(loadout[7]) then
-					Items[7] = makeLoadoutItemEntry(wep)
-				elseif wep.id == tonumber(loadout[8]) then
-					Items[8] = makeLoadoutItemEntry(wep)
-				end
-			else
-				if wep.id == tonumber(loadout[1]) then
-					Items[2] = makeLoadoutItemEntry(wep)
-				elseif wep.id == tonumber(loadout[2]) then
-					Items[1] = makeLoadoutItemEntry(wep)
-				elseif wep.id == tonumber(loadout[3]) then
-					Items[3] = makeLoadoutItemEntry(wep)
-				elseif wep.id == tonumber(loadout[4]) then
-					Items[4] = makeLoadoutItemEntry(wep)
-				elseif wep.id == tonumber(loadout[5]) then
-					Items[5] = makeLoadoutItemEntry(wep)
-				elseif wep.id == tonumber(loadout[6]) then
-					Items[6] = makeLoadoutItemEntry(wep)
-				elseif wep.id == tonumber(loadout[7]) then
-					Items[7] = makeLoadoutItemEntry(wep)
-				elseif wep.id == tonumber(loadout[8]) then
-					Items[8] = makeLoadoutItemEntry(wep)
-				end
+			if wep.id == tonumber(loadout[1]) then
+				Items[1] = makeLoadoutItemEntry(wep)
+			elseif wep.id == tonumber(loadout[2]) then
+				Items[2] = makeLoadoutItemEntry(wep)
+			elseif wep.id == tonumber(loadout[3]) then
+				Items[3] = makeLoadoutItemEntry(wep)
+			elseif wep.id == tonumber(loadout[4]) then
+				Items[4] = makeLoadoutItemEntry(wep)
+			elseif wep.id == tonumber(loadout[5]) then
+				Items[5] = makeLoadoutItemEntry(wep)
+			elseif wep.id == tonumber(loadout[6]) then
+				Items[6] = makeLoadoutItemEntry(wep)
+			elseif wep.id == tonumber(loadout[7]) then
+				Items[7] = makeLoadoutItemEntry(wep)
+			elseif wep.id == tonumber(loadout[8]) then
+				Items[8] = makeLoadoutItemEntry(wep)
 			end
 		end
 	end
@@ -1077,8 +1043,6 @@ function PANEL:PerformLayout()
 		end
 	end
 
-	local useSwappedLoadoutSlots = GetConVar("tf_hud_loadout_class"):GetInt() == 9
-
 	for k, v in ipairs(Items) do
 		local t = self.ItemPanels[k]
 		if IsValid(t) then
@@ -1111,42 +1075,22 @@ function PANEL:PerformLayout()
 			t:SetAttributePanel(self.AttributePanel, xoffset, tooltipOffsetY)
 			applyDecoratedPanelVisual(t, slotItem, slotProperties)
 
-			if not useSwappedLoadoutSlots then
-				if (k == 1) then
-					t.DoClick = function() itemSelector(1, weapons[1], self:GetParent(), GetConVar("tf_hud_loadout_class"):GetInt(), oldclass) end
-				elseif (k == 2) then
-					t.DoClick = function() itemSelector(2, weapons[2], self:GetParent(), GetConVar("tf_hud_loadout_class"):GetInt(), oldclass) end
-				elseif (k == 3) then
-					t.DoClick = function() itemSelector(3, weapons[3], self:GetParent(), GetConVar("tf_hud_loadout_class"):GetInt(), oldclass) end
-				elseif (k == 4) then
-					t.DoClick = function() hatSelector("hat",4,oldclass,weapons[4]) end
-				elseif (k == 5) then
-					t.DoClick = function() hatSelector("hat",5,oldclass,weapons[4]) end
-				elseif (k == 6) then
-					t.DoClick = function() hatSelector("hat",6,oldclass,weapons[4]) end
-				elseif (k == 7) then
-					t.DoClick = function() actionSelector(7, oldclass, weapons[5]) end
-				elseif (k == 8) then
-					t.DoClick = function() itemSelector(8, weapons[6], self:GetParent(), GetConVar("tf_hud_loadout_class"):GetInt(), oldclass) end
-				end
-			else
-				if (k == 2) then
-					t.DoClick = function() itemSelector(1, weapons[2], self:GetParent(), GetConVar("tf_hud_loadout_class"):GetInt(), oldclass) end
-				elseif (k == 1) then
-					t.DoClick = function() itemSelector(2, weapons[1], self:GetParent(), GetConVar("tf_hud_loadout_class"):GetInt(), oldclass) end
-				elseif (k == 3) then
-					t.DoClick = function() itemSelector(3, weapons[3], self:GetParent(), GetConVar("tf_hud_loadout_class"):GetInt(), oldclass) end
-				elseif (k == 4) then
-					t.DoClick = function() hatSelector("hat",4,oldclass,weapons[4]) end
-				elseif (k == 5) then
-					t.DoClick = function() hatSelector("hat",5,oldclass,weapons[4]) end
-				elseif (k == 6) then
-					t.DoClick = function() hatSelector("hat",6,oldclass,weapons[4]) end
-				elseif (k == 7) then
-					t.DoClick = function() actionSelector(7, oldclass, weapons[5]) end
-				elseif (k == 8) then
-					t.DoClick = function() itemSelector(8, weapons[6], self:GetParent(), GetConVar("tf_hud_loadout_class"):GetInt(), oldclass) end
-				end
+			if (k == 1) then
+				t.DoClick = function() itemSelector(1, weapons[1], self:GetParent(), GetConVar("tf_hud_loadout_class"):GetInt(), oldclass) end
+			elseif (k == 2) then
+				t.DoClick = function() itemSelector(2, weapons[2], self:GetParent(), GetConVar("tf_hud_loadout_class"):GetInt(), oldclass) end
+			elseif (k == 3) then
+				t.DoClick = function() itemSelector(3, weapons[3], self:GetParent(), GetConVar("tf_hud_loadout_class"):GetInt(), oldclass) end
+			elseif (k == 4) then
+				t.DoClick = function() hatSelector("hat",4,oldclass,weapons[4]) end
+			elseif (k == 5) then
+				t.DoClick = function() hatSelector("hat",5,oldclass,weapons[4]) end
+			elseif (k == 6) then
+				t.DoClick = function() hatSelector("hat",6,oldclass,weapons[4]) end
+			elseif (k == 7) then
+				t.DoClick = function() actionSelector(7, oldclass, weapons[5]) end
+			elseif (k == 8) then
+				t.DoClick = function() itemSelector(8, weapons[6], self:GetParent(), GetConVar("tf_hud_loadout_class"):GetInt(), oldclass) end
 			end
 		end
 	end

@@ -9,7 +9,7 @@ ENT.Team = "RED"
 ENT.PrintName		= "Red Scout"
 ENT.Category		= "TFBots"
 
-local function LeadBot_S_Add_Zombie(team,class,pos,ent)
+local function SpawnManagedMercBot(team, class, pos, ent)
 	if (game.SinglePlayer()) then
 		table.insert( Errors, {
 			last	= SysTime(),
@@ -29,21 +29,17 @@ local function LeadBot_S_Add_Zombie(team,class,pos,ent)
 	if (ent.PreferredName ~= nil) then
 		nickname = ent.PreferredName
 	end
-	local bot = player.CreateNextBot(nickname)
 	local teamv = TEAM_RED
 	if team == 1 then
 		teamv = TEAM_BLU
 	end
 
+	local bot = TF_CreateManagedMapBot and TF_CreateManagedMapBot(nickname, teamv, class, pos, nil, {
+		useTeamSpawn = false,
+		TFBotMapOwned = true,
+	}) or nil
 	if !IsValid(bot) then ErrorNoHalt("[LeadBot] Player limit reached!\n") return end
 	bot.LastSegmented = CurTime() + 1
-
-	bot.ControllerBot = ents.Create("ctf_bot_navigator")
-	bot.ControllerBot:Spawn()
-	bot.ControllerBot:SetOwner(bot)
-
-	bot.LastPath = nil
-	bot.CurSegment = 2
 	bot.TFBot = true
 	bot.IsL4DZombie = false
 	bot.BotStrategy = math.random(0, 1)
@@ -88,7 +84,7 @@ function ENT:Initialize()
 	if (self.PZClass == "civilian_" && !file.Exists("models/player/civilian.mdl","WORKSHOP")) then 
 		self:Remove()
 	end
-    local npc = LeadBot_S_Add_Zombie(team,self.PZClass,self:GetPos(),self)
+    local npc = SpawnManagedMercBot(team, self.PZClass, self:GetPos(), self)
     if (!IsValid(npc)) then 
         ErrorNoHalt("The bot could not spawn because you are in singleplayer!") 
         return 

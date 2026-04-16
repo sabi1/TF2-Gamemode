@@ -1623,7 +1623,10 @@ function SPAWNER:SpawnTFBot(runtime, rawDef, spawnState, whereOverride, missionI
         bot:Spawn()
         bot:Activate()
     else
-        bot = player.CreateNextBot(botName)
+        bot = TF_CreateManagedMapBot(botName, TEAM_BLU, botClass, spawnPos, spawnAng, {
+            useTeamSpawn = false,
+            TFBotMapOwned = true,
+        })
         if not IsValid(bot) then
             return nil, "player_limit"
         end
@@ -1662,7 +1665,7 @@ function SPAWNER:SpawnTFBot(runtime, rawDef, spawnState, whereOverride, missionI
     ApplyHealthAndScale(bot, appliedDef)
     ApplyViewAndMovementHints(bot, appliedDef)
 
-    if not useNextBotBase then
+    if not useNextBotBase and not IsValid(bot.ControllerBot) then
         bot.ControllerBot = ents.Create("ctf_bot_navigator")
         if IsValid(bot.ControllerBot) then
             bot.ControllerBot:Spawn()

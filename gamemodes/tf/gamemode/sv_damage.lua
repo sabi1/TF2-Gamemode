@@ -696,6 +696,8 @@ function GM:EntityTakeDamage(  ent, dmginfo )
 	local inflictor = dmginfo:GetInflictor()
 	local attacker = dmginfo:GetAttacker()
 	local amount = dmginfo:GetDamage()
+	local inflictorClass = IsValid(inflictor) and inflictor:GetClass() or nil
+	local attackerClass = IsValid(attacker) and attacker:GetClass() or nil
 	
 	local att = dmginfo:GetAttacker()
 	local friendlyHit = IsValid(att) and att ~= ent and att:IsFriendly(ent)
@@ -840,7 +842,7 @@ function GM:EntityTakeDamage(  ent, dmginfo )
 	
 	--Msg(tostring(ent).." - "..tostring(dmginfo).." > Received damage : "..dmginfo:GetDamage().."  Attacker : "..tostring(attacker).."\n")
 	-- No damage from fire, as we are using a custom fire system
-	if (inflictor:GetClass()=="entityflame" and ent:IsNPC()) then
+	if (inflictorClass=="entityflame" and ent:IsNPC()) then
 		if (IsValid(ent:GetEnemy())) then
 			dmginfo:SetAttacker(ent:GetEnemy())
 		end
@@ -869,7 +871,7 @@ function GM:EntityTakeDamage(  ent, dmginfo )
 			
 			ent:SetMovementActivity(ent:GetSequenceActivity(ent:LookupSequence("firewalk")))
 		end
-	elseif inflictor:GetClass()=="entityflame" and ent:IsPlayer() then
+	elseif inflictorClass=="entityflame" and ent:IsPlayer() then
 		dmginfo:SetDamageType(DMG_GENERIC)
 		ent:Speak("TLK_ONFIRE")
 	end
@@ -879,7 +881,7 @@ function GM:EntityTakeDamage(  ent, dmginfo )
 	if dmginfo:GetDamageType() == bit.bor(DMG_BULLET,DMG_ALWAYSGIB) then
 		dmginfo:SetDamageType(DMG_BULLET)
 	end
-	if (ent:IsPlayer() and attacker:GetClass() == "infected") then
+	if (ent:IsPlayer() and attackerClass == "infected") then
 		ent:EmitSound("Player.HitInternal")
 	end
 	if ent:IsPlayer() then
@@ -890,7 +892,7 @@ function GM:EntityTakeDamage(  ent, dmginfo )
 		----print("-> Manually calling ScaleNPCDamage")
 		self:ScaleNPCDamage(ent, 0, dmginfo)
 	elseif ent:IsNPC() then
-		if ForceScaleDamageEntityClasses[inflictor:GetClass()] or ForceDamageClasses[ent:GetClass()] then
+		if (inflictorClass and ForceScaleDamageEntityClasses[inflictorClass]) or ForceDamageClasses[ent:GetClass()] then
 			----print("-> Manually calling ScaleNPCDamage")
 			self:ScaleNPCDamage(ent, 0, dmginfo)
 		end
@@ -1091,7 +1093,7 @@ function GM:EntityTakeDamage(  ent, dmginfo )
 			umsg.End()
 		end
 	end
-	if (attacker:GetClass() == "npc_headcrab_black") then
+	if (attackerClass == "npc_headcrab_black") then
 		dmginfo:SetDamage(35)
 		if ent~=dmginfo:GetAttacker() and ent:CanBleed() then
 			GAMEMODE:EntityStartBleeding(ent, dmginfo:GetAttacker(), Entity(0), 8)

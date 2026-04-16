@@ -144,7 +144,8 @@ function SWEP:CanPrimaryAttack()
 end
 
 function SWEP:PrimaryAttack(vampire)
-	if self.Owner:IsBot() and GetConVar("tf_bot_melee_only"):GetBool() then
+	local meleeOnly = GetConVar("tf_bot_melee_only")
+	if IsValid(self.Owner) and self.Owner:IsBot() and meleeOnly and meleeOnly:GetBool() then
 		self.Owner:SelectWeapon(self.Owner:GetWeapons()[3])
 		return
 	end

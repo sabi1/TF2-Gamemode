@@ -224,8 +224,10 @@ end
 
 function SWEP:PrimaryAttack(vampire)
 	if not self.IsDeployed then return false end
-	if self:GetOwner():IsBot() and GetConVar("tf_bot_melee_only"):GetBool() then
-		self:GetOwner():SelectWeapon(self:GetOwner():GetWeapons()[3])
+	local owner = self:GetOwner()
+	local meleeOnly = GetConVar("tf_bot_melee_only")
+	if IsValid(owner) and owner:IsBot() and meleeOnly and meleeOnly:GetBool() then
+		owner:SelectWeapon(owner:GetWeapons()[3])
 		return
 	end
 	
