@@ -6,6 +6,7 @@ local cv_red_chase_blu = CreateConVar("tf_bot_red_chase_blu", "1", {FCVAR_ARCHIV
 local cv_red_collect_currency = CreateConVar("tf_bot_red_collect_currency", "1", {FCVAR_ARCHIVE, FCVAR_NOTIFY}, "When enabled, RED bots collect nearby MvM currency packs.")
 local cv_red_collect_currency_range = CreateConVar("tf_bot_red_collect_currency_range", "2400", {FCVAR_ARCHIVE, FCVAR_NOTIFY}, "Max range RED bots search for MvM currency packs.")
 local cv_red_respect_blu_spawn = CreateConVar("tf_bot_red_respect_blu_spawn", "1", {FCVAR_ARCHIVE, FCVAR_NOTIFY}, "RED bots ignore BLU bots while they are still in BLU spawn areas.")
+local computeSupportSpot
 
 local function getPos(ent)
 	if not IsValid(ent) then return nil end
@@ -637,7 +638,7 @@ local function nearestFriendlyBotToPos(teamNum, pos)
 	return best
 end
 
-local function computeSupportSpot(carrier, goal, bot)
+computeSupportSpot = function(carrier, goal, bot)
 	if not IsValid(carrier) or not IsValid(goal) or not IsValid(bot) then return nil end
 	local carrierPos = carrier:GetPos()
 	local goalPos = passtimeGoalPos(goal)

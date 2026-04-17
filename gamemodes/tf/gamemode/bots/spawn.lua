@@ -8,6 +8,95 @@ local CLASS_ALIASES = {
 	heavyweapons = "heavy",
 }
 
+local VALVE_RANDOM_BOT_NAMES = {
+	"Chucklenuts",
+	"CryBaby",
+	"WITCH",
+	"ThatGuy",
+	"Still Alive",
+	"Hat-Wearing MAN",
+	"Me",
+	"Numnutz",
+	"H@XX0RZ",
+	"The G-Man",
+	"Chell",
+	"The Combine",
+	"Totally Not A Bot",
+	"Pow!",
+	"Zepheniah Mann",
+	"THEM",
+	"LOS LOS LOS",
+	"10001011101",
+	"DeadHead",
+	"ZAWMBEEZ",
+	"MindlessElectrons",
+	"TAAAAANK!",
+	"The Freeman",
+	"Black Mesa",
+	"Soulless",
+	"CEDA",
+	"BeepBeepBoop",
+	"NotMe",
+	"CreditToTeam",
+	"BoomerBile",
+	"Someone Else",
+	"Mann Co.",
+	"Dog",
+	"Kaboom!",
+	"AmNot",
+	"0xDEADBEEF",
+	"HI THERE",
+	"SomeDude",
+	"GLaDOS",
+	"Hostage",
+	"Headful of Eyeballs",
+	"CrySomeMore",
+	"Aperture Science Prototype XR7",
+	"Humans Are Weak",
+	"AimBot",
+	"C++",
+	"GutsAndGlory!",
+	"Nobody",
+	"Saxton Hale",
+	"RageQuit",
+	"Screamin' Eagles",
+	"Ze Ubermensch",
+	"Maggot",
+	"CRITRAWKETS",
+	"Herr Doktor",
+	"Gentlemanne of Leisure",
+	"Companion Cube",
+	"Target Practice",
+	"One-Man Cheeseburger Apocalypse",
+	"Crowbar",
+	"Delicious Cake",
+	"IvanTheSpaceBiker",
+	"I LIVE!",
+	"Cannon Fodder",
+	"trigger_hurt",
+	"Nom Nom Nom",
+	"Divide by Zero",
+	"GENTLE MANNE of LEISURE",
+	"MoreGun",
+	"Tiny Baby Man",
+	"Big Mean Muther Hubbard",
+	"Force of Nature",
+	"Crazed Gunman",
+	"Grim Bloody Fable",
+	"Poopy Joe",
+	"A Professional With Standards",
+	"Freakin' Unbelievable",
+	"SMELLY UNFORTUNATE",
+	"The Administrator",
+	"Mentlegen",
+	"Archimedes!",
+	"Ribs Grow Back",
+	"It's Filthy in There!",
+	"Mega Baboon",
+	"Kill Me",
+	"Glorified Toaster with Legs",
+}
+
 local function normalize_class(className)
 	local key = string.lower(string.Trim(tostring(className or "scout")))
 	return CLASS_ALIASES[key] or key
@@ -32,14 +121,37 @@ local function normalize_team(teamNum)
 	return get_red_team()
 end
 
-function M:GetNextBotName()
-	if isfunction(GetNextBotName) then
-		local name = string.Trim(tostring(GetNextBotName() or ""))
-		if name ~= "" then
-			return name
-		end
+function M:GetNextRandomValveBotName()
+	if not self._nextValveNameIndex then
+		self._nextValveNameIndex = math.random(#VALVE_RANDOM_BOT_NAMES)
 	end
-	return "TFBot"
+
+	local name = VALVE_RANDOM_BOT_NAMES[self._nextValveNameIndex]
+	self._nextValveNameIndex = self._nextValveNameIndex + 1
+	if self._nextValveNameIndex > #VALVE_RANDOM_BOT_NAMES then
+		self._nextValveNameIndex = 1
+	end
+
+	return name or "TFBot"
+end
+
+local function difficulty_to_prefix(difficulty)
+	local key = string.lower(string.Trim(tostring(difficulty or "normal")))
+	if key == "easy" then return "Easy " end
+	if key == "normal" then return "Normal " end
+	if key == "hard" then return "Hard " end
+	if key == "expert" then return "Expert " end
+	return ""
+end
+
+function M:GetNextBotName(options)
+	local baseName = self:GetNextRandomValveBotName()
+	local cfg = TFBots.Config
+	if cfg and cfg.ShouldPrefixNameWithDifficulty and cfg:ShouldPrefixNameWithDifficulty() then
+		local difficulty = istable(options) and options.difficulty or nil
+		return difficulty_to_prefix(difficulty) .. baseName
+	end
+	return baseName
 end
 
 local function resolve_spawn_transform(bot, teamNum, className, spawnPos, spawnAng, options)
@@ -140,7 +252,7 @@ function M:CreateBot(name, teamNum, className, spawnPos, spawnAng, options)
 
 	local botName = string.Trim(tostring(name or ""))
 	if botName == "" then
-		botName = self:GetNextBotName()
+		botName = self:GetNextBotName(options)
 	end
 
 	local requestedBackend = istable(options) and string.lower(tostring(options.backend or "")) or ""

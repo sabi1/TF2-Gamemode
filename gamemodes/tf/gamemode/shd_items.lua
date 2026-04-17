@@ -885,7 +885,9 @@ function META:GiveItem(itemname, properties)
 	elseif (self:GetPlayerClass() == "spy" && class == "saxxy") then
 		class = "tf_weapon_knife"
 	end 
-	if scripted_ents.GetStored(class) then
+	if weapons.GetStored(class) then
+		weapon = self:Give(class)
+	elseif scripted_ents.GetStored(class) then
 		weapon = ents.Create(class)
 		weapon.Owner = self
 		weapon:SetOwner(self)

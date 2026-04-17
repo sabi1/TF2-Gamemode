@@ -92,10 +92,10 @@ end
 local function findPatient(bot, currentPatient)
 	local best = currentPatient
 	local bestScore = IsValid(currentPatient) and patientPriorityScore(bot, currentPatient, currentPatient) or -math.huge
-	local base = TFBotValveAI and TFBotValveAI.Base
-	local candidates = (base and base.GetManagedAgents and base:GetManagedAgents()) or player.GetBots()
+	local world = TFBotValveAI and TFBotValveAI.World or nil
+	local candidates = (world and world.GetAlivePlayersForTeam and world:GetAlivePlayersForTeam(bot:Team())) or player.GetAll()
 	for _, ply in ipairs(candidates) do
-		if not IsValid(ply) or not ply:Alive() then continue end
+		if not IsValid(ply) or not ply:IsPlayer() or not ply:Alive() then continue end
 		if ply:EntIndex() == bot:EntIndex() then continue end
 		if not ply:IsFriendly(bot) then continue end
 		local score = patientPriorityScore(bot, ply, currentPatient)

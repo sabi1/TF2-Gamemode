@@ -71,7 +71,8 @@ function M:Score(bot, target)
 	end
 	local dist = bot:GetPos():Distance(target:GetPos())
 	local score = 0
-	local visible = bot:Visible(target)
+	local vision = TFBotValveAI and TFBotValveAI.Vision or nil
+	local visible = vision and vision.HasLineOfSight and vision:HasLineOfSight(bot, target) or bot:Visible(target)
 
 	if target.GetClass and target:GetClass() == "obj_sentrygun" and dist <= 1100 then
 		score = score + 5000

@@ -8,12 +8,44 @@ local function is_mvm_mode()
 	return GAMEMODE and GAMEMODE.IsMannVsMachineMode and GAMEMODE:IsMannVsMachineMode()
 end
 
-local function get_flag_to_fetch()
-	for _, cls in ipairs({"item_teamflag_mvm", "item_teamflag"}) do
-		for _, ent in ipairs(ents.FindByClass(cls)) do
+local function is_ctf_mode()
+	return not is_mvm_mode()
+end
+
+local function get_flag_team(flag)
+	if not IsValid(flag) then return TEAM_UNASSIGNED or 0 end
+	if flag.GetNWInt then
+		local teamNum = tonumber(flag:GetNWInt("FlagTeamNum", -1) or -1) or -1
+		if teamNum >= 0 then
+			return teamNum
+		end
+	end
+	if flag.TeamNum ~= nil then
+		return tonumber(flag.TeamNum) or TEAM_UNASSIGNED or 0
+	end
+	if flag.GetTeamNumber then
+		local ok, teamNum = pcall(flag.GetTeamNumber, flag)
+		if ok then
+			return tonumber(teamNum) or TEAM_UNASSIGNED or 0
+		end
+	end
+	return TEAM_UNASSIGNED or 0
+end
+
+local function get_flag_to_fetch(bot)
+	if is_mvm_mode() then
+		for _, ent in ipairs(ents.FindByClass("item_teamflag_mvm")) do
 			if IsValid(ent) then
 				return ent
 			end
+		end
+		return nil
+	end
+
+	if not IsValid(bot) then return nil end
+	for _, ent in ipairs(ents.FindByClass("item_teamflag")) do
+		if IsValid(ent) and get_flag_team(ent) ~= bot:Team() then
+			return ent
 		end
 	end
 	return nil
@@ -102,7 +134,7 @@ end
 
 function M:Update(bot, st, profile)
 	if not (IsValid(bot) and st) then return false end
-	local flag = get_flag_to_fetch()
+	local flag = get_flag_to_fetch(bot)
 	if not IsValid(flag) then
 		if is_mvm_mode() and TFBotSource.Actions.AttackFlagDefenders and TFBotSource.Actions.AttackFlagDefenders.Update then
 			return TFBotSource.Actions.AttackFlagDefenders:Update(bot, st, profile)
@@ -129,6 +161,9 @@ function M:Update(bot, st, profile)
 	end
 
 	if IsValid(carrier) and carrier ~= bot then
+		if is_ctf_mode() and carrier:Team() == bot:Team() and TFBotSource.Actions.EscortFlagCarrier and TFBotSource.Actions.EscortFlagCarrier.Update then
+			return TFBotSource.Actions.EscortFlagCarrier:Update(bot, st, profile)
+		end
 		if TFBotSource.Actions.AttackFlagDefenders and TFBotSource.Actions.AttackFlagDefenders.Update then
 			return TFBotSource.Actions.AttackFlagDefenders:Update(bot, st, profile)
 		end

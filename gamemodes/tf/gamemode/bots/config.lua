@@ -12,6 +12,7 @@ M.cv_debug = CreateConVar("tf_bot_manager_debug", "0", {FCVAR_ARCHIVE, FCVAR_NOT
 -- Matches TF2's tf_bot_melee_only server cvar so bot weapon code can safely
 -- query melee-only restrictions even after the legacy bot module removal.
 M.cv_melee_only = CreateConVar("tf_bot_melee_only", "0", {FCVAR_ARCHIVE, FCVAR_NOTIFY}, "If nonzero, TFBots will only use melee weapons.")
+M.cv_prefix_name_with_difficulty = CreateConVar("tf_bot_prefix_name_with_difficulty", "0", {FCVAR_ARCHIVE, FCVAR_NOTIFY}, "Append the skill level of the bot to the bot's name.")
 
 function M:IsEnabled()
 	return self.cv_enable:GetBool()
@@ -45,6 +46,10 @@ end
 
 function M:IsMeleeOnly()
 	return self.cv_melee_only:GetBool()
+end
+
+function M:ShouldPrefixNameWithDifficulty()
+	return self.cv_prefix_name_with_difficulty:GetBool()
 end
 
 function M:SetQuotaTarget(value)

@@ -13,6 +13,9 @@ local navBudget = {
 	used = 0,
 }
 
+local CONTENTS_WINDOW_MASK = rawget(_G, "CONTENTS_WINDOW") or 2
+local PLAYER_SOLID_WITH_WINDOWS = bit.bor(rawget(_G, "MASK_PLAYERSOLID") or 0, CONTENTS_WINDOW_MASK)
+
 local function fmtVec(v)
 	if not isvector(v) then return "nil" end
 	return string.format("(%.0f %.0f %.0f)", v.x, v.y, v.z)
@@ -116,12 +119,35 @@ local function shouldForceJumpAtObstacle(bot, targetAng)
 		start = startPos,
 		endpos = startPos + targetAng:Forward() * 42,
 		filter = bot,
-		mask = MASK_PLAYERSOLID,
+		mask = PLAYER_SOLID_WITH_WINDOWS,
 		mins = Vector(-16, -16, 0),
 		maxs = Vector(16, 16, 48),
 	})
 	if not tr.Hit then return false end
 	return tr.HitNormal.z <= 0.65
+end
+
+local function isDoorEntity(ent)
+	if not IsValid(ent) then return false end
+	local class = string.lower(tostring(ent:GetClass() or ""))
+	return string.find(class, "prop_door", 1, true) ~= nil
+		or string.find(class, "func_door", 1, true) ~= nil
+end
+
+local function isBreakableObstacle(ent)
+	if not IsValid(ent) then return false end
+	local class = string.lower(tostring(ent:GetClass() or ""))
+	if class == "func_breakable" or class == "func_breakable_surf" then
+		return true
+	end
+	if string.find(class, "breakable", 1, true) ~= nil then
+		return true
+	end
+	if (string.find(class, "prop_physics", 1, true) ~= nil or string.find(class, "func_physbox", 1, true) ~= nil)
+		and ent.Health and tonumber(ent:Health() or 0) > 0 then
+		return true
+	end
+	return false
 end
 
 local function isDynamicBarricadeEntity(ent)
@@ -139,21 +165,57 @@ local function isDynamicBarricadeEntity(ent)
 	return false
 end
 
-local function traceDynamicBarricadeAhead(bot, targetAng)
+local function traceObstacleAhead(bot, targetAng, distance, height)
 	if not IsValid(bot) then return nil end
-	local startPos = bot:GetPos() + Vector(0, 0, 18)
 	local tr = util.TraceHull({
-		start = startPos,
-		endpos = startPos + targetAng:Forward() * 56,
+		start = bot:GetPos() + Vector(0, 0, tonumber(height) or 18),
+		endpos = bot:GetPos() + Vector(0, 0, tonumber(height) or 18) + targetAng:Forward() * (tonumber(distance) or 56),
 		filter = bot,
-		mask = MASK_PLAYERSOLID,
+		mask = PLAYER_SOLID_WITH_WINDOWS,
 		mins = Vector(-16, -16, 0),
 		maxs = Vector(16, 16, 56),
 	})
-	if not tr.Hit or not isDynamicBarricadeEntity(tr.Entity) then
-		return nil
+	if not tr.Hit then return nil end
+
+	local ent = tr.Entity
+	if IsValid(ent) then
+		if ent:IsPlayer() or ent:IsNPC() then
+			return nil
+		end
+		if isDoorEntity(ent) then
+			return {
+				kind = "door",
+				ent = ent,
+				trace = tr,
+			}
+		end
+		if isBreakableObstacle(ent) then
+			return {
+				kind = "breakable",
+				ent = ent,
+				trace = tr,
+			}
+		end
+		if isDynamicBarricadeEntity(ent) then
+			return {
+				kind = "barricade",
+				ent = ent,
+				trace = tr,
+			}
+		end
 	end
-	return tr.Entity, tr
+
+	return {
+		kind = "solid",
+		ent = ent,
+		trace = tr,
+	}
+end
+
+local function traceDynamicBarricadeAhead(bot, targetAng)
+	local obstacle = traceObstacleAhead(bot, targetAng, 56, 18)
+	if not obstacle or obstacle.kind ~= "barricade" then return nil end
+	return obstacle.ent, obstacle.trace
 end
 
 local resetPathState
@@ -199,7 +261,7 @@ local function traceHitsSpecificBlocker(bot, startPos, endPos, blocker)
 		start = startPos,
 		endpos = endPos,
 		filter = bot,
-		mask = MASK_PLAYERSOLID,
+		mask = PLAYER_SOLID_WITH_WINDOWS,
 		mins = Vector(-16, -16, 0),
 		maxs = Vector(16, 16, 56),
 	})
@@ -398,6 +460,12 @@ local function clearBarricadeState(st)
 	st.path.blockedTargetPos = nil
 end
 
+local function clearBreakableState(st)
+	st.path.breakableEntIndex = -1
+	st.path.breakableUntil = 0
+	st.path.breakableTargetPos = nil
+end
+
 local function isBarricadeStillBlocking(bot, st, targetPos)
 	if not (IsValid(bot) and st and st.path) then return false end
 	local entIndex = tonumber(st.path.blockerEntIndex or -1)
@@ -455,6 +523,84 @@ local function applyBarricadeHold(bot, cmd, st, now)
 	cmd:SetForwardMove(220)
 	cmd:SetSideMove(0)
 	cmd:RemoveKey(IN_JUMP)
+	return true
+end
+
+local function startStaticObstacleAvoid(bot, st, trace, now, targetPos)
+	if not (IsValid(bot) and st and st.path and trace and trace.HitNormal) then return end
+	local normal = Vector(trace.HitNormal.x, trace.HitNormal.y, 0)
+	if normal:LengthSqr() <= 0.001 then
+		normal = -bot:GetForward()
+		normal.z = 0
+	end
+	normal:Normalize()
+
+	local lateral = Vector(-normal.y, normal.x, 0)
+	local toTarget = isvector(targetPos) and (targetPos - bot:GetPos()) or bot:GetForward()
+	toTarget.z = 0
+	local sideSign = (toTarget:Dot(lateral) >= 0) and 1 or -1
+	local detourPos = bot:GetPos() + normal * 42 + lateral * (sideSign * 96)
+	detourPos.z = bot:GetPos().z
+
+	st.path.blockerEntIndex = IsValid(trace.Entity) and trace.Entity:EntIndex() or -1
+	st.path.blockerClass = trace.HitWorld and "world" or tostring(IsValid(trace.Entity) and trace.Entity:GetClass() or "solid")
+	st.path.blockerHits = tonumber(st.path.blockerHits or 0) + 1
+	st.path.blockedUntil = now + 0.55
+	st.path.blockedTargetPos = detourPos
+	st.path.nextRepath = 0
+	st.path.route = nil
+	resetPathState(st)
+	debugLog(bot, "path_blocked_solid", 0.35, string.format(
+		"blocked=solid class=%s hitpos=%s detour=%s target=%s",
+		tostring(st.path.blockerClass),
+		fmtVec(trace.HitPos),
+		fmtVec(detourPos),
+		fmtVec(targetPos)
+	))
+end
+
+local function startBreakablePush(bot, st, obstacle, now)
+	if not (IsValid(bot) and st and st.path and obstacle and IsValid(obstacle.ent)) then return end
+	st.path.breakableEntIndex = obstacle.ent:EntIndex()
+	st.path.breakableUntil = now + 1.2
+	st.path.breakableTargetPos = getEntGoalPos(obstacle.ent, obstacle.trace and obstacle.trace.HitPos or obstacle.ent:GetPos())
+end
+
+local function applyBreakablePush(bot, cmd, st, now)
+	if now >= tonumber(st.path.breakableUntil or 0) then
+		clearBreakableState(st)
+		return false
+	end
+
+	local entIndex = tonumber(st.path.breakableEntIndex or -1)
+	if entIndex < 0 then
+		clearBreakableState(st)
+		return false
+	end
+
+	local blocker = Entity(entIndex)
+	if not IsValid(blocker) then
+		clearBreakableState(st)
+		return false
+	end
+
+	local aimPos = getEntGoalPos(blocker, st.path.breakableTargetPos)
+	if not isvector(aimPos) then
+		clearBreakableState(st)
+		return false
+	end
+
+	local dir = aimPos - bot:GetPos()
+	dir.z = 0
+	if dir:LengthSqr() <= (42 * 42) then
+		cmd:SetForwardMove(0)
+	else
+		cmd:SetForwardMove(120)
+	end
+	cmd:SetSideMove(0)
+	if dir:LengthSqr() > 0.001 then
+		cmd:SetViewAngles(dir:GetNormalized():Angle())
+	end
 	return true
 end
 
@@ -909,6 +1055,10 @@ function M:Drive(bot, cmd, state)
 	state.path.lastRepathTry = state.path.lastRepathTry or 0
 	state.path.nextRepath = state.path.nextRepath or 0
 
+	if applyBreakablePush(bot, cmd, state, now) then
+		return
+	end
+
 	if applyBarricadeHold(bot, cmd, state, now) then
 		return
 	end
@@ -932,13 +1082,29 @@ function M:Drive(bot, cmd, state)
 		local ang = dir:GetNormalized():Angle()
 		local failCount = tonumber(state.path.consecutiveBuildFails or 0)
 		local probeSpeed = math.max(60, cv_no_route_probe_speed:GetFloat())
-		local blockerEnt = traceDynamicBarricadeAhead(bot, ang)
-		if IsValid(blockerEnt) then
-			startBarricadeHold(bot, state, blockerEnt, now, targetPos)
-			cmd:SetForwardMove(-40)
-			cmd:SetSideMove(0)
-			cmd:RemoveKey(IN_JUMP)
-			return
+		local obstacle = traceObstacleAhead(bot, ang, 56, 18)
+		if obstacle then
+			if obstacle.kind == "barricade" and IsValid(obstacle.ent) then
+				startBarricadeHold(bot, state, obstacle.ent, now, targetPos)
+				cmd:SetForwardMove(-40)
+				cmd:SetSideMove(0)
+				cmd:RemoveKey(IN_JUMP)
+				return
+			end
+			if obstacle.kind == "breakable" then
+				startBreakablePush(bot, state, obstacle, now)
+				cmd:SetForwardMove(80)
+				cmd:SetSideMove(0)
+				cmd:SetViewAngles(ang)
+				return
+			end
+			if obstacle.kind == "solid" then
+				startStaticObstacleAvoid(bot, state, obstacle.trace, now, targetPos)
+				cmd:SetForwardMove(0)
+				cmd:SetSideMove(0)
+				cmd:RemoveKey(IN_JUMP)
+				return
+			end
 		end
 		cmd:SetForwardMove((failCount >= 2) and (probeSpeed * 0.5) or probeSpeed)
 		if failCount >= 2 then
@@ -984,6 +1150,22 @@ function M:Drive(bot, cmd, state)
 	local toSteer = steerPos - bot:GetPos()
 	local targetAng = toSteer:GetNormalized():Angle()
 	local distToArea = toSteer:Length()
+
+	local obstacle = traceObstacleAhead(bot, targetAng, 52, 18)
+	if obstacle then
+		if obstacle.kind == "breakable" then
+			startBreakablePush(bot, state, obstacle, now)
+			cmd:SetForwardMove(80)
+			cmd:SetViewAngles(targetAng)
+			return
+		end
+		if obstacle.kind == "solid" then
+			startStaticObstacleAvoid(bot, state, obstacle.trace, now, targetPos)
+			cmd:SetForwardMove(0)
+			cmd:SetSideMove(0)
+			return
+		end
+	end
 
 	if progressMonitor(bot, cmd, state, distToArea, targetPos) then
 		return

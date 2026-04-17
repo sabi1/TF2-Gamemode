@@ -10,6 +10,63 @@ local cv_lost = CreateConVar("tf_bot_target_lost_time", "1.25", {FCVAR_ARCHIVE, 
 local cv_mvm_scan_min = CreateConVar("tf_bot_mvm_scan_interval_min", "0.90", {FCVAR_ARCHIVE, FCVAR_NOTIFY}, "Minimum MvM scan interval (mirrors TF2 perf-throttled robot vision cadence).")
 local cv_mvm_scan_max = CreateConVar("tf_bot_mvm_scan_interval_max", "1.10", {FCVAR_ARCHIVE, FCVAR_NOTIFY}, "Maximum MvM scan interval (mirrors TF2 perf-throttled robot vision cadence).")
 
+local CONTENTS_WINDOW_MASK = rawget(_G, "CONTENTS_WINDOW") or 2
+local DEFAULT_LOS_MASK = bit.bor(rawget(_G, "MASK_BLOCKLOS_AND_NPCS") or rawget(_G, "MASK_BLOCKLOS") or rawget(_G, "MASK_SOLID") or 0, CONTENTS_WINDOW_MASK)
+local MEDIC_LOS_MASK = bit.bor(rawget(_G, "MASK_SOLID") or rawget(_G, "MASK_BLOCKLOS") or 0, CONTENTS_WINDOW_MASK)
+
+local function getTargetPoints(target)
+	local points = {}
+	if not IsValid(target) then return points end
+
+	if target.WorldSpaceCenter then
+		local ok, pos = pcall(target.WorldSpaceCenter, target)
+		if ok and isvector(pos) then
+			points[#points + 1] = pos
+		end
+	end
+	if target.EyePos then
+		local ok, pos = pcall(target.EyePos, target)
+		if ok and isvector(pos) then
+			points[#points + 1] = pos
+		end
+	end
+	if target.GetPos then
+		local ok, pos = pcall(target.GetPos, target)
+		if ok and isvector(pos) then
+			points[#points + 1] = pos
+		end
+	end
+	return points
+end
+
+function M:HasLineOfSight(bot, target, mask)
+	if not (IsValid(bot) and IsValid(target)) then return false end
+	local startPos = (bot.GetShootPos and bot:GetShootPos()) or (bot.EyePos and bot:EyePos()) or bot:GetPos()
+	local useMask = tonumber(mask) or DEFAULT_LOS_MASK
+	local active = IsValid(bot.GetActiveWeapon and bot:GetActiveWeapon()) and bot:GetActiveWeapon() or nil
+	local filter = function(ent)
+		return ent == bot or ent == active or ent == bot.ControllerBot
+	end
+
+	for _, point in ipairs(getTargetPoints(target)) do
+		local tr = util.TraceLine({
+			start = startPos,
+			endpos = point,
+			filter = filter,
+			mask = useMask,
+		})
+		if not tr.Hit or tr.Entity == target then
+			return true
+		end
+	end
+
+	return false
+end
+
+function M:GetMedicLOSModeMask()
+	return MEDIC_LOS_MASK
+end
+
 local function isValidTarget(bot, target)
 	if not IsValid(bot) or not IsValid(target) then return false end
 	if target:EntIndex() == bot:EntIndex() then return false end
@@ -77,7 +134,7 @@ function M:CanTrack(bot, state, target, now)
 		end
 	end
 	if distance > limit then return false end
-	local visible = bot:Visible(target)
+	local visible = self:HasLineOfSight(bot, target)
 	local info = self:UpdateMemory(bot, state, target, visible, now)
 	if visible then
 		return info.recognized == true

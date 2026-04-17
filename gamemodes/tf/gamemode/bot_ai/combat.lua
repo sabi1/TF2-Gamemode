@@ -284,8 +284,10 @@ local function tryHandleMedicHealing(bot, cmd, state)
 	bot:SetEyeAngles(lookAng)
 
 	local dist = bot:GetPos():Distance(healTarget:GetPos())
+	local vision = TFBotValveAI and TFBotValveAI.Vision or nil
+	local hasHealLOS = vision and vision.HasLineOfSight and vision:HasLineOfSight(bot, healTarget, vision:GetMedicLOSModeMask()) or bot:Visible(healTarget)
 	local inRange = dist <= math.max(cv_melee_engage_dist:GetFloat(), 600)
-	if inRange and bot:Visible(healTarget) then
+	if inRange and hasHealLOS then
 		cmd:SetButtons(bit.bor(cmd:GetButtons(), IN_ATTACK))
 	else
 		cmd:RemoveKey(IN_ATTACK)
@@ -405,6 +407,54 @@ local function chooseWeapon(bot, threat, state)
 	}
 end
 
+local function clearBreakablePathTarget(state)
+	if not state or not state.path then return end
+	state.path.breakableEntIndex = -1
+	state.path.breakableUntil = 0
+	state.path.breakableTargetPos = nil
+end
+
+local function tryAttackPathBreakable(bot, cmd, state)
+	if not (IsValid(bot) and state and state.path) then return false end
+
+	local untilAt = tonumber(state.path.breakableUntil or 0)
+	if untilAt <= 0 or CurTime() >= untilAt then
+		clearBreakablePathTarget(state)
+		return false
+	end
+
+	local entIndex = tonumber(state.path.breakableEntIndex or -1)
+	if entIndex < 0 then
+		clearBreakablePathTarget(state)
+		return false
+	end
+
+	local obstacle = Entity(entIndex)
+	if not IsValid(obstacle) then
+		clearBreakablePathTarget(state)
+		return false
+	end
+
+	local aimPos = obstacle.WorldSpaceCenter and obstacle:WorldSpaceCenter() or obstacle:GetPos()
+	if not isvector(aimPos) then
+		clearBreakablePathTarget(state)
+		return false
+	end
+
+	local selected = chooseWeapon(bot, obstacle, state)
+	local active = bot:GetActiveWeapon()
+	if not IsValid(active) and wepValid(selected) then
+		active = selected
+	end
+
+	local lookAng = (aimPos - bot:GetShootPos()):Angle()
+	cmd:SetViewAngles(lookAng)
+	bot:SetEyeAngles(lookAng)
+	cmd:SetButtons(bit.bor(cmd:GetButtons(), IN_ATTACK))
+	cmd:RemoveKey(IN_ATTACK2)
+	return true
+end
+
 function M:Update(bot, cmd, state)
 	if not IsValid(bot) or not state or not bot:Alive() then return end
 	if handlePasstimeCarrier(bot, cmd, state) then
@@ -417,6 +467,9 @@ function M:Update(bot, cmd, state)
 		return
 	end
 	if bot.TF_MVM_SuppressFire or bot.NoAttack then
+		return
+	end
+	if tryAttackPathBreakable(bot, cmd, state) then
 		return
 	end
 	local mvm = TFBotValveAI.MvM
@@ -531,7 +584,8 @@ function M:Update(bot, cmd, state)
 	end
 
 	local inRange = dist <= desiredRange * 1.1
-	local los = bot:Visible(threat)
+	local vision = TFBotValveAI and TFBotValveAI.Vision or nil
+	local los = vision and vision.HasLineOfSight and vision:HasLineOfSight(bot, threat) or bot:Visible(threat)
 
 	-- Source-style pursuit: keep pushing to LOS/desired range while fighting.
 	if ((not los) or (not inRange)) and not sourceManagedMode then
@@ -551,7 +605,7 @@ function M:Update(bot, cmd, state)
 		cmd:SetSideMove(seed == 0 and 220 or -220)
 	end
 
-	local shouldAttack = dist <= 2200 and bot:Visible(threat)
+	local shouldAttack = dist <= 2200 and los
 	if objectiveMode == "melee_attack" or objectiveMode == "spy_attack_knife" then
 		shouldAttack = shouldAttack and dist <= math.max(cv_melee_engage_dist:GetFloat(), 115)
 	end
@@ -560,7 +614,7 @@ function M:Update(bot, cmd, state)
 		shouldAttack = shouldAttack and dist <= 700
 	end
 	if bot.TF_MVM_AlwaysFireWeapon then
-		shouldAttack = bot:Visible(threat)
+		shouldAttack = los
 	end
 	if shouldAttack then
 		cmd:SetButtons(bit.bor(cmd:GetButtons(), IN_ATTACK))

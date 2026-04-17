@@ -19,17 +19,6 @@ local function world_center(ent)
 	return ent.GetPos and ent:GetPos() or nil
 end
 
-local function get_flag_to_deliver()
-	for _, cls in ipairs({"item_teamflag_mvm", "item_teamflag"}) do
-		for _, ent in ipairs(ents.FindByClass(cls)) do
-			if IsValid(ent) then
-				return ent
-			end
-		end
-	end
-	return nil
-end
-
 local function get_flag_carrier(flag)
 	if not IsValid(flag) then return nil end
 	if IsValid(flag.Carrier) then
@@ -51,6 +40,25 @@ local function get_flag_carrier(flag)
 		local ok, owner = pcall(flag.GetOwner, flag)
 		if ok and IsValid(owner) then
 			return owner
+		end
+	end
+	return nil
+end
+
+local function get_flag_to_deliver(bot)
+	if is_mvm_mode() then
+		for _, ent in ipairs(ents.FindByClass("item_teamflag_mvm")) do
+			if IsValid(ent) then
+				return ent
+			end
+		end
+		return nil
+	end
+
+	if not IsValid(bot) then return nil end
+	for _, ent in ipairs(ents.FindByClass("item_teamflag")) do
+		if IsValid(ent) and get_flag_carrier(ent) == bot then
+			return ent
 		end
 	end
 	return nil
@@ -118,7 +126,7 @@ end
 function M:Update(bot, st, profile)
 	if not (IsValid(bot) and st) then return false end
 
-	local flag = get_flag_to_deliver()
+	local flag = get_flag_to_deliver(bot)
 	if not IsValid(flag) then
 		return TFBotSource.Actions.SeekAndDestroy:Update(bot, st, profile)
 	end

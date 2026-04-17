@@ -9,6 +9,68 @@ local function get_red_team()
 	return rawget(_G, "TEAM_RED") or 2
 end
 
+local function get_blu_team()
+	return rawget(_G, "TEAM_BLU") or 3
+end
+
+local AVAILABLE_CLASSES = {
+	"scout",
+	"sniper",
+	"soldier",
+	"demoman",
+	"medic",
+	"heavy",
+	"pyro",
+	"spy",
+	"engineer",
+}
+
+local CLASS_NAMES = {
+	scout = true,
+	sniper = true,
+	soldier = true,
+	demoman = true,
+	medic = true,
+	heavy = true,
+	pyro = true,
+	spy = true,
+	engineer = true,
+	demo = "demoman",
+	heavyweapons = "heavy",
+}
+
+local function normalize_class(className)
+	local lower = string.lower(string.Trim(tostring(className or "scout")))
+	local resolved = CLASS_NAMES[lower]
+	if resolved == true then
+		return lower
+	end
+	if isstring(resolved) then
+		return resolved
+	end
+	return "scout"
+end
+
+local function pick_quota_team()
+	local redCount = #team.GetPlayers(get_red_team())
+	local bluCount = #team.GetPlayers(get_blu_team())
+	if bluCount < redCount then
+		return get_blu_team()
+	end
+	return get_red_team()
+end
+
+local function pick_quota_class()
+	local forcedClass = GetConVar("tf_bot_force_class")
+	if forcedClass then
+		local forced = string.Trim(tostring(forcedClass:GetString() or ""))
+		if forced ~= "" then
+			return normalize_class(forced)
+		end
+	end
+	return table.Random(AVAILABLE_CLASSES)
+end
+
 local function get_owned_bots()
 	return (TFBots.Registry and TFBots.Registry:GetOwnedBots()) or {}
 end
@@ -25,7 +87,8 @@ function M:EnforceQuota()
 	if current < target then
 		local toSpawn = math.min(target - current, 2)
 		for _ = 1, toSpawn do
-			spawn:CreateBot(nil, get_red_team(), "scout", nil, nil, {
+			spawn:CreateBot(nil, pick_quota_team(), pick_quota_class(), nil, nil, {
+				useTeamSpawn = true,
 				TFBotQuotaOwned = true,
 			})
 		end
