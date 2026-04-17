@@ -8,6 +8,8 @@ local cv_mvm_anchor_bias = CreateConVar("tf_bot_mvm_anchor_bias", "1", {FCVAR_AR
 local cv_hard_recover = CreateConVar("tf_bot_hard_recover_enable", "0", {FCVAR_ARCHIVE, FCVAR_NOTIFY}, "Deprecated. Teleport-based stuck recovery is disabled to avoid bots warping through walls.")
 local cv_stuck_backoff = CreateConVar("tf_bot_stuck_backoff_time", "0.45", {FCVAR_ARCHIVE, FCVAR_NOTIFY}, "How long bots use a gentle non-teleport unstuck shim after repeated wall/path stalls.")
 local cv_no_route_probe_speed = CreateConVar("tf_bot_no_route_probe_speed", "140", {FCVAR_ARCHIVE, FCVAR_NOTIFY}, "Forward speed used when a bot has no route and is probing for a valid path.")
+local cv_path_lookahead = CreateConVar("tf_bot_path_lookahead_range", "300", {FCVAR_ARCHIVE, FCVAR_NOTIFY}, "Valve-style path lookahead range used to smooth bot movement.")
+local cv_goal_tolerance = CreateConVar("tf_bot_goal_tolerance", "25", {FCVAR_ARCHIVE, FCVAR_NOTIFY}, "Valve-style 2D tolerance for reaching the current path goal.")
 local navBudget = {
 	window = 0,
 	used = 0,
@@ -95,6 +97,42 @@ local function getNearestAreaForTeam(pos, team)
 	local area = navmesh.GetNearestNavArea(pos, true, 10000, true, true, team)
 	if IsValid(area) then return area end
 	return navmesh.GetNearestNavArea(pos, true, 10000, true, true)
+end
+
+local function isSetupOrSpawnExitArea(area)
+	if not IsValid(area) then return false end
+	return hasAreaTFAttribute(area, "spawn_room_exit")
+		or hasAreaTFAttribute(area, "blue_setup_gate")
+		or hasAreaTFAttribute(area, "red_setup_gate")
+end
+
+local function isAreaTeamBlocked(area, team)
+	if not IsValid(area) then return false end
+	if isSetupOrSpawnExitArea(area) then
+		return false
+	end
+
+	if area.IsBlocked then
+		local ok, blocked = pcall(area.IsBlocked, area, team)
+		if ok then
+			return blocked == true
+		end
+	end
+
+	if hasAreaTFAttribute(area, "unblockable") then
+		return false
+	end
+	if hasAreaTFAttribute(area, "blocked") then
+		return true
+	end
+	if team == TEAM_RED and hasAreaTFAttribute(area, "blue_one_way_door") then
+		return true
+	end
+	if (team == TEAM_BLU or team == TF_TEAM_PVE_INVADERS) and hasAreaTFAttribute(area, "red_one_way_door") then
+		return true
+	end
+
+	return false
 end
 
 local function getAreaSteerPos(area, fromPos, fallbackPos)
@@ -210,6 +248,370 @@ local function traceObstacleAhead(bot, targetAng, distance, height)
 		ent = ent,
 		trace = tr,
 	}
+end
+
+local function traceAvoidanceProbe(bot, startPos, forward, left, sideSign, distance)
+	local side = left * sideSign
+	local tr = util.TraceHull({
+		start = startPos + side * 12,
+		endpos = startPos + forward * (tonumber(distance) or 72) + side * 34,
+		filter = bot,
+		mask = PLAYER_SOLID_WITH_WINDOWS,
+		mins = Vector(-16, -16, 0),
+		maxs = Vector(16, 16, 56),
+	})
+
+	local blocked = tr.Hit
+	if blocked and IsValid(tr.Entity) and isDoorEntity(tr.Entity) then
+		blocked = false
+	end
+
+	return {
+		trace = tr,
+		blocked = blocked,
+	}
+end
+
+local function tryLocalAvoid(bot, cmd, targetAng, obstacle)
+	if not (IsValid(bot) and cmd and targetAng) then return false end
+
+	local forward = targetAng:Forward()
+	forward.z = 0
+	if forward:LengthSqr() <= 0.001 then return false end
+	forward:Normalize()
+
+	local left = Vector(-forward.y, forward.x, 0)
+	local startPos = bot:GetPos() + Vector(0, 0, 18)
+	local probeDistance = 72
+	if obstacle and obstacle.kind == "door" then
+		probeDistance = 60
+	end
+
+	local leftProbe = traceAvoidanceProbe(bot, startPos, forward, left, 1, probeDistance)
+	local rightProbe = traceAvoidanceProbe(bot, startPos, forward, left, -1, probeDistance)
+	if leftProbe.blocked and rightProbe.blocked then
+		return false
+	end
+
+	local sideSign
+	if not leftProbe.blocked and rightProbe.blocked then
+		sideSign = 1
+	elseif leftProbe.blocked and not rightProbe.blocked then
+		sideSign = -1
+	else
+		local pickLeft = false
+		if obstacle and obstacle.trace and obstacle.trace.HitNormal then
+			local obstacleLeft = Vector(-obstacle.trace.HitNormal.y, obstacle.trace.HitNormal.x, 0)
+			pickLeft = obstacleLeft:Dot(left) >= 0
+		else
+			pickLeft = (bot:EntIndex() % 2 == 0)
+		end
+		sideSign = pickLeft and 1 or -1
+	end
+
+	local avoidDir = (forward * 0.72) + (left * (0.52 * sideSign))
+	avoidDir.z = 0
+	if avoidDir:LengthSqr() <= 0.001 then return false end
+	avoidDir:Normalize()
+	local moveSpeed = math.max(
+		tonumber(bot.GetClassSpeed and bot:GetClassSpeed() or 0) or 0,
+		tonumber(bot.GetRunSpeed and bot:GetRunSpeed() or 0) or 0,
+		300
+	)
+
+	cmd:SetViewAngles(avoidDir:Angle())
+	cmd:SetForwardMove(moveSpeed * 0.72)
+	cmd:SetSideMove(moveSpeed * 0.82 * sideSign)
+	cmd:RemoveKey(IN_JUMP)
+	return true
+end
+
+local function canDirectTraverse(bot, fromPos, toPos)
+	if not (IsValid(bot) and isvector(fromPos) and isvector(toPos)) then return false end
+
+	local delta = toPos - fromPos
+	if delta:LengthSqr() <= (24 * 24) then
+		return true
+	end
+
+	local rise = toPos.z - fromPos.z
+	if rise > 24 then
+		return false
+	end
+
+	local tr = util.TraceHull({
+		start = fromPos + Vector(0, 0, 18),
+		endpos = toPos + Vector(0, 0, 18),
+		filter = bot,
+		mask = PLAYER_SOLID_WITH_WINDOWS,
+		mins = Vector(-16, -16, 0),
+		maxs = Vector(16, 16, 56),
+	})
+
+	if not tr.Hit then
+		return true
+	end
+
+	if IsValid(tr.Entity) and isDoorEntity(tr.Entity) then
+		return true
+	end
+
+	return false
+end
+
+local function getBotRunSpeed(bot)
+	if not IsValid(bot) then return 300 end
+	local classSpeed = tonumber(bot.GetClassSpeed and bot:GetClassSpeed() or 0) or 0
+	if classSpeed > 0 then return classSpeed end
+	local runSpeed = tonumber(bot.GetRunSpeed and bot:GetRunSpeed() or 0) or 0
+	if runSpeed > 0 then return runSpeed end
+	local classTable = bot.GetPlayerClassTable and bot:GetPlayerClassTable() or nil
+	local tableSpeed = tonumber(classTable and classTable.Speed or 0) or 0
+	if tableSpeed > 0 then return tableSpeed end
+	return 300
+end
+
+local function getBotWalkSpeed(bot)
+	if not IsValid(bot) then return 150 end
+	local walkSpeed = tonumber(bot.GetWalkSpeed and bot:GetWalkSpeed() or 0) or 0
+	if walkSpeed > 0 then return walkSpeed end
+	return math.max(100, getBotRunSpeed(bot) * 0.5)
+end
+
+local function computePathCurvature(bot, state, currentPos, steerPos, finalTargetPos)
+	if not (IsValid(bot) and state and state.path and isvector(currentPos) and isvector(steerPos)) then
+		return 0
+	end
+
+	local forward = steerPos - currentPos
+	forward.z = 0
+	if forward:LengthSqr() <= 1 then return 0 end
+	forward:Normalize()
+
+	local route = state.path.route
+	local nextArea = istable(route) and route[#route - 1] or nil
+	local nextPos = IsValid(nextArea) and getAreaSteerPos(nextArea, steerPos, finalTargetPos) or finalTargetPos
+	if not isvector(nextPos) then return 0 end
+
+	local onward = nextPos - steerPos
+	onward.z = 0
+	if onward:LengthSqr() <= 1 then return 0 end
+	onward:Normalize()
+
+	return math.Clamp(1 - math.Clamp(forward:Dot(onward), -1, 1), 0, 1)
+end
+
+local function applyMoveTowards(bot, cmd, goalPos, desiredSpeed)
+	if not (IsValid(bot) and cmd and isvector(goalPos)) then return end
+
+	local toGoal = goalPos - bot:GetPos()
+	toGoal.z = 0
+	if toGoal:LengthSqr() <= 1 then
+		cmd:SetForwardMove(0)
+		cmd:SetSideMove(0)
+		return
+	end
+
+	local targetAng = toGoal:GetNormalized():Angle()
+	local currentYaw = (bot:EyeAngles() or angle_zero).y
+	local yawDelta = math.NormalizeAngle(targetAng.y - currentYaw)
+	local absYaw = math.abs(yawDelta)
+
+	local speed = math.max(0, tonumber(desiredSpeed) or getBotRunSpeed(bot))
+	local turnScale = 1.0
+	if absYaw >= 85 then
+		turnScale = 0.35
+	elseif absYaw >= 55 then
+		turnScale = 0.58
+	elseif absYaw >= 25 then
+		turnScale = 0.82
+	end
+
+	local forwardMove = speed * turnScale
+	local sideMove = 0
+	if absYaw >= 6 then
+		sideMove = math.Clamp((yawDelta / 90) * speed, -speed, speed)
+	end
+
+	cmd:SetViewAngles(targetAng)
+	cmd:SetForwardMove(forwardMove)
+	cmd:SetSideMove(sideMove)
+end
+
+local function skipRedundantRouteAreas(bot, state, currentArea, targetPos)
+	if not (IsValid(bot) and state and state.path and istable(state.path.route)) then return false end
+	if #state.path.route < 2 or not IsValid(state.path.targetArea) then return false end
+
+	local myPos = bot:GetPos()
+	local lookAheadRange = math.max(72, 52 * bot:GetModelScale())
+	local changed = false
+
+	while #state.path.route >= 2 and IsValid(state.path.targetArea) do
+		local steerPos = getAreaSteerPos(state.path.targetArea, myPos, targetPos)
+		if myPos:DistToSqr(steerPos) > (lookAheadRange * lookAheadRange) then
+			break
+		end
+
+		local nextArea = state.path.route[#state.path.route - 1]
+		if not IsValid(nextArea) then
+			break
+		end
+
+		local nextPos = getAreaSteerPos(nextArea, myPos, targetPos)
+		local dz = nextPos.z - myPos.z
+		if dz > 18 then
+			break
+		end
+
+		if currentArea and currentArea.HasAttributes and currentArea:HasAttributes(NAV_MESH_STAIRS) then
+			break
+		end
+
+		if not canDirectTraverse(bot, myPos, nextPos) then
+			break
+		end
+
+		table.remove(state.path.route)
+		state.path.targetArea = nextArea
+		state.path.segmentAreaId = nil
+		changed = true
+	end
+
+	return changed
+end
+
+local function getRouteGoalIndex(route, targetArea)
+	if not (istable(route) and IsValid(targetArea)) then return nil end
+	for i = #route, 1, -1 do
+		if route[i] == targetArea then
+			return i
+		end
+	end
+	return nil
+end
+
+local function getAreaTraversePos(bot, area, fromPos, fallbackPos)
+	if not IsValid(area) then
+		return fallbackPos or fromPos
+	end
+
+	local steerPos = getAreaSteerPos(area, fromPos, fallbackPos)
+	if not isvector(steerPos) then
+		return fallbackPos or fromPos
+	end
+
+	if canDirectTraverse(bot, fromPos, steerPos) then
+		return steerPos
+	end
+
+	local center = area:GetCenter()
+	return isvector(center) and center or steerPos
+end
+
+local function selectLookAheadMovePos(bot, state, currentArea, targetPos)
+	if not (IsValid(bot) and state and state.path and istable(state.path.route) and IsValid(state.path.targetArea)) then
+		return targetPos
+	end
+
+	local myPos = bot:GetPos()
+	local route = state.path.route
+	local goalIndex = getRouteGoalIndex(route, state.path.targetArea)
+	if not goalIndex then
+		return getAreaTraversePos(bot, state.path.targetArea, myPos, targetPos)
+	end
+
+	local moveToPos = getAreaTraversePos(bot, state.path.targetArea, myPos, targetPos)
+	local lookAheadRange = math.max(100, tonumber(cv_path_lookahead:GetFloat()) or 300)
+	local traversed = 0
+	local prevPos = moveToPos
+
+	for i = goalIndex - 1, 1, -1 do
+		local area = route[i]
+		if not IsValid(area) then continue end
+
+		local candidate = getAreaTraversePos(bot, area, prevPos, targetPos)
+		if not isvector(candidate) then continue end
+
+		traversed = traversed + prevPos:Distance(candidate)
+		if traversed > lookAheadRange then
+			break
+		end
+
+		if canDirectTraverse(bot, myPos, candidate) then
+			moveToPos = candidate
+		else
+			break
+		end
+
+		prevPos = candidate
+	end
+
+	if isvector(targetPos) then
+		local targetDist = myPos:Distance(targetPos)
+		if targetDist <= lookAheadRange and canDirectTraverse(bot, myPos, targetPos) then
+			moveToPos = targetPos
+		end
+	end
+
+	return moveToPos
+end
+
+local function hasPassedCurrentGoal(bot, currentArea, targetArea, route, targetPos)
+	if not (IsValid(bot) and IsValid(targetArea) and istable(route)) then return false end
+
+	local myPos = bot:GetPos()
+	local goalPos = getAreaTraversePos(bot, targetArea, myPos, targetPos)
+	if not isvector(goalPos) then return false end
+
+	local toGoal = goalPos - myPos
+	local toGoal2D = Vector(toGoal.x, toGoal.y, 0)
+	local goalTolerance = math.max(10, tonumber(cv_goal_tolerance:GetFloat()) or 25)
+	if toGoal2D:Length() <= goalTolerance then
+		return true
+	end
+
+	local goalIndex = getRouteGoalIndex(route, targetArea)
+	if not goalIndex then return false end
+
+	local nextArea = route[goalIndex - 1]
+	if not IsValid(nextArea) then
+		return false
+	end
+
+	local currentPos = IsValid(currentArea) and getAreaTraversePos(bot, currentArea, myPos, goalPos) or myPos
+	local nextPos = getAreaTraversePos(bot, nextArea, goalPos, targetPos)
+	if not (isvector(currentPos) and isvector(nextPos)) then
+		return false
+	end
+
+	local currentForward = goalPos - currentPos
+	currentForward.z = 0
+	if currentForward:LengthSqr() <= 1 then return false end
+	currentForward:Normalize()
+
+	local nextForward = nextPos - goalPos
+	nextForward.z = 0
+	if nextForward:LengthSqr() <= 1 then return false end
+	nextForward:Normalize()
+
+	local dividingPlane = currentForward + nextForward
+	dividingPlane.z = 0
+	if dividingPlane:LengthSqr() <= 1 then
+		dividingPlane = currentForward
+	end
+	dividingPlane:Normalize()
+
+	local myToGoal = goalPos - myPos
+	myToGoal.z = 0
+	if myToGoal:Dot(dividingPlane) < 0.0001 then
+		local zDelta = goalPos.z - myPos.z
+		local stepHeight = 18
+		if zDelta < stepHeight and canDirectTraverse(bot, myPos, nextPos) then
+			return true
+		end
+	end
+
+	return false
 end
 
 local function traceDynamicBarricadeAhead(bot, targetAng)
@@ -520,7 +922,11 @@ local function applyBarricadeHold(bot, cmd, st, now)
 
 	local ang = dir:GetNormalized():Angle()
 	cmd:SetViewAngles(ang)
-	cmd:SetForwardMove(220)
+	cmd:SetForwardMove(math.max(
+		tonumber(bot.GetClassSpeed and bot:GetClassSpeed() or 0) or 0,
+		tonumber(bot.GetRunSpeed and bot:GetRunSpeed() or 0) or 0,
+		220
+	))
 	cmd:SetSideMove(0)
 	cmd:RemoveKey(IN_JUMP)
 	return true
@@ -595,7 +1001,14 @@ local function applyBreakablePush(bot, cmd, st, now)
 	if dir:LengthSqr() <= (42 * 42) then
 		cmd:SetForwardMove(0)
 	else
-		cmd:SetForwardMove(120)
+		cmd:SetForwardMove(math.max(
+			120,
+			(math.max(
+				tonumber(bot.GetClassSpeed and bot:GetClassSpeed() or 0) or 0,
+				tonumber(bot.GetRunSpeed and bot:GetRunSpeed() or 0) or 0,
+				300
+			) * 0.45)
+		))
 	end
 	cmd:SetSideMove(0)
 	if dir:LengthSqr() > 0.001 then
@@ -624,9 +1037,14 @@ local function applySoftStuckRecover(bot, cmd, st, now)
 
 	local side = tonumber(st.path.unstuckSide or 1)
 	local b = cmd:GetButtons()
+	local moveSpeed = math.max(
+		tonumber(bot.GetClassSpeed and bot:GetClassSpeed() or 0) or 0,
+		tonumber(bot.GetRunSpeed and bot:GetRunSpeed() or 0) or 0,
+		300
+	)
 	cmd:SetButtons(bit.bor(b, IN_JUMP))
-	cmd:SetForwardMove(-120)
-	cmd:SetSideMove(180 * side)
+	cmd:SetForwardMove(-(moveSpeed * 0.40))
+	cmd:SetSideMove(moveSpeed * 0.60 * side)
 	return true
 end
 
@@ -719,33 +1137,98 @@ local function getMvMNavObjectiveAnchor(bot)
 	return anchor
 end
 
-local function getSpawnExitTargetPos(bot)
+local function isFriendlySpawnArea(bot, area)
+	local spawnAttr = getFriendlySpawnAttributeForBot(bot)
+	return spawnAttr and hasAreaTFAttribute(area, spawnAttr) or false
+end
+
+local function collectSpawnThresholdAreas(bot)
+	if not (IsValid(bot) and navmesh and navmesh.GetAllNavAreas) then return {} end
+
+	local thresholds = {}
+	local seen = {}
+	for _, area in ipairs(navmesh.GetAllNavAreas()) do
+		if not IsValid(area) or not hasAreaTFAttribute(area, "spawn_room_exit") then continue end
+		if not isFriendlySpawnArea(bot, area) then continue end
+
+		local adjacent = area.GetAdjacentAreas and area:GetAdjacentAreas() or nil
+		if not istable(adjacent) then continue end
+
+		local bestArea, bestSize
+		for _, adjArea in ipairs(adjacent) do
+			if not IsValid(adjArea) then continue end
+			if isFriendlySpawnArea(bot, adjArea) then continue end
+			if hasAreaTFAttribute(adjArea, "spawn_room_exit") then continue end
+			if isAreaTeamBlocked(adjArea, bot:Team()) then continue end
+
+			local size = 0
+			if adjArea.GetSizeX and adjArea.GetSizeY then
+				size = math.max(0, tonumber(adjArea:GetSizeX()) or 0) * math.max(0, tonumber(adjArea:GetSizeY()) or 0)
+			end
+			if not bestArea or size > bestSize then
+				bestArea = adjArea
+				bestSize = size
+			end
+		end
+
+		if IsValid(bestArea) then
+			local id = bestArea.GetID and bestArea:GetID() or bestArea:EntIndex()
+			if not seen[id] then
+				seen[id] = true
+				thresholds[#thresholds + 1] = bestArea
+			end
+		end
+	end
+
+	return thresholds
+end
+
+local function getSpawnExitTargetPos(bot, desiredPos)
 	if not IsValid(bot) or not navmesh or not navmesh.GetAllNavAreas then return nil end
 	local spawnAttr = getFriendlySpawnAttributeForBot(bot)
 	if not spawnAttr then return nil end
 
 	local now = CurTime()
-	if bot._mvmSpawnExitPos and bot._mvmSpawnExitUntil and bot._mvmSpawnExitUntil > now then
+	local desiredKey = isvector(desiredPos) and string.format("%d:%d:%d", math.floor(desiredPos.x / 64), math.floor(desiredPos.y / 64), math.floor(desiredPos.z / 64)) or "none"
+	if bot._mvmSpawnExitPos and bot._mvmSpawnExitUntil and bot._mvmSpawnExitUntil > now and bot._mvmSpawnExitKey == desiredKey then
 		return bot._mvmSpawnExitPos
 	end
 
 	local origin = bot:GetPos()
-	local bestPos, bestDist
-	for _, area in ipairs(navmesh.GetAllNavAreas()) do
-		if not IsValid(area) then continue end
-		if hasAreaTFAttribute(area, spawnAttr) then continue end
+	local thresholds = collectSpawnThresholdAreas(bot)
+	local bestPos, bestScore
+	for _, area in ipairs(thresholds) do
 		local center = area:GetCenter()
 		local dz = math.abs(center.z - origin.z)
 		if dz > 700 then continue end
-		local d = origin:DistToSqr(center)
-		if not bestDist or d < bestDist then
-			bestDist = d
+
+		local fromBot = origin:DistToSqr(center)
+		local towardTarget = isvector(desiredPos) and center:DistToSqr(desiredPos) or 0
+		local score = fromBot + (towardTarget * 0.65)
+		if not bestScore or score < bestScore then
+			bestScore = score
 			bestPos = center
+		end
+	end
+
+	if not isvector(bestPos) then
+		for _, area in ipairs(navmesh.GetAllNavAreas()) do
+			if not IsValid(area) then continue end
+			if hasAreaTFAttribute(area, spawnAttr) then continue end
+			local center = area:GetCenter()
+			local dz = math.abs(center.z - origin.z)
+			if dz > 700 then continue end
+			local d = origin:DistToSqr(center)
+			if not bestScore or d < bestScore then
+				bestScore = d
+				bestPos = center
+			end
 		end
 	end
 
 	bot._mvmSpawnExitPos = bestPos
 	bot._mvmSpawnExitUntil = now + 0.8
+	bot._mvmSpawnExitKey = desiredKey
 	return bestPos
 end
 
@@ -764,6 +1247,10 @@ function M:ComputePathCost(bot, area, fromArea, ladder, length)
 	local isBlueSide = (bot:Team() == TEAM_BLU or bot:Team() == TF_TEAM_PVE_INVADERS)
 	if (bot:Team() == TEAM_RED and area.HasTFAttribute and area:HasTFAttribute("spawn_room_blue")) or
 		(isBlueSide and area.HasTFAttribute and area:HasTFAttribute("spawn_room_red")) then
+		return -1
+	end
+
+	if not isMvMMap() and isAreaTeamBlocked(area, bot:Team()) then
 		return -1
 	end
 
@@ -968,10 +1455,11 @@ local function progressMonitor(bot, cmd, st, distToArea, targetPos)
 			st.path.stuckEvents = 0
 			return true
 		end
+		local recoverSpeed = getBotRunSpeed(bot)
 		local b = cmd:GetButtons()
 		cmd:SetButtons(bit.bor(b, IN_JUMP))
-		cmd:SetForwardMove(120)
-		cmd:SetSideMove((bot:EntIndex() % 2 == 0) and 220 or -220)
+		cmd:SetForwardMove(recoverSpeed * 0.45)
+		cmd:SetSideMove((bot:EntIndex() % 2 == 0) and (recoverSpeed * 0.7) or -(recoverSpeed * 0.7))
 		return true
 	end
 
@@ -1006,10 +1494,11 @@ local function progressMonitor(bot, cmd, st, distToArea, targetPos)
 				st.path.stuckEvents = 0
 				return true
 			end
+			local recoverSpeed = getBotRunSpeed(bot)
 			local b = cmd:GetButtons()
 			cmd:SetButtons(bit.bor(b, IN_JUMP))
-			cmd:SetForwardMove(120)
-			cmd:SetSideMove((bot:EntIndex() % 2 == 0) and 220 or -220)
+			cmd:SetForwardMove(recoverSpeed * 0.45)
+			cmd:SetSideMove((bot:EntIndex() % 2 == 0) and (recoverSpeed * 0.7) or -(recoverSpeed * 0.7))
 			return true
 		end
 	else
@@ -1032,11 +1521,14 @@ function M:Drive(bot, cmd, state)
 		return
 	end
 
-	if isMvMMap() then
+	do
 		local currentArea = getNearestAreaForTeam(bot:GetPos(), bot:Team())
 		local spawnAttr = getFriendlySpawnAttributeForBot(bot)
-		if spawnAttr and hasAreaTFAttribute(currentArea, spawnAttr) then
-			local exitPos = getSpawnExitTargetPos(bot)
+		local targetArea = isvector(targetPos) and getNearestAreaForTeam(targetPos, bot:Team()) or nil
+		local inFriendlySpawn = spawnAttr and hasAreaTFAttribute(currentArea, spawnAttr)
+		local targetStillInSpawn = spawnAttr and hasAreaTFAttribute(targetArea, spawnAttr)
+		if inFriendlySpawn and not targetStillInSpawn then
+			local exitPos = getSpawnExitTargetPos(bot, targetPos)
 			if isvector(exitPos) and bot:GetPos():DistToSqr(exitPos) > (110 * 110) then
 				targetPos = exitPos
 				state.path.forceSpawnExit = true
@@ -1081,9 +1573,13 @@ function M:Drive(bot, cmd, state)
 		local dir = targetPos - bot:GetPos()
 		local ang = dir:GetNormalized():Angle()
 		local failCount = tonumber(state.path.consecutiveBuildFails or 0)
-		local probeSpeed = math.max(60, cv_no_route_probe_speed:GetFloat())
+		local runSpeed = getBotRunSpeed(bot)
+		local probeSpeed = math.min(runSpeed, math.max(runSpeed * 0.75, cv_no_route_probe_speed:GetFloat(), 120))
 		local obstacle = traceObstacleAhead(bot, ang, 56, 18)
 		if obstacle then
+			if tryLocalAvoid(bot, cmd, ang, obstacle) then
+				return
+			end
 			if obstacle.kind == "barricade" and IsValid(obstacle.ent) then
 				startBarricadeHold(bot, state, obstacle.ent, now, targetPos)
 				cmd:SetForwardMove(-40)
@@ -1106,11 +1602,10 @@ function M:Drive(bot, cmd, state)
 				return
 			end
 		end
-		cmd:SetForwardMove((failCount >= 2) and (probeSpeed * 0.5) or probeSpeed)
-		if failCount >= 2 then
-			cmd:SetSideMove((bot:EntIndex() % 2 == 0) and 120 or -120)
+		applyMoveTowards(bot, cmd, targetPos, (failCount >= 2) and (probeSpeed * 0.5) or probeSpeed)
+		if failCount >= 2 and math.abs((cmd.GetSideMove and cmd:GetSideMove()) or 0) < 1 then
+			cmd:SetSideMove((bot:EntIndex() % 2 == 0) and math.min(120, probeSpeed) or -math.min(120, probeSpeed))
 		end
-		cmd:SetViewAngles(ang)
 		if shouldForceJumpAtObstacle(bot, ang) then
 			cmd:SetButtons(bit.bor(cmd:GetButtons(), IN_JUMP))
 		end
@@ -1125,10 +1620,10 @@ function M:Drive(bot, cmd, state)
 		state.path.targetArea = state.path.route[#state.path.route]
 	end
 
-	local areaAdvanceDist = math.max(28, 20 * bot:GetModelScale())
+	skipRedundantRouteAreas(bot, state, currentArea, targetPos)
+
 	while IsValid(state.path.targetArea) do
-		local steerPos = getAreaSteerPos(state.path.targetArea, bot:GetPos(), targetPos)
-		if state.path.targetArea ~= currentArea and bot:GetPos():DistToSqr(steerPos) > (areaAdvanceDist * areaAdvanceDist) then
+		if not hasPassedCurrentGoal(bot, currentArea, state.path.targetArea, state.path.route, targetPos) then
 			break
 		end
 		table.remove(state.path.route)
@@ -1146,13 +1641,25 @@ function M:Drive(bot, cmd, state)
 		return
 	end
 
-	local steerPos = getAreaSteerPos(state.path.targetArea, bot:GetPos(), targetPos)
+	local steerPos = getAreaTraversePos(bot, state.path.targetArea, bot:GetPos(), targetPos)
+	local moveToPos = selectLookAheadMovePos(bot, state, currentArea, targetPos)
 	local toSteer = steerPos - bot:GetPos()
 	local targetAng = toSteer:GetNormalized():Angle()
 	local distToArea = toSteer:Length()
+	local runSpeed = getBotRunSpeed(bot)
+	local walkSpeed = getBotWalkSpeed(bot)
+	local curvature = computePathCurvature(bot, state, bot:GetPos(), steerPos, targetPos)
+	local desiredSpeed = runSpeed + curvature * (walkSpeed - runSpeed)
+	if distToArea < 120 then
+		local nearScale = math.Clamp(distToArea / 120, 0.45, 1.0)
+		desiredSpeed = desiredSpeed * nearScale
+	end
 
 	local obstacle = traceObstacleAhead(bot, targetAng, 52, 18)
 	if obstacle then
+		if tryLocalAvoid(bot, cmd, targetAng, obstacle) then
+			return
+		end
 		if obstacle.kind == "breakable" then
 			startBreakablePush(bot, state, obstacle, now)
 			cmd:SetForwardMove(80)
@@ -1176,13 +1683,13 @@ function M:Drive(bot, cmd, state)
 		return
 	end
 
-	cmd:SetForwardMove(1000)
-	cmd:SetViewAngles(targetAng)
+	applyMoveTowards(bot, cmd, moveToPos, desiredSpeed)
 	if shouldForceJumpAtObstacle(bot, targetAng) then
 		cmd:SetButtons(bit.bor(cmd:GetButtons(), IN_JUMP))
 	end
 	if not IsValid(state.vision.currentThreat) then
-		bot:SetEyeAngles(LerpAngle(FrameTime() * 5 * 1.2, bot:EyeAngles(), targetAng))
+		local lookAng = (moveToPos - bot:GetPos()):Angle()
+		bot:SetEyeAngles(LerpAngle(FrameTime() * 5 * 1.2, bot:EyeAngles(), lookAng))
 	end
 end
 

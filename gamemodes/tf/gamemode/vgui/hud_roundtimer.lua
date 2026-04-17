@@ -470,5 +470,32 @@ function PANEL:Paint()
 	)
 end
 
+local HUD_OBJECTIVE_TIME_PANEL_CLASS = "TFHudObjectiveTimePanel"
+vgui.Register(HUD_OBJECTIVE_TIME_PANEL_CLASS, PANEL, "DPanel")
+
+local function EnsureHudObjectiveTimePanel()
+	if IsValid(HudObjectiveTimePanel) then
+		return HudObjectiveTimePanel
+	end
+
+	HudObjectiveTimePanel = vgui.Create(HUD_OBJECTIVE_TIME_PANEL_CLASS)
+	return HudObjectiveTimePanel
+end
+
 if HudObjectiveTimePanel then HudObjectiveTimePanel:Remove() end
-HudObjectiveTimePanel = vgui.CreateFromTable(vgui.RegisterTable(PANEL, "DPanel"))
+EnsureHudObjectiveTimePanel()
+
+hook.Add("InitPostEntity", "TF_HudObjectiveTimePanel_InitPostEntity", function()
+	EnsureHudObjectiveTimePanel()
+end)
+
+hook.Add("PostCleanupMap", "TF_HudObjectiveTimePanel_PostCleanupMap", function()
+	timer.Simple(0, function()
+		EnsureHudObjectiveTimePanel()
+	end)
+end)
+
+hook.Add("Think", "TF_HudObjectiveTimePanel_EnsureAlive", function()
+	if GetConVarNumber("cl_drawhud") == 0 then return end
+	EnsureHudObjectiveTimePanel()
+end)

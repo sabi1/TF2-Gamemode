@@ -126,7 +126,14 @@ local function EnsureWeaponClassLoaded(className)
 			if SERVER then
 				AddCSLuaFile(sharedPath)
 			end
+			local previousSWEP = SWEP
+			SWEP = {}
 			local ok = pcall(include, sharedPath)
+			if ok and not weapons.GetStored(className) and istable(SWEP) and next(SWEP) ~= nil then
+				SWEP.ClassName = className
+				weapons.Register(SWEP, className, true)
+			end
+			SWEP = previousSWEP
 			if ok then
 				loaded = true
 				break
@@ -911,6 +918,13 @@ function META:GiveItem(itemname, properties)
 		_G.TFWeaponItemIndex = nil
 		giveStockFallbackForSlot(item.item_slot)
 		return
+	end
+
+	if weapon.SetItemIndex then
+		weapon:SetItemIndex(item.id)
+	end
+	if weapon.CheckUpdateItem then
+		weapon:CheckUpdateItem()
 	end
 	
 	local quality, level, custom_name, custom_desc

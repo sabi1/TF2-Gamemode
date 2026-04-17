@@ -263,37 +263,6 @@ function ENT:Think()
 		self.NextClientUpdateTimer = nil
 	end
 	
-	if IsValid(self.Carrier) and isstring(self.Carrier.Team) and (self.Carrier.Team == "RED" or self.Carrier.Team == "BLU" ) then
-		local intel = nil
-		local fintel = nil
-		local intelcap = nil
-		local fintelcap = nil
-		if self.Carrier:Health() <= 1 then
-			self:Drop()
-		elseif !IsValid(self.Carrier) then
-			self:Drop()
-		end
-		if self.Carrier:Health() >= 1 then
-			for k, v in pairs(ents.FindByClass("item_teamflag")) do
-				if v.TeamNum ~= GAMEMODE:EntityTeam(self.Carrier) then
-					intel = v
-				else
-					fintel = v
-				end
-			end
-	
-			for k, v in pairs(ents.FindByClass("func_capturezone")) do
-				if v.TeamNum ~= GAMEMODE:EntityTeam(self.Carrier) then
-					intelcap = v
-				else
-					fintelcap = v
-				end
-			end
-
-			self.Carrier:RunToPos(fintel:GetPos(), {tolerance = 60}	)
-		end
-	end
-
 end
 
 function ENT:CanPickup(ply)

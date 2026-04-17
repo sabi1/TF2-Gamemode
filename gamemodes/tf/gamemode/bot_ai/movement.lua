@@ -6,6 +6,40 @@ local M = TFBotValveAI.Movement
 local cv_sep_range = CreateConVar("tf_bot_teammate_separation_range", "72", {FCVAR_ARCHIVE, FCVAR_NOTIFY})
 local cv_sep_push = CreateConVar("tf_bot_teammate_separation_push", "220", {FCVAR_ARCHIVE, FCVAR_NOTIFY})
 
+local function getBotRunSpeed(bot)
+	if not IsValid(bot) then return 300 end
+	local classSpeed = tonumber(bot.GetClassSpeed and bot:GetClassSpeed() or 0) or 0
+	if classSpeed > 0 then
+		return classSpeed
+	end
+	local runSpeed = tonumber(bot.GetRunSpeed and bot:GetRunSpeed() or 0) or 0
+	if runSpeed > 0 then
+		return runSpeed
+	end
+	local classTable = bot.GetPlayerClassTable and bot:GetPlayerClassTable() or nil
+	local tableSpeed = tonumber(classTable and classTable.Speed or 0) or 0
+	if tableSpeed > 0 then
+		return tableSpeed
+	end
+	return 300
+end
+
+local function ensureBotMoveSpeed(bot)
+	if not IsValid(bot) or not bot:IsPlayer() then return end
+	local desired = getBotRunSpeed(bot)
+	if desired <= 0 then return end
+
+	if bot.SetClassSpeed and math.abs((tonumber(bot.GetClassSpeed and bot:GetClassSpeed() or 0) or 0) - desired) > 1 then
+		bot:SetClassSpeed(desired)
+	end
+	if bot.SetRunSpeed and math.abs((tonumber(bot.GetRunSpeed and bot:GetRunSpeed() or 0) or 0) - desired) > 1 then
+		bot:SetRunSpeed(desired)
+	end
+	if bot.SetWalkSpeed and math.abs((tonumber(bot.GetWalkSpeed and bot:GetWalkSpeed() or 0) or 0) - desired) > 1 then
+		bot:SetWalkSpeed(desired)
+	end
+end
+
 local function autoJumpIfNeeded(bot, cmd)
 	if not IsValid(bot) or not bot:IsOnGround() then return end
 	local mins = tonumber(bot.TF_MVM_AutoJumpMin or 24) or 24
@@ -57,23 +91,29 @@ local function applyTeamSeparation(bot, cmd, state)
 	end
 
 	local push = cv_sep_push:GetFloat()
+	local runSpeed = getBotRunSpeed(bot)
 	local right = bot:GetRight()
 	local sideSign = (repel:Dot(right) >= 0) and 1 or -1
 	local sideMove = (cmd.GetSideMove and cmd:GetSideMove()) or 0
-	cmd:SetSideMove(sideMove + (sideSign * push))
+	cmd:SetSideMove(sideMove + (sideSign * math.min(push, runSpeed)))
 
 	-- Keep bomb carrier pace stable while still adding side separation.
 	local isCarrier = state and state.mvm and state.mvm.isCarrier == true
-	-- Slightly reduce pile-in speed when heavily compressed.
+	-- Preserve class run speed unless a heavily compressed non-carrier pack is
+	-- already overdriving; don't turn congestion into a permanent slow walk.
 	if closeCount >= 3 and not isCarrier then
 		local fwd = (cmd.GetForwardMove and cmd:GetForwardMove()) or 0
-		cmd:SetForwardMove(math.min(fwd, 220))
+		if math.abs(fwd) > runSpeed then
+			cmd:SetForwardMove((fwd >= 0 and 1 or -1) * runSpeed)
+		end
 	end
 end
 
 function M:Apply(bot, cmd, state)
 	if not IsValid(bot) or not state then return end
 	if not bot:Alive() then return end
+
+	ensureBotMoveSpeed(bot)
 
 	local cfg = TFBotValveAI.Config
 	if cfg and cfg:UseLegacyPathCompat() then

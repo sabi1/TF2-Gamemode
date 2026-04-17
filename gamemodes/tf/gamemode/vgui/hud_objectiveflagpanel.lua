@@ -1196,11 +1196,39 @@ function PANEL:Paint()
 	DrawObserverCarriedState(observerFlag, self.SpecCarriedImageTexture)
 end
 
+local HUD_OBJECTIVE_FLAG_PANEL_CLASS = "TFHudObjectiveFlagPanel"
+vgui.Register(HUD_OBJECTIVE_FLAG_PANEL_CLASS, PANEL, "DPanel")
+
+local function EnsureHudObjectiveFlagPanel()
+	if IsValid(HudObjectiveFlagPanel) then
+		return HudObjectiveFlagPanel
+	end
+
+	HudObjectiveFlagPanel = vgui.Create(HUD_OBJECTIVE_FLAG_PANEL_CLASS)
+	return HudObjectiveFlagPanel
+end
+
 if HudObjectiveFlagPanel then HudObjectiveFlagPanel:Remove() end
-HudObjectiveFlagPanel = vgui.CreateFromTable(vgui.RegisterTable(PANEL, "DPanel"))
+EnsureHudObjectiveFlagPanel()
 
 hook.Add("TF_FlagStatusUpdate", "TF_HudObjectiveFlagPanel_FlagStatusUpdate", function(flag, owner)
-	if not IsValid(HudObjectiveFlagPanel) then return end
-	HudObjectiveFlagPanel:UpdateAssignments()
-	HudObjectiveFlagPanel:UpdateStatus(owner, flag)
+	local panel = EnsureHudObjectiveFlagPanel()
+	if not IsValid(panel) then return end
+	panel:UpdateAssignments()
+	panel:UpdateStatus(owner, flag)
+end)
+
+hook.Add("InitPostEntity", "TF_HudObjectiveFlagPanel_InitPostEntity", function()
+	EnsureHudObjectiveFlagPanel()
+end)
+
+hook.Add("PostCleanupMap", "TF_HudObjectiveFlagPanel_PostCleanupMap", function()
+	timer.Simple(0, function()
+		EnsureHudObjectiveFlagPanel()
+	end)
+end)
+
+hook.Add("Think", "TF_HudObjectiveFlagPanel_EnsureAlive", function()
+	if not ShouldDrawCtfHUD() then return end
+	EnsureHudObjectiveFlagPanel()
 end)

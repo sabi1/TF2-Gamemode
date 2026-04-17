@@ -1314,8 +1314,6 @@ local function PlayerGiantBotSpawn( ply, mv )
 					ply:Give("weapon_fists")	
 				elseif ply:GetPlayerClass() == "soldier" then
 					ply:SetModel("models/lazy_zombies_v2/soldier.mdl")
-					ply:StripWeapon("tf_weapon_rocketlauncher")
-					ply:StripWeapon("tf_weapon_shotgun_soldier")
 				elseif ply:GetPlayerClass() == "demoman" then
 					ply:SetModel("models/lazy_zombies_v2/demo.mdl")
 					ply:StripWeapon("tf_weapon_grenadelauncher")
@@ -1377,8 +1375,6 @@ local function PlayerGiantBotSpawn( ply, mv )
 					ply:StripWeapon("tf_weapon_pistol_scout")
 				elseif ply:GetPlayerClass() == "soldier" then
 					ply:SetModel("models/lazy_zombies_v2/soldier.mdl")
-					ply:StripWeapon("tf_weapon_rocketlauncher")
-					ply:StripWeapon("tf_weapon_shotgun_soldier")
 				elseif ply:GetPlayerClass() == "demoman" then
 					ply:SetModel("models/lazy_zombies_v2/demo.mdl")
 					ply:StripWeapon("tf_weapon_grenadelauncher")

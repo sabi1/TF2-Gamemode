@@ -274,10 +274,6 @@ local function tryHandleMedicHealing(bot, cmd, state)
 		bot:SelectWeapon(medigun:GetClass())
 	end
 
-	if medigun.SetHealTarget and medigun.Target ~= healTarget then
-		medigun:SetHealTarget(healTarget)
-	end
-
 	local aimPos = healTarget.WorldSpaceCenter and healTarget:WorldSpaceCenter() or healTarget:GetPos()
 	local lookAng = (aimPos - bot:GetShootPos()):Angle()
 	cmd:SetViewAngles(lookAng)
@@ -285,8 +281,23 @@ local function tryHandleMedicHealing(bot, cmd, state)
 
 	local dist = bot:GetPos():Distance(healTarget:GetPos())
 	local vision = TFBotValveAI and TFBotValveAI.Vision or nil
-	local hasHealLOS = vision and vision.HasLineOfSight and vision:HasLineOfSight(bot, healTarget, vision:GetMedicLOSModeMask()) or bot:Visible(healTarget)
-	local inRange = dist <= math.max(cv_melee_engage_dist:GetFloat(), 600)
+	local hasHealLOS = vision and vision.HasHealLineOfSight and vision:HasHealLineOfSight(bot, healTarget)
+		or (vision and vision.HasLineOfSight and vision:HasLineOfSight(bot, healTarget, vision:GetMedicLOSModeMask()))
+		or bot:Visible(healTarget)
+	local medigunRange = math.max(tonumber(medigun.Range) or 0, 1)
+	local engageRange = math.max(140, medigunRange - 64)
+	local inRange = dist <= engageRange
+
+	if inRange and hasHealLOS then
+		if medigun.SetHealTarget and medigun.Target ~= healTarget then
+			medigun:SetHealTarget(healTarget)
+		end
+	else
+		if medigun.Target == healTarget and medigun.ClearHealTarget then
+			medigun:ClearHealTarget()
+		end
+	end
+
 	if inRange and hasHealLOS then
 		cmd:SetButtons(bit.bor(cmd:GetButtons(), IN_ATTACK))
 	else

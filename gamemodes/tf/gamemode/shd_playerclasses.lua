@@ -310,6 +310,46 @@ local function InitPlayerBodygroups(pl)
 	end
 end
 
+local function PlayerHasWeaponInItemSlot(pl, slotName)
+	if not IsValid(pl) or not isstring(slotName) or slotName == "" then return false end
+
+	for _, wep in ipairs(pl:GetWeapons()) do
+		local itemData = wep.GetItemData and wep:GetItemData() or nil
+		if itemData and itemData.item_slot == slotName then
+			return true
+		end
+	end
+
+	return false
+end
+
+local function EnsureMissingLoadoutWeapons(pl)
+	if not IsValid(pl) or not pl:Alive() or not istable(pl.ItemLoadout) then return end
+
+	local seenSlots = {}
+	for index, itemName in ipairs(pl.ItemLoadout) do
+		local itemData = tf_items.Items[itemName]
+		local slotName = itemData and itemData.item_slot or nil
+		local itemClass = itemData and itemData.item_class or nil
+
+		if isstring(slotName)
+			and slotName ~= ""
+			and not seenSlots[slotName]
+			and isstring(itemClass)
+			and (
+				string.StartWith(itemClass, "tf_weapon_")
+				or string.find(itemClass, "demoshield", 1, true)
+				or string.find(itemClass, "tideturnr", 1, true)
+				or string.find(itemClass, "chargintard", 1, true)
+			)
+			and not PlayerHasWeaponInItemSlot(pl, slotName)
+		then
+			seenSlots[slotName] = true
+			pl:GiveItem(itemName, pl.ItemProperties and pl.ItemProperties[index] or nil)
+		end
+	end
+end
+
 function meta:SetPlayerClass(class)
 	ResetPlayerAnimStateForClassChange(self)
 	class = string.lower(class)
@@ -434,6 +474,11 @@ function meta:SetPlayerClass(class)
 	if self:Health() < 1 then
 		self:SetHealth(self:GetMaxHealth())
 	end
+
+	timer.Simple(0, function()
+		if not IsValid(self) or self:GetPlayerClass() ~= class then return end
+		EnsureMissingLoadoutWeapons(self)
+	end)
 	 
 	-- Capitalize player class because the talker system wants to :/
 	-- This is used for playing scenes

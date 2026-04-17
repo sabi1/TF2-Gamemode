@@ -5,6 +5,13 @@ local M = TFBots.Runtime
 
 local TIMER_ENFORCE = "TFBots_EnforceQuota"
 
+local function resetQuotaConVars()
+	if TFBots and TFBots.Config and TFBots.Config.SetQuotaTarget then
+		TFBots.Config:SetQuotaTarget(0)
+	end
+	RunConsoleCommand("tf_bot_quota", "0")
+end
+
 local function get_red_team()
 	return rawget(_G, "TEAM_RED") or 2
 end
@@ -155,6 +162,10 @@ function M:Initialize()
 		if TFBots.Registry then
 			TFBots.Registry:Clear()
 		end
+	end)
+
+	hook.Add("ShutDown", "TFBots_ResetQuotaOnShutdown", function()
+		resetQuotaConVars()
 	end)
 end
 

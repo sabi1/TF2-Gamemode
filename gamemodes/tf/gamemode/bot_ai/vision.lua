@@ -39,6 +39,23 @@ local function getTargetPoints(target)
 	return points
 end
 
+local function getHealTargetPoint(target)
+	if not IsValid(target) then return nil end
+	if target.WorldSpaceCenter then
+		local ok, pos = pcall(target.WorldSpaceCenter, target)
+		if ok and isvector(pos) then
+			return pos
+		end
+	end
+	if target.GetPos then
+		local ok, pos = pcall(target.GetPos, target)
+		if ok and isvector(pos) then
+			return pos
+		end
+	end
+	return nil
+end
+
 function M:HasLineOfSight(bot, target, mask)
 	if not (IsValid(bot) and IsValid(target)) then return false end
 	local startPos = (bot.GetShootPos and bot:GetShootPos()) or (bot.EyePos and bot:EyePos()) or bot:GetPos()
@@ -65,6 +82,25 @@ end
 
 function M:GetMedicLOSModeMask()
 	return MEDIC_LOS_MASK
+end
+
+function M:HasHealLineOfSight(bot, target)
+	if not (IsValid(bot) and IsValid(target)) then return false end
+	local startPos = (bot.GetShootPos and bot:GetShootPos()) or (bot.EyePos and bot:EyePos()) or bot:GetPos()
+	local endPos = getHealTargetPoint(target)
+	if not isvector(endPos) then return false end
+
+	local active = IsValid(bot.GetActiveWeapon and bot:GetActiveWeapon()) and bot:GetActiveWeapon() or nil
+	local tr = util.TraceLine({
+		start = startPos,
+		endpos = endPos,
+		filter = function(ent)
+			return ent == bot or ent == active or ent == bot.ControllerBot
+		end,
+		mask = MEDIC_LOS_MASK,
+	})
+
+	return (not tr.Hit) or tr.Entity == target
 end
 
 local function isValidTarget(bot, target)

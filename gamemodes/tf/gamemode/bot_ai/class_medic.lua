@@ -158,6 +158,14 @@ local function isBotInSquad(bot)
 	return bot.IsInASquad and bot:IsInASquad() or false
 end
 
+local function getMedigunRange(bot)
+	local medigun = getMedicGun(bot)
+	if IsValid(medigun) and tonumber(medigun.Range) and tonumber(medigun.Range) > 0 then
+		return tonumber(medigun.Range)
+	end
+	return cv_max_heal:GetFloat()
+end
+
 function M:Update(bot, state)
 	local cls = getClassName(bot)
 	if cls ~= "medic" and cls ~= "giantmedic" then return false end
@@ -177,36 +185,42 @@ function M:Update(bot, state)
 		bot:SelectWeapon(medigun:GetClass())
 	end
 
-	local dist = bot:GetPos():Distance(patient:GetPos())
+	local medigunRange = getMedigunRange(bot)
+	local desiredHealRange = math.max(120, math.min(medigunRange - 96, medigunRange * 0.65))
+	local hardHealRange = math.max(140, medigunRange - 64)
 	local threat = state.vision.currentThreat
 	state.class.medicInCombat = IsValid(threat)
 	local healTarget = patient
+	local vision = TFBotValveAI and TFBotValveAI.Vision or nil
+	local hasHealLOS = vision and vision.HasHealLineOfSight and vision:HasHealLineOfSight(bot, patient) or false
 
 	local patientStable = getHealthRatio(patient, false) >= cv_stable_ratio:GetFloat()
 	if patientStable and not state.class.medicInCombat and not isBotInSquad(bot) then
 		local neighbor = findNearbyInjuredFriendly(bot, patient, state.class.medicInCombat)
 		if IsValid(neighbor) then
 			healTarget = neighbor
+			hasHealLOS = vision and vision.HasHealLineOfSight and vision:HasHealLineOfSight(bot, neighbor) or false
 		end
 	end
 
 	state.class.healTarget = healTarget
+	local dist = bot:GetPos():Distance(healTarget:GetPos())
 
-	if state.class.medicInCombat and dist > cv_max_heal:GetFloat() then
+	if dist > hardHealRange or not hasHealLOS then
 		state.objective.mode = "medic_close_gap"
-		state.objective.targetPos = patient:GetPos()
-		state.objective.targetEnt = patient
+		state.objective.targetPos = healTarget:GetPos()
+		state.objective.targetEnt = healTarget
 		bot.routeType = "default"
 		return true
 	end
-	if dist > cv_follow_start:GetFloat() then
-		state.objective.targetPos = patient:GetPos()
-		state.objective.targetEnt = patient
+	if dist > math.min(cv_follow_start:GetFloat(), desiredHealRange) then
+		state.objective.targetPos = healTarget:GetPos()
+		state.objective.targetEnt = healTarget
 		state.objective.mode = "medic_follow"
 		bot.routeType = "default"
 	elseif dist < cv_follow_stop:GetFloat() then
 		state.objective.targetPos = bot:GetPos()
-		state.objective.targetEnt = patient
+		state.objective.targetEnt = healTarget
 		state.objective.mode = "medic_hold"
 	end
 	return true

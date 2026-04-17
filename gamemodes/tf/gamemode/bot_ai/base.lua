@@ -79,6 +79,12 @@ function M:MakeFakeCmd()
 	function cmd:SetSideMove(v)
 		self._side = tonumber(v) or 0
 	end
+	function cmd:GetForwardMove()
+		return self._forward
+	end
+	function cmd:GetSideMove()
+		return self._side
+	end
 	function cmd:SetViewAngles(v)
 		self._view = v
 	end
