@@ -78,5 +78,8 @@ function PANEL:Paint()
 	draw.Text(param)
 end
 
-if HudObjectiveFlagPanel then HudObjectiveFlagPanel:Remove() end
-HudObjectiveFlagPanel = vgui.CreateFromTable(vgui.RegisterTable(PANEL, "DPanel"))
+local HUD_UPGRADE_PANEL_CLASS = "TFHudUpgradePanelLegacy"
+vgui.Register(HUD_UPGRADE_PANEL_CLASS, PANEL, "DPanel")
+
+if HudUpgradePanel then HudUpgradePanel:Remove() end
+HudUpgradePanel = vgui.Create(HUD_UPGRADE_PANEL_CLASS)

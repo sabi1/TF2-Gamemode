@@ -2385,10 +2385,40 @@ function GM:PlayerSpawn(ply)
 		ply:SetNWBool("IsDerpAim",false)
 	end
 
+	local function ShouldRunFirstSpawnCleanup()
+		if TF_GetHudGameMode then
+			local hudMode = tostring(TF_GetHudGameMode(true) or "unknown")
+			if hudMode ~= "unknown" and hudMode ~= "mvm" then
+				return false
+			end
+		end
+
+		local map = string.lower(game.GetMap() or "")
+		if string.StartWith(map, "ctf_")
+			or string.StartWith(map, "cp_")
+			or string.StartWith(map, "koth_")
+			or string.StartWith(map, "tc_")
+			or string.StartWith(map, "pl_")
+			or string.StartWith(map, "plr_")
+			or string.StartWith(map, "arena_")
+			or string.StartWith(map, "pass_")
+			or string.StartWith(map, "pd_")
+			or string.StartWith(map, "rd_")
+			or string.StartWith(map, "sd_")
+			or string.StartWith(map, "powerup_")
+			or string.StartWith(map, "mvm_") then
+			return false
+		end
+
+		return true
+	end
+
 		if (player.GetCount() == 1) then
 
 			if (!GAMEMODE.round_active and ply:Team() != TEAM_SPECTATOR and not string.find(string.lower(game.GetMap() or ""), "mvm_", 1, true)) then
-				RunConsoleCommand("gmod_admin_cleanup")
+				if ShouldRunFirstSpawnCleanup() then
+					RunConsoleCommand("gmod_admin_cleanup")
+				end
 				GAMEMODE.round_active = true
 				timer.Simple(0.1, function()
 						local roundtimer = ents.Create("team_round_timer")
@@ -2424,7 +2454,9 @@ function GM:PlayerSpawn(ply)
 						timer.Simple(0.1, function()
 						
 							GAMEMODE.round_active = true
-							RunConsoleCommand("gmod_admin_cleanup") 
+							if ShouldRunFirstSpawnCleanup() then
+								RunConsoleCommand("gmod_admin_cleanup")
+							end
 							for k,v in ipairs(player.GetAll()) do
 								v:Spawn()
 								v:SetNWBool("Taunting",true)
