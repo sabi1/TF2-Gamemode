@@ -1668,19 +1668,29 @@ usermessage.Hook("TF_SetExtraAttributes", function(msg)
 	
 	wep:SetExtraAttributes(att)
 end)
-
+--[[
 hook.Add("Think", "TFCheckUpdateItems", function()
 	
 		for _,v in pairs(ents.GetAll()) do
 			if v.IsRootLocator and not IsValid(v:GetParent()) then
 				v:Remove()
 			elseif v.CheckUpdateItem then
-				local ok, err = pcall(v.CheckUpdateItem, v)
+				local ok, err = pcall(v.CheckUpdateItem, v) -- redundant check ???
 				if not ok then
 					ErrorNoHalt(Format("%s:CheckUpdateItem failed: %s", tostring(v), err))
 				end
 			end
 		end
+end)
+]]
+hook.Add("EntityRemoved", "RemoveRootLocatorParticleEffectEnt", function(ent, fullUpdate)
+	if fullUpdate then return end
+
+	if IsValid(ent.RootLocator) then
+		ent.RootLocator:StopParticleEmission()
+		StopCritParticles(ent.RootLocator)
+		ent.RootLocator:Remove()
+	end
 end)
 
 end
