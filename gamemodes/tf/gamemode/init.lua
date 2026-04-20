@@ -2680,18 +2680,6 @@ function GM:PlayerSpawn(ply)
 		else
 			ply:SetSkin(0)
 		end
-
-		for k, v in pairs(ents.FindByClass('tf_wearable_item')) do
-			if v:GetClass() == 'tf_wearable_item' then
-				if v:GetOwner() == ply and string.find(v:GetModel(), "zombie") then
-					if ply:Team()==TEAM_BLU then
-						ply:SetSkin(5)
-					else
-						ply:SetSkin(4)
-					end
-				end
-			end
-		end
 	end
 	if (TF_IsGrapplingHookEnabled and TF_IsGrapplingHookEnabled()) then
 		ply:GiveItem("Grappling Hook")

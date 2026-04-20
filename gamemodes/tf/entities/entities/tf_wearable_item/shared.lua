@@ -155,12 +155,12 @@ CreateClientConVar( "tf_hatcolor_rainbow", "0", true, true )
 CreateClientConVar( "tf_misccolor_rainbow", "0", true, true )
 
 local function IsOwnerStealthed(owner)
-	if not IsValid(owner) then return false end
 	if owner.InCond then
 		if owner:InCond(TF_COND_STEALTHED) or owner:InCond(TF_COND_STEALTHED_USER_BUFF) or owner:InCond(TF_COND_STEALTHED_USER_BUFF_FADING) then
 			return true
 		end
 	end
+
 	return owner:GetNWBool("Cloaked", false)
 end
 
@@ -169,42 +169,46 @@ local function SyncStealthFromOwner(self)
 	if not IsValid(owner) then return end
 
 	if IsOwnerStealthed(owner) then
-		local ownerColor = owner:GetColor()
 		self:SetRenderMode(RENDERMODE_TRANSALPHA)
-		self:SetColor(Color(ownerColor.r, ownerColor.g, ownerColor.b, ownerColor.a))
+		self:SetColor(owner:GetColor())
 		self:SetMaterial(owner:GetMaterial() or "")
 		return
 	end
 
 	self:SetRenderMode(RENDERMODE_NORMAL)
-	self:SetColor(Color(255, 255, 255, 255))
-	if self:GetMaterial() ~= "" then
-		self:SetMaterial("")
-	end
+	self:SetColor(color_white)
+	self:SetMaterial("")
 end
 
+local isMountedCached = IsMounted("tf")
+
 function ENT:Draw()
-	if self.IsHiddenByVision and self:IsHiddenByVision(LocalPlayer()) then return end
-	if TF_ShouldHideOwnerWearablesForViewer and TF_ShouldHideOwnerWearablesForViewer(self:GetOwner(), LocalPlayer()) then return end
-	if (IsMounted("tf")) then
-		if self:GetOwner() ~= LocalPlayer() or LocalPlayer():ShouldDrawLocalPlayer() then
+	local ply = LocalPlayer()
+	if self.IsHiddenByVision and self:IsHiddenByVision(ply) then return end
+
+	local getOwner = self:GetOwner()
+	if TF_ShouldHideOwnerWearablesForViewer(getOwner, ply) then return end
+
+	if isMountedCached then
+		if getOwner ~= ply or ply:ShouldDrawLocalPlayer() then
 			SyncStealthFromOwner(self)
-			if CLIENT then
-				local tint = self.GetCosmeticTint and self:GetCosmeticTint() or nil
-				if isvector(tint) then
-					self.ProxyCosmeticTint = Vector(tint.x, tint.y, tint.z)
-					self.ProxyentPaintColor = self
-				end
+
+			local tint = self.GetCosmeticTint and self:GetCosmeticTint() or nil
+			if isvector(tint) then
+				self.ProxyCosmeticTint = tint
+				self.ProxyentPaintColor = self
 			end
+
 			self:StartVisualOverrides()
 			self:StartItemTint(self:GetItemTint())
-			self:GetOwner().RenderingWorldModel = true
+			getOwner.RenderingWorldModel = true
 			self:DrawModel()
-			self:GetOwner().RenderingWorldModel = false
+			getOwner.RenderingWorldModel = false
 			self:EndItemTint()
 			self:EndVisualOverrides()
 		end
 	else
+		self.Model = "models/empty.mdl"
 		self:SetModel("models/empty.mdl")
 		self:DrawModel()
 	end
@@ -247,215 +251,141 @@ function ENT:SetupPlayerRagdoll(rag)
 		end
 end
 
+end
+
 function ENT:Think()
-	if CLIENT then
-		SyncStealthFromOwner(self)
-		local model = ResolveWearableDisplayModel(self, LocalPlayer())
-		if model and self:GetModel() ~= model then
-			self:SetModel(model)
-		end
-		local tint = self.GetCosmeticTint and self:GetCosmeticTint() or nil
-		if isvector(tint) then
-			self.ProxyCosmeticTint = Vector(tint.x, tint.y, tint.z)
-			self.ProxyentPaintColor = self
-		end
-	end
-	
-	if self:GetOwner() ~= LocalPlayer() or LocalPlayer():ShouldDrawLocalPlayer() then
-		if self.ShadowCreated ~= true then
-			self.ShadowCreated = true
-			self:CreateShadow()
-		end
-	else
-		if self.ShadowCreated ~= false then
-			self.ShadowCreated = false
-			self:DestroyShadow()
-		end
-	end
-
+	local getOwner = self:GetOwner()
+	if not IsValid(getOwner) then return end
 
 	if CLIENT then
-		if self:GetOwner() ~= LocalPlayer() or LocalPlayer():ShouldDrawLocalPlayer() then
-			if self.ShadowCreated ~= true then
+		local ply = LocalPlayer()
+
+		if getOwner ~= ply or ply:ShouldDrawLocalPlayer() then
+			if not self.ShadowCreated then
 				self.ShadowCreated = true
 				self:CreateShadow()
 			end
 		else
-			if self.ShadowCreated ~= false then
+			if self.ShadowCreated then
 				self.ShadowCreated = false
 				self:DestroyShadow()
 			end
 		end
-	elseif SERVER then
-		if self:GetOwner():GetNoDraw() == true then
+	else
+		if getOwner:GetNoDraw() then
 			self:SetNoDraw(true)
 		else
 			self:SetNoDraw(false)
 		end
+
 		local itemTint, cosmeticTint = self:GetConfiguredPaintData()
 		self:SetItemTint(itemTint)
 		self:SetCosmeticTint(cosmeticTint)
 	end
-
-	if (IsValid(self.Owner) and string.find(self.Owner:GetModel(),"/player/touhou/")) then
-		if SERVER then
-			self:Remove()
-		end
-		return
-	end
-
-	if (file.Exists(self:GetModel(),"GAME")) then
-		local item = self:GetItemData()
-		if (IsValid(self.Owner)) then
-			if (item.visuals) then
-				if item.visuals.player_bodygroups then
-					local bodygroups = item.visuals.player_bodygroups
-					if (bodygroups.hat) then
-						self.Owner:SetBodygroup(self.Owner:FindBodygroupByName("hat"),1)
-					elseif (bodygroups.head) then
-						self.Owner:SetBodygroup(self.Owner:FindBodygroupByName("head"),1)
-					elseif (bodygroups.headphones) then
-						self.Owner:SetBodygroup(self.Owner:FindBodygroupByName("headphones"),1)
-					elseif (bodygroups.medal) then
-						self.Owner:SetBodygroup(self.Owner:FindBodygroupByName("medal"),1)
-					elseif (bodygroups.grenades) then
-						self.Owner:SetBodygroup(self.Owner:FindBodygroupByName("grenades"),1)
-					elseif (bodygroups.bullets) then
-						self.Owner:SetBodygroup(self.Owner:FindBodygroupByName("bullets"),1)
-					elseif (bodygroups.arrows) then
-						self.Owner:SetBodygroup(self.Owner:FindBodygroupByName("arrows"),1)
-					elseif (bodygroups.rightarm) then
-						self.Owner:SetBodygroup(self.Owner:FindBodygroupByName("rightarm"),1)
-					elseif (bodygroups.shoes_socks) then
-						self.Owner:SetBodygroup(self.Owner:FindBodygroupByName("shoes_socks"),1)
-					end
-				end
-			end
-			if (item and item.visuals) then
-				if item.visuals.player_bodygroups then
-					local bodygroups = item.visuals.player_bodygroups
-					if (bodygroups.hat) then
-						self.Owner:SetBodygroup(self.Owner:FindBodygroupByName("hat"),1)
-					elseif (bodygroups.head) then
-						self.Owner:SetBodygroup(self.Owner:FindBodygroupByName("head"),1)
-					elseif (bodygroups.headphones) then
-						self.Owner:SetBodygroup(self.Owner:FindBodygroupByName("headphones"),1)
-					elseif (bodygroups.medal) then
-						self.Owner:SetBodygroup(self.Owner:FindBodygroupByName("medal"),1)
-					elseif (bodygroups.grenades) then
-						self.Owner:SetBodygroup(self.Owner:FindBodygroupByName("grenades"),1)
-					elseif (bodygroups.bullets) then
-						self.Owner:SetBodygroup(self.Owner:FindBodygroupByName("bullets"),1)
-					elseif (bodygroups.arrows) then
-						self.Owner:SetBodygroup(self.Owner:FindBodygroupByName("arrows"),1)
-					elseif (bodygroups.rightarm) then
-						self.Owner:SetBodygroup(self.Owner:FindBodygroupByName("rightarm"),1)
-					elseif (bodygroups.shoes_socks) then
-						self.Owner:SetBodygroup(self.Owner:FindBodygroupByName("shoes_socks"),1)
-					end
-				end
-			end
-		end
-		if self.Model and string.find(self.Model,"_zombie") then
-			if (IsValid(self.Owner)) then
-				if (self.Owner:GetPlayerClass() == "spy") then
-					if (self.Owner:Team() == TEAM_BLU) then
-						self.Owner:SetSkin(23)
-						self:SetSkin(1)
-					else
-						self.Owner:SetSkin(22)
-						self:SetSkin(0)
-					end
-				else
-					if (self.Owner:Team() == TEAM_BLU) then
-						self.Owner:SetSkin(5)
-						self:SetSkin(1)
-					else
-						self.Owner:SetSkin(4)
-						self:SetSkin(0)
-					end
-				end
-			end
-		else
-			if (IsValid(self.Owner)) then
-				if (self.Owner:GetPlayerClass() == "spy") then
-					if (self.Owner:Team() == TEAM_BLU) then
-						self:SetSkin(1)
-					else
-						self:SetSkin(0)
-					end
-				else
-					if (self.Owner:Team() == TEAM_BLU) then
-						self:SetSkin(1)
-					else
-						self:SetSkin(0)
-					end
-				end
-			end
-		end
-
-	else
-		self.Model = "models/empty.mdl"
-		self:SetModel(self.Model)
-	end
-
 end
 
-end
-
-ResolveWearableDisplayModel = function(self, viewer)
-	local item = self:GetItemData()
-	if not istable(item) or not IsValid(self.Owner) then return nil end
+ResolveWearableDisplayModel = function(self, item)
+	local getOwner = self:GetOwner()
+	if not istable(item) or not IsValid(getOwner) then return nil end
 
 	local model
 	if item.model_player then
-		model = string.Replace(string.Replace(item.model_player, "%s", self.Owner:GetPlayerClass()), "demoman", "demo")
+		model = string.Replace(string.Replace(item.model_player, "%s", getOwner:GetPlayerClass()), "demoman", "demo")
 	elseif item.model_player_per_class then
-		if item.model_player_per_class[self.Owner:GetPlayerClass()] then
-			model = item.model_player_per_class[self.Owner:GetPlayerClass()]
+		if item.model_player_per_class[getOwner:GetPlayerClass()] then
+			model = item.model_player_per_class[getOwner:GetPlayerClass()]
 		else
 			model = tostring(item.model_player_per_class.basename)
 		end
 
-		model = string.Replace(string.Replace(model or "", "%s", self.Owner:GetPlayerClass()), "demoman", "demo")
-	end
-
-	if self.GetEffectiveDisplayModel then
-		return self:GetEffectiveDisplayModel(viewer, model)
+		model = string.Replace(string.Replace(model or "", "%s", getOwner:GetPlayerClass()), "demoman", "demo")
 	end
 
 	return model
 end
 
 function ENT:Initialize()
-	self.Owner = self:GetOwner()
-	self:DrawShadow(false)
+	local getOwner = self:GetOwner()
+	self.Owner = getOwner
+
+	local item = self:GetItemData()
+	local getModel = ResolveWearableDisplayModel(self, item)
+	if not getModel then self:Remove() return end
+
 	self:AddEFlags(EFL_KEEP_ON_RECREATE_ENTITIES)
 
-	if (file.Exists(self:GetModel(),"GAME")) then
-		self:AddToPlayerItems()
-		self.ProxyentPaintColor = self
-			
-		local item = self:GetItemData()
-		self.Model = ResolveWearableDisplayModel(self, CLIENT and LocalPlayer() or nil)
-		
-		if SERVER then
-			self:SetMoveType(MOVETYPE_NONE)
-			self:SetSolid(SOLID_NONE)
-			self:SetParent(self:GetOwner())
-			
-			if self.Model then
-				self:SetModel(self.Model)
-				self:SetKeyValue("effects", "1") 
-				
-				if item.set_sequence_to_class then
-					self:AddEffects(EF_NOINTERP)
-					self:ResetSequence(self:LookupSequence(self.Owner:GetPlayerClass()))
-				end
-			else
-				self:SetNoDraw(true)
-				self:DrawShadow(false)
+	self:AddToPlayerItems()
+	self.ProxyentPaintColor = self
+
+	self.Model = getModel
+
+	if SERVER then
+		self:SetMoveType(MOVETYPE_NONE)
+		self:SetSolid(SOLID_NONE)
+		self:SetParent(getOwner)
+
+		self:SetModel(self.Model)
+		self:SetKeyValue("effects", "1")
+
+		if item.set_sequence_to_class then
+			self:AddEffects(EF_NOINTERP)
+			self:ResetSequence(self:LookupSequence(getOwner:GetPlayerClass()))
+		end
+	end
+
+	self:DrawShadow(false)
+
+	if not IsValid(getOwner) then return end
+
+	if item and item.visuals then -- todo: This is not looking good
+		local bodygroups = item.visuals.player_bodygroups
+
+		if bodygroups then
+			if (bodygroups.hat) then
+				getOwner:SetBodygroup(getOwner:FindBodygroupByName("hat"), 1)
+			elseif (bodygroups.head) then
+				getOwner:SetBodygroup(getOwner:FindBodygroupByName("head"), 1)
+			elseif (bodygroups.headphones) then
+				getOwner:SetBodygroup(getOwner:FindBodygroupByName("headphones"), 1)
+			elseif (bodygroups.medal) then
+				getOwner:SetBodygroup(getOwner:FindBodygroupByName("medal"), 1)
+			elseif (bodygroups.grenades) then
+				getOwner:SetBodygroup(getOwner:FindBodygroupByName("grenades"), 1)
+			elseif (bodygroups.bullets) then
+				getOwner:SetBodygroup(getOwner:FindBodygroupByName("bullets"), 1)
+			elseif (bodygroups.arrows) then
+				getOwner:SetBodygroup(getOwner:FindBodygroupByName("arrows"), 1)
+			elseif (bodygroups.rightarm) then
+				getOwner:SetBodygroup(getOwner:FindBodygroupByName("rightarm"), 1)
+			elseif (bodygroups.shoes_socks) then
+				getOwner:SetBodygroup(getOwner:FindBodygroupByName("shoes_socks"), 1)
 			end
+		end
+	end
+
+	if string.find(self:GetModel(), "_zombie") then
+		if getOwner:GetPlayerClass() == "spy" then
+			if getOwner:Team() == TEAM_BLU then
+				getOwner:SetSkin(23)
+				self:SetSkin(1)
+			else
+				getOwner:SetSkin(22)
+				self:SetSkin(0)
+			end
+		else
+			if getOwner:Team() == TEAM_BLU then
+				getOwner:SetSkin(5)
+				self:SetSkin(1)
+			else
+				getOwner:SetSkin(4)
+				self:SetSkin(0)
+			end
+		end
+	else
+		if getOwner:Team() == TEAM_BLU or getOwner:Team() == TF_TEAM_PVE_INVADERS then
+			self:SetSkin(1)
+		else
+			self:SetSkin(0)
 		end
 	end
 end
