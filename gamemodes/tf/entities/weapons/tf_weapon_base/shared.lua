@@ -70,26 +70,20 @@ local function ShouldDrawForOwnerActiveWeapon(wep)
 end
 
 local function GetOwnerInvulnMaterial(wep)
-	local owner = IsValid(wep) and wep:GetOwner() or nil
-	if not IsValid(owner) then return nil end
-	if not owner.GetNWBool or not owner:GetNWBool("Invulnerable", false) then return nil end
-	local function pick_red_mat()
-		if file.Exists("materials/models/effects/invulnfx_red.vmt", "GAME") then
-			return "models/effects/invulnfx_red"
-		end
-		return "models/effects/invulnfx_red2"
-	end
+	local owner = IsValid(wep) and wep:GetOwner()
+	if not IsValid(owner) then return end
+	if not owner:GetNWBool("Invulnerable", false) then return end
+
+	local isBlu
+
 	if owner:IsPlayer() then
-		local skin = owner:GetSkin()
-		if skin and skin >= 0 and bit.band(skin, 1) == 1 then
-			return "models/effects/invulnfx_blue"
-		end
-		return pick_red_mat()
+		isBlu = bit.band(owner:GetSkin() or 0, 1) == 1
+	elseif GAMEMODE and GAMEMODE.EntityTeam then
+		local team = GAMEMODE:EntityTeam(owner)
+		isBlu = (team == TEAM_BLU or team == TF_TEAM_PVE_INVADERS)
 	end
-	if GAMEMODE and GAMEMODE.EntityTeam and (GAMEMODE:EntityTeam(owner) == TEAM_BLU or GAMEMODE:EntityTeam(owner) == TF_TEAM_PVE_INVADERS) then
-		return "models/effects/invulnfx_blue"
-	end
-	return pick_red_mat()
+
+	return isBlu and "models/effects/invulnfx_blue" or "models/effects/invulnfx_red"
 end
 
 local function GetEffectiveWeaponMaterial(wep, fallbackMat)
@@ -980,6 +974,15 @@ function SWEP:AutoSwitchIfOutOfAmmo()
 	return false
 end
 
+function SWEP:UpdateCModelCritProxyStatus()
+	local clModel = self.CModel
+
+	if IsValid(clModel) then
+		clModel:SetProxyVar("CritTeam", self:GetOwner():GetProxyVar("CritTeam"))
+		clModel:SetProxyVar("CritStatus", self:GetOwner():GetProxyVar("CritStatus"))
+	end
+end
+
 function SWEP:Deploy() 
 	if self.CheckUpdateItem then
 		self:CheckUpdateItem()
@@ -1020,24 +1023,18 @@ function SWEP:Deploy()
 		self:TFFlipViewmodel()
 	end
 
-	self:InspectAnimCheck()
+	self:Inspect()
+
 	if (self.MarkForDeath) then
 		self.Owner:AddPlayerState(PLAYERSTATE_MARKED, true)
 	end
-	if CLIENT then
-		if (self:GetItemData().image_inventory and self:GetItemData().item_iconname) then
-			killicon.Add( self:GetItemData().item_iconname, ""..self:GetItemData().image_inventory.."_large", Color( 255, 255, 255, 255 ) )
-		elseif (self:GetItemData().image_inventory and !self:GetItemData().item_iconname) then
-			killicon.Add( string.Replace(self:GetClass(),"tf_weapon_",""), ""..self:GetItemData().image_inventory.."_large", Color( 255, 255, 255, 255 ) )
-		end
-	end
-	if (self:GetItemData().item_name) then
-		self.PrintName = self:GetItemData().name
-	end
-	if (self.Owner:IsHL2()) then
+
+	if self.Owner:IsHL2() then
 		self:SetWeaponHoldType(self.HoldTypeHL2 or self.HoldType)
+	else
+		self:SetWeaponHoldType(self.HoldType)
 	end
-	
+
 	if (self:GetClass() == "tf_weapon_shotgun") then
 		if (self.Owner:GetPlayerClass() == "soldier"
 		|| self.Owner:GetPlayerClass() == "heavy"
@@ -1326,14 +1323,9 @@ function SWEP:Deploy()
 				end
 			end
 		end
-	if IsValid(self.CModel) then
 
-		local t2 = self.Owner:GetProxyVar("CritTeam") 
-		local s2 = self.Owner:GetProxyVar("CritStatus")
-		self.CModel:SetProxyVar("CritTeam",t2)
-		self.CModel:SetProxyVar("CritStatus",s2)
+	self:UpdateCModelCritProxyStatus()
 
-	end
 	self:StopTimers()
 	self.DeployPlayed = nil
 
@@ -1368,7 +1360,7 @@ function SWEP:Deploy()
 				self:SetSkin(self.WeaponSkin or 0)
 			end
 		else
-			self:SetSkin(self.WeaponSkin)
+			self:SetSkin(self.WeaponSkin or 0)
 		end
 		if !self.Owner:IsHL2() then
 			self.Owner:ResetClassSpeed()
@@ -1408,7 +1400,6 @@ function SWEP:Deploy()
 		return false
 	end
 
-	self:InspectAnimCheck()
 	local hold = self.HoldType
 	local drawAnim = self.VM_DRAW
 	if (self.VM_DRAW != nil) then
@@ -1429,32 +1420,17 @@ function SWEP:Deploy()
 	if (IsValid(self.CModel)) then
 		self.CModel:SetSkin(self.WeaponSkin or self:GetOwner():GetSkin())
 	end
+
 	return true
 end
 
 function SWEP:InspectAnimCheck()
 	-- todo: find a better way to do this
 	-- InspectAnimCheck probably isn't the best place for this...
-	if (string.StartWith(self.Owner:GetModel(),"models/infected/")) then return end
-	
-	if (self:GetItemData()) then
-		if (self:GetItemData().model_player) then
 
-			if (self:GetItemData().model_player == "models/workshop/weapons/c_models/c_demo_sultan_sword/c_demo_sultan_sword.mdl") then
-				self:SetWeaponHoldType("MELEE_ALLCLASS")
-			end
-			
-		end
-	end
-	if CLIENT then
-		if (self:GetItemData().image_inventory and self:GetItemData().item_iconname) then
-			killicon.Add( self:GetItemData().item_iconname, self:GetItemData().image_inventory, Color( 255, 255, 255, 255 ) )
-		elseif (self:GetItemData().image_inventory) then
-			killicon.Add( string.Replace(self:GetClass(),"tf_weapon_",""), self:GetItemData().image_inventory, Color( 255, 255, 255, 255 ) )
-		end
-	end
-		if self:GetVisuals() then
-			local visuals = self:GetVisuals()
+		local visuals = self:GetVisuals()
+
+		if visuals then
 			if visuals.animation_replacement then 
 				local replace = visuals.animation_replacement
 
@@ -1574,17 +1550,14 @@ function SWEP:ResetInspect()
 end
 
 function SWEP:Inspect()
-	if IsValid(self.CModel) then
-
-		local t2 = self.Owner:GetProxyVar("CritTeam") 
-		local s2 = self.Owner:GetProxyVar("CritStatus")
-		self.CModel:SetProxyVar("CritTeam",t2)
-		self.CModel:SetProxyVar("CritStatus",s2)
-
+	if CLIENT then
+		self:UpdateCModelCritProxyStatus() -- todo: this not supposed to be here, it belong to Think (sniper rifle and others don't inherit Think from the base)
 	end
+
 	if SERVER and CurTime() > self:GetNextPrimaryFire() then
 		self:AutoSwitchIfOutOfAmmo()
 	end
+
 	self:InspectAnimCheck()
 end	
 
@@ -1971,7 +1944,7 @@ end
 
 function SWEP:Think()
 	self:Inspect()
-	self:InspectAnimCheck()
+
 	if (self:GetNWFloat("ReloadTimeMultiplier",1.0) > 0.0) then
 		self.ReloadTimeMultiplier = self:GetNWFloat("ReloadTimeMultiplier",1.0)
 	end
@@ -2054,9 +2027,7 @@ function SWEP:Think()
 				vm:SetSkin(vskin)
 			end
 		end
-		if (self:GetItemData().item_name) then
-			self.PrintName = self:GetItemData().name
-		end
+
 		if not hideForTaunt and drawLocalViewModel and IsValid(self.CModel) then
 			self.CModel:DrawModel()
 			self.CModel:SetSkin(self.WeaponSkin or self.Owner:GetSkin())
@@ -2065,14 +2036,7 @@ function SWEP:Think()
 				self.CModel:SetMaterial(cmat)
 			end
 		end
-		if IsValid(self.CModel) then
-	
-			local t2 = self.Owner:GetProxyVar("CritTeam") 
-			local s2 = self.Owner:GetProxyVar("CritStatus")
-			self.CModel:SetProxyVar("CritTeam",t2)
-			self.CModel:SetProxyVar("CritStatus",s2)
-	
-		end
+
 		if not hideForTaunt and IsValid(self.WModel) then
 			local skin = self.WeaponSkin or self.Owner:GetSkin()
 			if (self.WModel:GetSkin() != skin) then
@@ -2142,10 +2106,10 @@ function SWEP:Think()
 			self.VM_INSPECT_IDLE = ACT_PRIMARY_ALT1_VM_INSPECT_IDLE
 			self.VM_INSPECT_END = ACT_PRIMARY_ALT1_VM_INSPECT_END
 
-		elseif self:GetItemData().model_player == "models/weapons/c_models/c_breadmonster_sapper/c_breadmonster_sapper.mdl" then
+		elseif itemData.model_player == "models/weapons/c_models/c_breadmonster_sapper/c_breadmonster_sapper.mdl" then
 			self.VM_DRAW = ACT_BREADSAPPER_VM_DRAW
-			self.VM_IDLE = ACT_BREADSAPPER_VM_IDLE
-		elseif self:GetItemData().image_inventory == "backpack/weapons/v_models/v_fist_heavy" then			
+			self.VM_IDLE = ACT_BREADSAPPER_VM_IDLE			
+		elseif itemData.image_inventory == "backpack/weapons/v_models/v_fist_heavy" then			
 			if self.Owner:GetPlayerClass() == "charger" then
 				self.VM_IDLE = ACT_VM_IDLE
 				self.VM_DRAW = ACT_VM_DRAW
@@ -2286,17 +2250,14 @@ function SWEP:Think()
 	else
 		--self.WorldModel = wmodel;
 	end
-	if (self.Owner:IsHL2()) then
-		self:SetWeaponHoldType(self.HoldTypeHL2 or self.HoldType)
-	else
-		self:SetWeaponHoldType(self.HoldType)
-	end
+
 	self:AddFlags(EF_NOSHADOW)
 	if (self.Owner:GetPlayerClass() == "pyro" and self:GetClass() == "tf_weapon_rocketlauncher_qrl") then
 		self:SetHoldType("ITEM1")
 		self.HoldType = "ITEM1"
 	end
-	if self:GetItemData().model_player == "models/weapons/c_models/c_breadmonster_sapper/c_breadmonster_sapper.mdl" then
+
+	if itemData.model_player == "models/weapons/c_models/c_breadmonster_sapper/c_breadmonster_sapper.mdl" then
 		self.VM_DRAW = ACT_BREADSAPPER_VM_DRAW
 		self.VM_IDLE = ACT_BREADSAPPER_VM_IDLE
 	end
@@ -2333,7 +2294,7 @@ function SWEP:Think()
 			self.Owner:GetHands():SetSkin( 0 )
 		end
 	end
-	self:InspectAnimCheck() 
+
 	if (self.Owner:GetPlayerClass() == "superheavyweightchamp") then
 		self.Primary.Delay = 1.0 * 0.6
 	end
@@ -2398,7 +2359,7 @@ function SWEP:Think()
 			end
 			self.NextReload2 = CurTime() + self.ReloadTime
 			if CLIENT then
-				if self:GetItemData().model_player == "models/weapons/c_models/c_scattergun.mdl" then
+				if itemData.model_player == "models/weapons/c_models/c_scattergun.mdl" then
 					local attachID = IsValid(self.CModel) and self.CModel:LookupAttachment("eject_brass") or 0
 					local attach = attachID > 0 and self.CModel:GetAttachment(attachID) or nil
 					if attach then
@@ -2425,7 +2386,7 @@ function SWEP:Think()
 					end
 				end
 			if self.ReloadTime == 1.1 then 
-				if self:GetItemData().model_player == "models/weapons/c_models/c_dumpster_device/c_dumpster_device.mdl" then
+				if itemData.model_player == "models/weapons/c_models/c_dumpster_device/c_dumpster_device.mdl" then
 					if CLIENT then
 						self.Owner:EmitSoundEx("Weapon_DumpsterRocket.Reload")
 					end
@@ -2489,7 +2450,7 @@ function SWEP:Think()
 			self.Owner:GetViewModel():SetPlaybackRate(1.0 / self.FastReloadTime)
 		end
 		if CLIENT then
-			if self:GetItemData().model_player == "models/weapons/c_models/c_scattergun.mdl" then
+			if itemData.model_player == "models/weapons/c_models/c_scattergun.mdl" then
 				local attachID = IsValid(self.CModel) and self.CModel:LookupAttachment("eject_brass") or 0
 				local attach = attachID > 0 and self.CModel:GetAttachment(attachID) or nil
 				if attach then
@@ -2503,7 +2464,7 @@ function SWEP:Think()
 		end
 		--self.Owner:SetAnimation(10000) -- reload loop	 	
 		if self.ReloadTime == 1.1 then 
-			if self:GetItemData().model_player == "models/weapons/c_models/c_dumpster_device/c_dumpster_device.mdl" then
+			if itemData.model_player == "models/weapons/c_models/c_dumpster_device/c_dumpster_device.mdl" then
 				if CLIENT then
 					self.Owner:EmitSoundEx("Weapon_DumpsterRocket.Reload")
 				end
@@ -2641,14 +2602,18 @@ end
 
 function SWEP:Initialize()
 	self:SetHoldType(self.HoldType)
-	if (self:GetItemData().item_name) then
-		self.PrintName = self:GetItemData().name
-	end	 
+
 	if CLIENT then
-		if (self:GetItemData().image_inventory and self:GetItemData().item_iconname) then
-			killicon.Add( self:GetItemData().item_iconname, self:GetItemData().image_inventory, Color( 255, 255, 255, 255 ) )
-		elseif (self:GetItemData().image_inventory) then
-			killicon.Add( string.Replace(self:GetClass(),"tf_weapon_",""), self:GetItemData().image_inventory, Color( 255, 255, 255, 255 ) )
+		local itemData = self:GetItemData()
+
+		if itemData.item_name then
+			self.PrintName = itemData.name
+		end
+
+		if itemData.item_iconname and itemData.image_inventory then
+			killicon.Add(itemData.item_iconname, itemData.image_inventory, color_white)
+		elseif itemData.image_inventory then
+			killicon.Add(string.Replace(self:GetClass(), "tf_weapon_", ""), itemData.image_inventory, color_white)
 		end
 	end
 end
