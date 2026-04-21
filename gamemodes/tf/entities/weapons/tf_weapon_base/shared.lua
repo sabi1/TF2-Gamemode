@@ -1684,6 +1684,7 @@ function SWEP:CanPrimaryAttack()
 	end
 
 	if (self.Owner:GetNWBool("Bonked")) then return false end
+	if self.Primary and self.Primary.Ammo == "none" then return true end
 	if (((self.Primary.ClipSize == -1 and self:Ammo1() > 0) or self:Clip1() > 0) and self.Owner:GetNWBool("Bonked",false) == false) then
 		return true
 	end
@@ -1705,6 +1706,7 @@ function SWEP:CanSecondaryAttack()
 		end
 	end
 
+	if self.Secondary and self.Secondary.Ammo == "none" then return true end
 	if (self.Secondary.ClipSize == -1 and self:Ammo2() > 0) or self:Clip2() > 0 then
 		return true
 	end

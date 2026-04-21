@@ -87,6 +87,45 @@ ENT.CritDamageMultiplier = 3
 
 ENT.HitboxSize = 10
 
+local DEFAULT_ROCKET_SPEED = 1100
+local MAX_ROCKET_SPEED = 10000
+
+local function IsFiniteNumber(value)
+	return isnumber(value) and value == value and value ~= math.huge and value ~= -math.huge
+end
+
+local function ResolveRocketSpeed(value)
+	value = tonumber(value)
+	if not IsFiniteNumber(value) or value <= 0 then
+		return DEFAULT_ROCKET_SPEED
+	end
+
+	return math.Clamp(value, 1, MAX_ROCKET_SPEED)
+end
+
+local function IsFiniteVector(value)
+	return value ~= nil
+		and IsFiniteNumber(value.x)
+		and IsFiniteNumber(value.y)
+		and IsFiniteNumber(value.z)
+end
+
+local function ResolveRocketVelocity(ent, speed)
+	local forward = IsValid(ent) and ent:GetForward() or vector_origin
+	if not IsFiniteVector(forward) then
+		forward = Vector(1, 0, 0)
+	end
+
+	local dir = Vector(forward.x, forward.y, forward.z)
+	if dir:LengthSqr() <= 0 then
+		dir = Vector(1, 0, 0)
+	else
+		dir:Normalize()
+	end
+
+	return dir * ResolveRocketSpeed(speed)
+end
+
 function ENT:Critical()
 	if self:GetOwner():GetClass() == "eyeball_boss" then
 		return true
@@ -146,7 +185,8 @@ function ENT:Initialize()
 	
 	self:SetCollisionGroup(COLLISION_GROUP_PROJECTILE)
 	
-	self:SetLocalVelocity(self:GetForward() * self.BaseSpeed)
+	self.BaseSpeed = ResolveRocketSpeed(self.BaseSpeed)
+	self:SetLocalVelocity(ResolveRocketVelocity(self, self.BaseSpeed))
 	
 	--[[
 	if self.FastRocket then

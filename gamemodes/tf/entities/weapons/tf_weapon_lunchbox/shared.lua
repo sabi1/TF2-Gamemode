@@ -42,12 +42,96 @@ SWEP.VM_DRAW = ACT_ITEM1_VM_DRAW
 SWEP.VM_IDLE = ACT_ITEM1_VM_IDLE
 SWEP.VM_PRIMARYATTACK = ACT_ITEM1_VM_RELOAD
 
+function SWEP:IsSteakLunchbox()
+	local item = self.GetItemData and self:GetItemData() or {}
+	return item.name == "Buffalo Steak Sandvich"
+end
+
+function SWEP:IsChocolateLunchbox()
+	local item = self.GetItemData and self:GetItemData() or {}
+	local model = item.model_player or ""
+	return item.name == "The Dalokohs Bar"
+		or string.find(model, "/c_chocolate/", 1, true) ~= nil
+end
+
+function SWEP:IsBananaLunchbox()
+	local item = self.GetItemData and self:GetItemData() or {}
+	local model = item.model_player or ""
+	return item.name == "The Second Banana"
+		or string.find(model, "/banana/", 1, true) ~= nil
+end
+
+function SWEP:GetLunchboxRechargeTime()
+	if isnumber(self.RechargeTime) then
+		return self.RechargeTime
+	end
+
+	local item = self.GetItemData and self:GetItemData() or {}
+	local staticAttrs = item.static_attrs or {}
+	local recharge = tonumber(staticAttrs.item_meter_charge_rate)
+	if recharge and recharge > 0 then
+		return recharge
+	end
+
+	return self.Primary.Delay
+end
+
+function SWEP:HasAmmo()
+	return CurTime() >= (self.LunchboxRechargeEnd or 0)
+end
+
+function SWEP:DropAllowed()
+	return IsValid(self.Owner) and not self.Owner:GetNWBool("Taunting", false)
+end
+
+function SWEP:CanPrimaryAttack()
+	if not self:CallBaseFunction("CanPrimaryAttack") then return false end
+	if IsValid(self.Owner) and self.Owner:GetNWBool("Taunting", false) then return false end
+	return self:HasAmmo()
+end
+
+function SWEP:CanSecondaryAttack()
+	if not self:CallBaseFunction("CanSecondaryAttack") then return false end
+	if not self:DropAllowed() then return false end
+	return self:HasAmmo()
+end
+
+function SWEP:DrainAmmo(forceCooldown)
+	if not IsValid(self.Owner) then return end
+
+	local shouldCooldown = forceCooldown
+		or self:IsSteakLunchbox()
+		or self:IsChocolateLunchbox()
+		or self:IsBananaLunchbox()
+		or self.Owner:Health() < self.Owner:GetMaxHealth()
+
+	if not shouldCooldown then
+		return
+	end
+
+	local rechargeTime = self:GetLunchboxRechargeTime()
+	local rechargeEnd = CurTime() + rechargeTime
+	self.LunchboxRechargeEnd = rechargeEnd
+	self:SetNextPrimaryFire(rechargeEnd)
+	self:SetNextSecondaryFire(rechargeEnd)
+
+	timer.Simple(rechargeTime, function()
+		if not IsValid(self) then return end
+		self:SetBodygroup(0, 0)
+		if SERVER and IsValid(self.Owner) then
+			self.Owner:EmitSoundEx("player/recharged.wav", 95)
+		end
+	end)
+end
+
 function SWEP:PrimaryAttack()
-	if self.Owner:Health() <= self.Owner:GetMaxHealth() - 1 || self:GetItemData().name == "Buffalo Steak Sandvich" then
-		self:SetNextPrimaryFire( CurTime() + self.Primary.Delay )
+	if not self:CanPrimaryAttack() then return end
+
+	if self.Owner:Health() <= self.Owner:GetMaxHealth() - 1 || self:IsSteakLunchbox() then
+		self:SetNextPrimaryFire( CurTime() + self:GetLunchboxRechargeTime() )
 	else
 		self:SetNextPrimaryFire( CurTime() + 5 )
-	end 
+	end
 	if SERVER then
 		net.Start("ActivateTauntCam")
 		net.Send(self.Owner)
@@ -57,8 +141,9 @@ function SWEP:PrimaryAttack()
 	
 	if SERVER then
 	
-	if (self:GetItemData().name != "Buffalo Steak Sandvich") then
+	if (!self:IsSteakLunchbox()) then
 		timer.Simple(1, function()
+			if not IsValid(self) or not IsValid(self.Owner) then return end
 			--self.WModel2:SetBodygroup(0, 1)
 			if self.Owner:GetInfoNum("tf_giant_robot",0) == 1 then
 				return
@@ -71,12 +156,15 @@ function SWEP:PrimaryAttack()
 			end
 		end)
 		timer.Simple(2, function()
+			if not IsValid(self) or not IsValid(self.Owner) then return end
 			GAMEMODE:HealPlayer(self.Owner, self.Owner, 100, true, false)
 		end)
 		timer.Simple(3, function()
+			if not IsValid(self) or not IsValid(self.Owner) then return end
 			GAMEMODE:HealPlayer(self.Owner, self.Owner, 100, true, false)
 		end)
 		timer.Simple(4, function()
+			if not IsValid(self) or not IsValid(self.Owner) then return end
 			GAMEMODE:HealPlayer(self.Owner, self.Owner, 100, true, false)
 			net.Start("DeActivateTauntCam")
 			net.Send(self.Owner)
@@ -86,13 +174,11 @@ function SWEP:PrimaryAttack()
 			end
 		end)
 		timer.Simple(5, function()
-			
-			if (self.Owner:Health() <= self.Owner:GetMaxHealth() - 1) then
-				
-				timer.Simple(self.Primary.Delay, function()
-					self:SetBodygroup(0, 0)
-				end)
-			else 
+			if not IsValid(self) or not IsValid(self.Owner) then return end
+
+			if (self.Owner:Health() <= self.Owner:GetMaxHealth() - 1 or self:IsChocolateLunchbox() or self:IsBananaLunchbox()) then
+				self:DrainAmmo()
+			else
 				self:SetBodygroup(0, 0)
 			end
 			if self.Owner:GetInfoNum("tf_giant_robot",0) == 1 then
@@ -106,6 +192,7 @@ function SWEP:PrimaryAttack()
 	else
 	
 		timer.Simple(1, function()
+			if not IsValid(self) or not IsValid(self.Owner) then return end
 			--self.WModel2:SetBodygroup(0, 1)
 			if self.Owner:GetInfoNum("tf_giant_robot",0) == 1 then
 				return
@@ -119,12 +206,15 @@ function SWEP:PrimaryAttack()
 			end
 		end)
 		timer.Simple(2, function()
+			if not IsValid(self) or not IsValid(self.Owner) then return end
 			GAMEMODE:HealPlayer(self.Owner, self.Owner, 100, true, false)
 		end)
 		timer.Simple(3, function()
+			if not IsValid(self) or not IsValid(self.Owner) then return end
 			GAMEMODE:HealPlayer(self.Owner, self.Owner, 100, true, false)
 		end)
 		timer.Simple(4, function()
+			if not IsValid(self) or not IsValid(self.Owner) then return end
 			GAMEMODE:HealPlayer(self.Owner, self.Owner, 100, true, false)
 			net.Start("DeActivateTauntCam")
 			net.Send(self.Owner)
@@ -132,10 +222,9 @@ function SWEP:PrimaryAttack()
 			self.Owner:SendLua("RunConsoleCommand('lastinv')")
 		end)
 		timer.Simple(5, function()
-			
-			timer.Simple(self.Primary.Delay, function()
-				self:SetBodygroup(0, 0)
-			end)
+			if not IsValid(self) or not IsValid(self.Owner) then return end
+
+			self:DrainAmmo(true)
 			if self.Owner:GetInfoNum("tf_giant_robot",0) == 1 then
 				self.Owner:EmitSoundEx("vo/mvm/mght/heavy_mvm_m_sandwichtaunt"..math.random(10,17)..".wav", 80, 100)
 			elseif self.Owner:GetInfoNum("tf_robot",0) == 1 then
@@ -162,16 +251,18 @@ function SWEP:PrimaryAttack()
 end
 
 function SWEP:SecondaryAttack()
-	self:SetNextSecondaryFire( CurTime() + 20 )
+	if not self:CanSecondaryAttack() then return end
+
+	self:DrainAmmo(true)
 	if SERVER then
-		local healthkit = ents.Create("item_healthkit_small")
+		local healthkit = ents.Create((self:IsChocolateLunchbox() or self:IsBananaLunchbox()) and "item_healthkit_small" or "item_healthkit_medium")
 		healthkit:SetPos(self.Owner:GetEyeTrace().StartPos)
 		healthkit:SetOwner(self.Owner)
 		healthkit.RespawnTime = -1
 		healthkit:Spawn()  
 		if self:GetItemData().model_player == "models/workshop/weapons/c_models/c_chocolate/c_chocolate.mdl" or self:GetItemData().model_player == "models/weapons/c_models/c_chocolate/c_chocolate.mdl" then
 			healthkit:SetModel("models/workshop/weapons/c_models/c_chocolate/plate_chocolate.mdl")	
-		elseif self:GetItemData().model_player == "models/workshop/weapons/c_models/c_chocolate/c_chocolate.mdl" or self:GetItemData().model_player == "models/weapons/c_models/c_chocolate/c_chocolate.mdl" then
+		elseif self:IsBananaLunchbox() then
 			healthkit:SetModel("models/items/banana/plate_banana.mdl")
 		elseif self:GetItemData().model_player == "models/weapons/c_models/c_sandwich/c_robo_sandwich.mdl" then
 			healthkit:SetModel("models/items/plate_robo_sandwich.mdl")

@@ -193,6 +193,10 @@ local function ExpandAABB(mins, maxs, amount)
 	return mins - amount, maxs + amount
 end
 
+local function CopyVector(vec)
+	return Vector(vec.x, vec.y, vec.z)
+end
+
 local function AABBsIntersect(minsA, maxsA, minsB, maxsB)
 	return maxsA.x >= minsB.x and minsA.x <= maxsB.x
 		and maxsA.y >= minsB.y and minsA.y <= maxsB.y
@@ -264,7 +268,10 @@ local function ScanSpawnDoors()
 			local teamNum = ResolveSpawnDoorTeam(door)
 			if not teamNum then continue end
 
+			local mins, maxs = GetBrushBounds(door)
 			door._tfSpawnDoorTeam = teamNum
+			door._tfSpawnDoorClosedMins = mins and CopyVector(mins) or nil
+			door._tfSpawnDoorClosedMaxs = maxs and CopyVector(maxs) or nil
 			door._tfSpawnDoorLocked = nil
 			table.insert(doors, door)
 		end
@@ -277,7 +284,11 @@ local function IsFriendlyNearSpawnDoor(door)
 	local teamNum = door._tfSpawnDoorTeam
 	if not teamNum then return false end
 
-	local mins, maxs = GetBrushBounds(door)
+	local mins = door._tfSpawnDoorClosedMins
+	local maxs = door._tfSpawnDoorClosedMaxs
+	if not mins or not maxs then
+		mins, maxs = GetBrushBounds(door)
+	end
 	if not mins then return false end
 	mins, maxs = ExpandAABB(mins, maxs, Vector(96, 96, 64))
 

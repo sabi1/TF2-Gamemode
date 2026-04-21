@@ -462,10 +462,18 @@ concommand.Add("tf_upgradeweprapidfire2clientonly", function(ply)
 end)
 concommand.Add("l4d_changeclass", TF_OpenLegacyL4DMenu)
 concommand.Add("l4d2_changeclass", TF_OpenLegacyL4DMenu)
-concommand.Add("tf_changeclass", ClassSelection)
-concommand.Add("tf_door", DoorClose)
-concommand.Add("tf_hatpainter", HatPicker)
-concommand.Add("tf_menu", ClassSelection)
+concommand.Add("tf_changeclass", function(...)
+	if isfunction(ClassSelection) then return ClassSelection(...) end
+end)
+concommand.Add("tf_door", function(...)
+	if isfunction(DoorClose) then return DoorClose(...) end
+end)
+concommand.Add("tf_hatpainter", function(...)
+	if isfunction(HatPicker) then return HatPicker(...) end
+end)
+concommand.Add("tf_menu", function(...)
+	if isfunction(ClassSelection) then return ClassSelection(...) end
+end)
 
 -- Gamemode-only key behavior:
 -- E -> voicemenu 0 0
