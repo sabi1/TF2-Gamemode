@@ -1,6 +1,4 @@
 -- Not for use with Sandbox gamemode, so we don't care about this
-AddCSLuaFile()
-
 SWEP.Author			= ""
 SWEP.Contact		= ""
 SWEP.Purpose		= ""
@@ -553,11 +551,6 @@ local cvar_bobcycle = CreateClientConVar("tf_cl_bobcycle", "0.8", false, false)
 
 -- Initialize the weapon as a TF item
 tf_item.InitializeAsBaseItem(SWEP)
-
-include("shd_util.lua")
-include("shd_anim.lua")
-include("shd_sound.lua")
-include("shd_crits.lua")
 
 function SWEP:StopTimers()
 	timer.Stop("StartInspection")

@@ -1,12 +1,17 @@
-AddCSLuaFile("shared.lua")
 AddCSLuaFile("cl_init.lua")
-AddCSLuaFile()
+AddCSLuaFile("shared.lua")
+
 AddCSLuaFile("shd_util.lua")
 AddCSLuaFile("shd_anim.lua")
 AddCSLuaFile("shd_sound.lua")
 AddCSLuaFile("shd_crits.lua")
 
 include("shared.lua")
+
+include("shd_util.lua")
+include("shd_anim.lua")
+include("shd_sound.lua")
+include("shd_crits.lua")
 
 SWEP.Weight				= 5
 SWEP.AutoSwitchTo		= false 

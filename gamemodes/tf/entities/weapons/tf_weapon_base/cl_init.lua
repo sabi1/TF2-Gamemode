@@ -1,5 +1,9 @@
-AddCSLuaFile()
 include('shared.lua')
+
+include("shd_util.lua")
+include("shd_anim.lua")
+include("shd_sound.lua")
+include("shd_crits.lua")
 
 local debugWorldModels = CreateClientConVar("tf_debug_worldmodels", "0", true, false)
 local forceWorldModelDraw = CreateClientConVar("tf_force_worldmodel_draw", "0", true, false)
