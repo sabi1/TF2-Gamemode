@@ -362,34 +362,34 @@ local function CollectWearableModels(owner)
 			return
 		end
 
-		local slot = string.lower(tostring(itemData and itemData.item_slot or ""))
+		--local slot = string.lower(tostring(itemData and itemData.item_slot or ""))
 		-- Respect cosmetic slot restrictions (head/misc only).
-		if slot ~= "head" and slot ~= "misc" then
-			return
-		end
+		--if slot ~= "head" and slot ~= "misc" then
+		--	return
+		--end
 
 		entries[#entries + 1] = {
 			model = mdl,
 			idx = ent:EntIndex(),
-			slot = slot,
+			--slot = slot,
 			tint = ent.GetCosmeticTint and ent:GetCosmeticTint() or nil,
 			itemTint = ent.GetItemTint and ent:GetItemTint() or nil,
 		}
 	end)
 	table.sort(entries, function(a, b) return a.idx < b.idx end)
 
-	local pickedHead = 0
-	local pickedMisc = 0
+	--local pickedHead = 0
+	--local pickedMisc = 0
 	local result = {}
 	local seen = {}
 	for _, entry in ipairs(entries) do
-		if #result >= 3 then break end
+		if #result > 4 then break end
 
-		if entry.slot == "head" then
-			if pickedHead >= 1 then continue end
-		elseif entry.slot == "misc" then
-			if pickedMisc >= 2 then continue end
-		end
+		--if entry.slot == "head" then
+		--	if pickedHead >= 1 then continue end
+		--elseif entry.slot == "misc" then
+		--	if pickedMisc >= 2 then continue end
+		--end
 
 		if seen[entry.model] then continue end
 		seen[entry.model] = true
@@ -398,8 +398,8 @@ local function CollectWearableModels(owner)
 			tint = isvector(entry.tint) and Vector(entry.tint.x, entry.tint.y, entry.tint.z) or nil,
 			itemTint = tonumber(entry.itemTint) or 0,
 		}
-		if entry.slot == "head" then pickedHead = pickedHead + 1 end
-		if entry.slot == "misc" then pickedMisc = pickedMisc + 1 end
+		--if entry.slot == "head" then pickedHead = pickedHead + 1 end
+		--if entry.slot == "misc" then pickedMisc = pickedMisc + 1 end
 	end
 
 	return result
@@ -443,8 +443,8 @@ local function ApplyHUDWearableBodygroups(baseEnt, owner, teamNum, className)
 
 	IterateOwnerWearables(owner, function(_, itemData)
 		if not istable(itemData) then return end
-		local slot = string.lower(tostring(itemData.item_slot or ""))
-		if slot ~= "head" and slot ~= "misc" then return end
+		--local slot = string.lower(tostring(itemData.item_slot or ""))
+		--if slot ~= "head" and slot ~= "misc" then return end
 
 		local vis = itemData.visuals
 		if teamNum == TEAM_BLU or teamNum == TF_TEAM_PVE_INVADERS then
@@ -532,14 +532,6 @@ local function GetHUDCosmeticModels(classPly)
 	return CollectWearableModels(owner)
 end
 
-local function ApplyTeamSkin(ent, teamNum)
-	if not IsValid(ent) then return end
-	local skin = (teamNum == TEAM_BLU or teamNum == TF_TEAM_PVE_INVADERS) and 1 or 0
-	if ent.SetSkin and ent:GetSkin() ~= skin then
-		ent:SetSkin(skin)
-	end
-end
-
 local function EnsureBonemergedChild(parentEnt, childEnt, modelPath, teamNum, tint, itemTint)
 	if not IsValid(parentEnt) then return nil end
 
@@ -566,7 +558,7 @@ local function EnsureBonemergedChild(parentEnt, childEnt, modelPath, teamNum, ti
 	-- Keep HUD preview attachments out of the main world render; the DModelPanel
 	-- draws them explicitly during its own 3D pass.
 	childEnt:SetNoDraw(true)
-	ApplyTeamSkin(childEnt, teamNum)
+
 	if childEnt.SetPreviewCosmeticTint then
 		childEnt:SetPreviewCosmeticTint(tint)
 	end
@@ -646,6 +638,36 @@ function PANEL:OnRemove()
 	end
 end
 
+local customClassOffset = {
+	["models/player/scout.mdl"] = {
+		fov = 30, ang = Angle(0, 190, 0), pos = Vector(125, 32, 56)
+	},
+	["models/player/soldier.mdl"] = {
+		fov = 30, ang = Angle(5, 180, 0), pos = Vector(145, 6, 72)
+	},
+	["models/player/pyro.mdl"] = {
+		fov = 30, ang = Angle(0, 180, 0), pos = Vector(145, 7, 58)
+	},
+	["models/player/demo.mdl"] = {
+		fov = 30, ang = Angle(0, 160, 0), pos = Vector(145, -45, 62)
+	},
+	["models/player/heavy.mdl"] = {
+		fov = 30, ang = Angle(10, 175, 0), pos = Vector(165, -4, 92)
+	},
+	["models/player/engineer.mdl"] = {
+		fov = 30, ang = Angle(5, 175, 0), pos = Vector(145, -3, 70)
+	},
+	["models/player/medic.mdl"] = {
+		fov = 30, ang = Angle(10, 173, 0), pos = Vector(145, -10, 92)
+	},
+	["models/player/sniper.mdl"] = {
+		fov = 30, ang = Angle(5, 180, 0), pos = Vector(145, 10, 78)
+	},
+	["models/player/spy.mdl"] = {
+		fov = 30, ang = Angle(5, 190, 0), pos = Vector(145, 37, 78)
+	}
+}
+
 function PANEL:Paint()
 	if not LocalPlayer():Alive() or GetConVar("tf_forcehl2hud"):GetBool() or gmod.GetGamemode() == "tf_darkrp" or LocalPlayer():IsHL2() or GAMEMODE.ShowScoreboard or GetConVarNumber("cl_drawhud")==0 or LocalPlayer():Team() == TEAM_SPECTATOR or LocalPlayer():GetPlayerClass()=="" then
 		if self.ClassPanel then
@@ -716,18 +738,13 @@ function PANEL:Paint()
 			self.ClassPanel = p
 
 			----print("ACT_MP_STAND_"..LocalPlayer():GetActiveWeapon().HoldType)]]
-		local w, h = self:LocalToScreen( self:GetWide(), self:GetTall() - 30 )
+		local w, h = self:LocalToScreen(self:GetWide(), self:GetTall() - 25)
 		local tex = character_bg[hudBgTeam] or character_bg[1]
-		if (LocalPlayer():IsL4D()) then
-			tex = surface.GetTextureID("vgui/hud/pz_charge_bg")
-		end
-			surface.SetTexture(tex)
-			surface.SetDrawColor(255,255,255,255)
-			if (LocalPlayer():IsL4D()) then
-				surface.DrawTexturedRect(25*Scale, (480-88)*Scale-20, 75*Scale+30, 75*Scale+30)
-			else
-				surface.DrawTexturedRect(9*Scale, (480-60)*Scale, 100*Scale, 50*Scale)
-			end
+
+		surface.SetTexture(tex)
+		surface.SetDrawColor(255, 255, 255)
+		surface.DrawTexturedRect(9*Scale, (480-60)*Scale, 100*Scale, 50*Scale)
+
 	if convar:GetBool() then
 		EnsurePlayerModelConfirmDialog()
 
@@ -744,12 +761,22 @@ function PANEL:Paint()
 				self.ClassModel:SetAnimated(true)
 				self.ClassModel.oldDrawModel = self.ClassModel.DrawModel
 			end
-			self.ClassModel:SetPos(9*Scale, (480-100)*Scale)
-			self.ClassModel:SetSize(130*Scale, 100*Scale)
+			self.ClassModel:SetPos(9*Scale, (480-130)*Scale)
+			self.ClassModel:SetSize(130*Scale, 130*Scale)
 			-- Keep the legacy HUD+ framing so the portrait sits in the original slot.
-			self.ClassModel:SetFOV(54)
-			self.ClassModel:SetLookAng(Angle(180, -30, 180))
-			self.ClassModel:SetCamPos(Vector(75, -30, 55))
+
+			local offset = customClassOffset[ply:GetModel()]
+
+			if offset then
+				self.ClassModel:SetFOV(offset.fov)
+				self.ClassModel:SetLookAng(offset.ang)
+				self.ClassModel:SetCamPos(offset.pos)
+			else
+				self.ClassModel:SetFOV(54)
+				self.ClassModel:SetLookAng(Angle(180, -30, 180))
+				self.ClassModel:SetCamPos(Vector(75, -30, 55))
+			end
+
 			local modelPath = GetHUDModelPath(tbl, ply)
 			if (self.ClassModel:GetModel() != modelPath) then
 				RemoveHUDAttachments(self.ClassModel:GetEntity())
@@ -757,7 +784,7 @@ function PANEL:Paint()
 			end
 			local ent = self.ClassModel:GetEntity()
 			if not IsValid(ent) then return end
-			ApplyTeamSkin(ent, t)
+
 			local displayClassName = GetHUDDisplayClassName(tbl, ply)
 			local wearableOwner = GetHUDWearableOwner(ply)
 			ApplyHUDWearableBodygroups(ent, wearableOwner, t, displayClassName)
@@ -776,38 +803,85 @@ function PANEL:Paint()
 			local wmodel = GetHUDWeaponModel(ply)
 			ent.Weapon = EnsureBonemergedChild(ent, ent.Weapon, wmodel, t)
 
-			local cosmetics = GetHUDCosmeticModels(ply)
 			ent.Cosmetics = ent.Cosmetics or {}
-			for i = 1, 3 do
-				local cosmetic = cosmetics[i]
-				local mdl = istable(cosmetic) and cosmetic.model or cosmetic
-				local tint = istable(cosmetic) and cosmetic.tint or nil
-				local itemTint = istable(cosmetic) and cosmetic.itemTint or 0
-				ent.Cosmetics[i] = EnsureBonemergedChild(ent, ent.Cosmetics[i], mdl, t, tint, itemTint)
-			end
-			for i = 4, #ent.Cosmetics do
-				if IsValid(ent.Cosmetics[i]) then
-					ent.Cosmetics[i]:Remove()
+
+			for _, getcosmetic in ipairs(ent.Cosmetics) do
+				if IsValid(getcosmetic) then
+					getcosmetic:Remove()
 				end
-				ent.Cosmetics[i] = nil
+			end
+
+			ent.Cosmetics = {}
+
+			local getCosmetics = GetHUDCosmeticModels(ply)
+
+			for i = 1, 4 do
+				local item = getCosmetics[i]
+
+				if istable(item) then
+					local mdl = item.model or item
+					local tint = item.tint or nil
+					local itemTint = item.itemTint or 0
+					ent.Cosmetics[i] = EnsureBonemergedChild(ent, ent.Cosmetics[i], mdl, t, tint, itemTint)
+				end
+			end
+
+			local hasVoodooCursedSoul = false
+
+			if istable(ent.Cosmetics) then
+				for _, cosmetic in ipairs(ent.Cosmetics) do
+					if string.find(cosmetic:GetModel(), "_zombie") then
+						hasVoodooCursedSoul = true
+						break
+					end
+				end
+			end
+
+			if hasVoodooCursedSoul then
+				if ply:GetPlayerClass() == "spy" then
+					if t == TEAM_BLU then
+						ent:SetSkin(23)
+					else
+						ent:SetSkin(22)
+					end
+				else
+					if t == TEAM_BLU then
+						ent:SetSkin(5)
+					else
+						ent:SetSkin(4)
+					end
+				end
+			else
+				if t == TEAM_BLU or t == TF_TEAM_PVE_INVADERS then
+					ent:SetSkin(1)
+				else
+					ent:SetSkin(0)
+				end
 			end
 
 			self.ClassModel.DrawModel = function(self)
 				self:oldDrawModel()
+
+				render.SetScissorRect(0, 0, w, h, true)
+
 				local ent = self:GetEntity()
 				if IsValid(ent.Weapon) then
+					ent.Weapon:SetSkin((t == TEAM_BLU or t == TF_TEAM_PVE_INVADERS) and 1 or 0)
 					ent.Weapon:DrawModel()
 				end
 
 				if istable(ent.Cosmetics) then
 					for _, cosmetic in ipairs(ent.Cosmetics) do
 						if IsValid(cosmetic) then
+							cosmetic:SetSkin((t == TEAM_BLU or t == TF_TEAM_PVE_INVADERS) and 1 or 0)
 							cosmetic:StartItemTint(cosmetic.PreviewItemTint)
 							cosmetic:DrawModel()
 							cosmetic:EndItemTint()
 						end
 					end
 				end
+
+				render.SetScissorRect(0, 0, 0, 0, false)
 			end
 			self.ClassModel.OnClose = function(self)
 				local ent = self:GetEntity()
@@ -833,8 +907,9 @@ function PANEL:Paint()
 				tex = cloakTexture
 			end
 		end
+
 		surface.SetTexture(tex)
-		surface.SetDrawColor(255,255,255,255)
+		surface.SetDrawColor(255, 255, 255)
 		surface.DrawTexturedRect(25*Scale, (480-88)*Scale, 75*Scale, 75*Scale)
 	end
 end
