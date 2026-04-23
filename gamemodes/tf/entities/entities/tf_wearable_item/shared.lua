@@ -10,7 +10,20 @@ ENT.SetupDataTables0 = ENT.SetupDataTables
 function ENT:SetupDataTables()
 	self:SetupDataTables0()
 	self:DTVar("Int", 1, "ItemTint")
-	self:NetworkVar("Vector", 1, "CosmeticTint")
+	self:NetworkVar("Vector", 1, "CosmeticTintColor")
+
+	if CLIENT then
+		self:NetworkVarNotify("CosmeticTintColor", self.OnCosmeticTintColorChanged)
+	end
+end
+
+if CLIENT then
+	function ENT:OnCosmeticTintColorChanged()
+		timer.Simple(0, function()
+			self.ProxyCosmeticTint = nil
+			self.ProxyentPaintColor = nil
+		end)
+	end
 end
 
 function ENT:GetItemTint(t)
@@ -89,7 +102,8 @@ local function EncodeItemTintInt(col)
 end
 
 function ENT:GetConfiguredPaintData()
-	local attrRaw = self.GetAttributeValue and self:GetAttributeValue("set_item_tint_rgb", nil) or nil
+	local att = self:GetSkin() == 1 and "set_item_tint_rgb_2" or "set_item_tint_rgb"
+	local attrRaw = self.GetAttributeValue and self:GetAttributeValue(att, nil) or nil
 	local attrTint = DecodeItemTintVector(attrRaw)
 	if attrTint then
 		return NormalizeItemTintValue(attrRaw) or 0, attrTint
@@ -193,12 +207,6 @@ function ENT:Draw()
 		if getOwner ~= ply or ply:ShouldDrawLocalPlayer() then
 			SyncStealthFromOwner(self)
 
-			local tint = self.GetCosmeticTint and self:GetCosmeticTint() or nil
-			if isvector(tint) then
-				self.ProxyCosmeticTint = tint
-				self.ProxyentPaintColor = self
-			end
-
 			self:StartVisualOverrides()
 			self:StartItemTint(self:GetItemTint())
 			getOwner.RenderingWorldModel = true
@@ -271,8 +279,14 @@ function ENT:Think()
 				self:DestroyShadow()
 			end
 		end
+
+		local tint = self:GetCosmeticTintColor()
+		if isvector(tint) then
+			self.ProxyCosmeticTint = tint
+			self.ProxyentPaintColor = self
+		end
 	else
-		if getOwner:GetNoDraw() then
+		if getOwner:GetNoDraw() or self:GetNoDraw() then
 			self:SetNoDraw(true)
 		else
 			self:SetNoDraw(false)
@@ -280,7 +294,7 @@ function ENT:Think()
 
 		local itemTint, cosmeticTint = self:GetConfiguredPaintData()
 		self:SetItemTint(itemTint)
-		self:SetCosmeticTint(cosmeticTint)
+		self:SetCosmeticTintColor(cosmeticTint)
 	end
 end
 
@@ -310,7 +324,11 @@ function ENT:Initialize()
 
 	local item = self:GetItemData()
 	local getModel = ResolveWearableDisplayModel(self, item)
-	if not getModel then self:Remove() return end
+
+	if not getModel then
+		if SERVER then self:Remove() return end
+		getModel = "models/empty.mdl"
+	end
 
 	self:AddEFlags(EFL_KEEP_ON_RECREATE_ENTITIES)
 
