@@ -167,10 +167,7 @@ local ATTRIBUTES = {
 },
 ["minigun_no_spin_sounds"] = {
 	equip = function(v,weapon,owner)
-		weapon.SpecialSound3OLD = weapon.SpecialSound3
-		weapon.SpecialSound2OLD = weapon.SpecialSound2
-		weapon.SpecialSound3 = weapon.SpecialSound2OLD
-		weapon.SpecialSound2 = Sound("")
+		weapon.NoSpinSound = true
 	end,
 },
 

@@ -139,6 +139,13 @@ function SWEP:CreateSounds()
 		self.ShootCritSoundLoop = CreateSound(self, self.ShootCritSound,rf)
 		
 		self.SoundsCreated = true
+	else
+		self.SpinUpSound = CreateSound(self, self.SpecialSound1)
+		self.SpinDownSound = CreateSound(self, self.SpecialSound2)
+		self.SpinSound = CreateSound(self, self.SpecialSound3)
+		self.ShootSoundLoop = CreateSound(self, self.ShootSound2)
+		self.ShootCritSoundLoop = CreateSound(self, self.ShootCritSound)
+		self.SoundsCreated = true
 	end
 end
 
@@ -181,9 +188,11 @@ function SWEP:SpinUp()
 	if SERVER then
 		self.Owner:EmitSoundEx(self.SpecialSound1)
 	end
-	
-	if self.Primary.Delay != 0.08 then
-		self.SpinUpSound:ChangePitch(100 * self.Primary.Delay)
+
+	if not self.NoSpinSound then
+		if self.Primary.Delay != 0.08 then
+			self.SpinUpSound:ChangePitch(100 * self.Primary.Delay)
+		end
 	end
 end
 
@@ -230,7 +239,7 @@ function SWEP:StopFiring()
 		self.Owner:SetAnimation(PLAYER_IDLE)
 	end
 	timer.Stop("AttackAnim"..self.Owner:EntIndex())
-	if SERVER then
+	if SERVER and not self.NoSpinSound then
 		self.Owner:EmitSoundEx(self.SpecialSound3)
 	end
 	self.Owner:StopSound(self.ShootSound2)
@@ -437,7 +446,7 @@ function SWEP:Think()
 		self.NextIdle = nil
 	end
 	
-	if self.NextEndSpinUpSound and CurTime()>=self.NextEndSpinUpSound then
+	if not self.NoSpinSound and self.NextEndSpinUpSound and CurTime()>=self.NextEndSpinUpSound then
 		self.Owner:StopSound(self.SpecialSound1)
 		if SERVER then
 			self.Owner:EmitSoundEx(self.SpecialSound3)
