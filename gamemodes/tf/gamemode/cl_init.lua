@@ -543,7 +543,7 @@ hook.Add("Think", "TF2Gamemode_InspectBind", function()
 		end
 	end
 end)
-
+--[[
 hook.Add("CreateMove", "TF2Gamemode_AutoReload", function(cmd)
 	local autoReload = GetConVar("tf_autoreload")
 	if not autoReload or not autoReload:GetBool() then return end
@@ -568,7 +568,7 @@ hook.Add("CreateMove", "TF2Gamemode_AutoReload", function(cmd)
 
 	cmd:AddKey(IN_RELOAD)
 end)
-
+]]
 hook.Add("CreateMove", "TF2Gamemode_ClientInputRestrictions", function(cmd)
 	local lp = LocalPlayer()
 	if not IsValid(lp) or not lp:Alive() then return end

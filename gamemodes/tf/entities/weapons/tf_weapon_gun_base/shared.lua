@@ -125,7 +125,7 @@ function SWEP:PrimaryAttack()
 	if SERVER and self.Owner:GetPlayerClass() == "spy" and self.Owner:InCond(TF_COND_DISGUISED) then
 		TF_RemoveSpyDisguise(self.Owner)
 	end
-	
+	self.nextAutoReloadCheck = CurTime() + 0.8
 	self:TakePrimaryAmmo(1)
 	self:RollCritical() -- Roll and check for criticals first
 	

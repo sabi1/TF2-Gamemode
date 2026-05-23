@@ -1795,14 +1795,9 @@ function SWEP:SecondaryAttack(noscene)
 end
 
 function SWEP:CheckAutoReload()
-	if self then
-		if self.Owner:GetInfoNum("tf_autoreload", 1) == 1 || self.Owner:IsBot() then
-			if self.Owner:Alive() then
-				if self.Primary.ClipSize >= 0 and self:Ammo1() > 0 and not self:CanPrimaryAttack() then
-				--MsgFN("Deployed with empty clip, reloading")
-					self:Reload()
-				end
-			end
+	if self.Owner:GetInfoNum("tf_autoreload", 1) == 1 || self.Owner:IsBot() then
+		if self.Owner:Alive() then
+			self:Reload()
 		end
 	end
 end
@@ -2571,7 +2566,7 @@ function SWEP:Think()
 		if self and SERVER then
 			if self.IsDeployed and self.Owner:GetInfoNum("tf_autoreload", 1) == 1 or self.Owner:IsBot() then
 				if self.Owner:Alive() then
-					if (CurTime() > self:GetNextPrimaryFire() and CurTime() > self:GetNextSecondaryFire()) then
+					if (CurTime() > self:GetNextPrimaryFire() and CurTime() > self:GetNextSecondaryFire()) and (self.nextAutoReloadCheck or 0) < CurTime() then
 						self:CheckAutoReload()
 					end
 				end
