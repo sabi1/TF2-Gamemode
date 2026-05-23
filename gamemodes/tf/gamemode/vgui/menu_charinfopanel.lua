@@ -186,7 +186,9 @@ function PANEL:Paint()
 		yalign=TEXT_ALIGN_CENTER,
 	}
 	
-	
+	if input.IsKeyDown(70) then
+		RunConsoleCommand("hud_showloadout", "0")
+	end
 	
 end
 
