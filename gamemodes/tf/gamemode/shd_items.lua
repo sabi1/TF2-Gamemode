@@ -739,7 +739,8 @@ function META:EquipInLoadout(itemname, properties, noupdate)
 	local changed = false
 	for k,v in ipairs(self.ItemLoadout) do
 		local olditem = Items[v]
-		if olditem and newitem.item_slot == olditem.item_slot and (string.find(newitem.item_class,"tf_weapon") || string.find(newitem.item_class,"demoshield") || string.find(newitem.prefab,"boots") || string.find(newitem.item_class,"tideturnr") || string.find(newitem.item_class,"chargintard") ) then
+
+		if olditem and newitem.item_slot == olditem.item_slot and (string.find(newitem.item_class,"tf_weapon") || string.find(newitem.item_class,"demoshield") || (newitem.prefab and string.find(newitem.prefab,"boots")) || string.find(newitem.item_class,"tideturnr") || string.find(newitem.item_class,"chargintard") ) then
 			changed = true
 			self.ItemLoadout[k] = itemname
 			self.ItemProperties[k] = properties
