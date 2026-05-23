@@ -96,6 +96,21 @@ SWEP.Properties = {}
 
 SWEP.SpinSound = true
 
+function SWEP:Deploy()
+	self.BaseClass.Deploy(self)
+
+	if self:GetItemData().model_player == "models/workshop/weapons/c_models/c_lochnload/c_lochnload.mdl" then
+		self.VM_RELOAD = ACT_PRIMARY_VM_RELOAD_2
+		self.ShootSound = Sound("weapons/loch_n_load_shoot.wav")
+		self.ShootSoundCrit = Sound("weapons/loch_n_load_shoot_crit.wav")
+	end
+
+	if self:GetItemData().model_player == "models/weapons/c_models/c_lochnload/c_lochnload.mdl" then
+		self.ShootSound = Sound("weapons/loch_n_load_shoot.wav")
+		self.ShootCritSound = Sound("weapons/loch_n_load_shoot_crit.wav")
+	end
+end
+
 function SWEP:OnEquipAttribute(a, owner)
 	if a.attribute_class == "mult_clipsize" then
 		self.SpinSound = false
@@ -162,20 +177,10 @@ function SWEP:ShootProjectile()
 end
 
 function SWEP:InspectAnimCheck()
-self.VM_INSPECT_START = ACT_PRIMARY_VM_INSPECT_START
-self.VM_INSPECT_IDLE = ACT_PRIMARY_VM_INSPECT_IDLE
-self.VM_INSPECT_END = ACT_PRIMARY_VM_INSPECT_END
+	self.VM_INSPECT_START = ACT_PRIMARY_VM_INSPECT_START
+	self.VM_INSPECT_IDLE = ACT_PRIMARY_VM_INSPECT_IDLE
+	self.VM_INSPECT_END = ACT_PRIMARY_VM_INSPECT_END
 
-		if self:GetItemData().model_player == "models/workshop/weapons/c_models/c_lochnload/c_lochnload.mdl" then
-			self.VM_RELOAD = ACT_PRIMARY_VM_RELOAD_2
-			self.ShootSound = Sound("weapons/loch_n_load_shoot.wav")
-			self.ShootSoundCrit = Sound("weapons/loch_n_load_shoot_crit.wav")
-			self.Primary.ClipSize		= 3
-		end
-	if self:GetItemData().model_player == "models/weapons/c_models/c_lochnload/c_lochnload.mdl" then
-		self.ShootSound = Sound("weapons/loch_n_load_shoot.wav")
-		self.ShootCritSound = Sound("weapons/loch_n_load_shoot_crit.wav")
-	end
 	if ( self:GetOwner():KeyPressed( IN_SPEED ) and inspecting == false and GetConVar("tf_caninspect"):GetBool() and self.Owner:GetInfoNum("tf_sprintinspect", 1) == 1 ) then
 		timer.Create("StartInspection", self:SequenceDuration(), 1,function()
 			if self:GetOwner():KeyDown(  ) then 
