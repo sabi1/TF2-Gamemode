@@ -43,6 +43,7 @@ function EFFECT:Init(data)
 	end
 	
 	self:SetModel(mdl)
+	self:SetSkin(hat:GetSkin())
 	self:AddEffects(EF_BONEMERGE)
 	
 	self:CopyVisualOverrides(hat)
