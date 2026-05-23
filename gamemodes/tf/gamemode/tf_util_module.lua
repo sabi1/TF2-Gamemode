@@ -179,3 +179,22 @@ function PrintLastDebugInfo(name)
 		end
 	end
 end
+
+function DecodeFloat32(n)
+	n = bit.band(n, 0xFFFFFFFF)
+
+    local sign = bit.rshift(n, 31)
+    local exponent = bit.band(bit.rshift(n, 23), 0xFF)
+    local mantissa = bit.band(n, 0x7FFFFF)
+
+    if exponent == 0xFF then return nil end
+
+    local value
+    if exponent == 0 then
+        value = mantissa == 0 and 0 or (mantissa / 8388608) * 2^-126
+    else
+        value = (1 + mantissa / 8388608) * 2^(exponent - 127)
+    end
+
+    return sign == 1 and -value or value
+end

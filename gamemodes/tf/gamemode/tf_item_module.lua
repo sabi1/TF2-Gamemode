@@ -1,4 +1,4 @@
-	
+if SERVER then util.AddNetworkString("TF_NET_SetExtraAttributes") end
 local ExtraAttributesPending = {}
 local month_name = {"January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"}
 
@@ -628,16 +628,20 @@ function ITEM:CheckUpdateItem()
 end
 
 function ITEM:SendExtraAttributes(pl)
-	if SERVER and self.ExtraAttributes then
-		umsg.Start("TF_SetExtraAttributes", pl)
-			--umsg.Entity(self)
-			umsg.Long(self:EntIndex())
-			umsg.Char(#self.ExtraAttributes)
-			for _,v in ipairs(self.ExtraAttributes) do
-				umsg.Short(v.id)
-				umsg.Float(v.value)
-			end
-		umsg.End()
+	if SERVER and self.EncodedExtraAttributes then
+		net.Start("TF_NET_SetExtraAttributes")
+		net.WriteUInt(self:EntIndex(), 16)
+		net.WriteUInt(table.Count(self.EncodedExtraAttributes), 5)
+		for id, value in pairs(self.EncodedExtraAttributes) do
+			net.WriteUInt(id, 12)
+			net.WriteUInt(value, 32)
+		end
+
+		if IsValid(pl) then
+			net.Send(pl)
+		else
+			net.Broadcast()
+		end
 	end
 end
 
@@ -654,6 +658,62 @@ local function ExtraAttributesInputEqual(a, b)
 	return true
 end
 
+local ATTR_TYPES = {
+    [15] = "bool",
+    [142] = "int",
+    [153] = "bool",
+    [185] = "int",
+    [186] = "int",
+    [211] = "int",
+    [214] = "int",
+    [228] = "int",
+    [229] = "int",
+    [261] = "int",
+    [294] = "int",
+    [281] = "bool",
+    [282] = "bool",
+    [284] = "bool",
+    [379] = "int",
+    [381] = "int",
+    [383] = "int",
+    [420] = "int",
+    [453] = "int",
+    [494] = "int",
+    [500] = "string",
+    [501] = "string",
+    [692] = "int",
+    [701] = "int",
+    [702] = "int",
+    [719] = "string",
+    [742] = "int",
+    [743] = "bool",
+    [745] = "bool",
+    [785] = "bool",
+    [796] = "vector",
+    [817] = "vector",
+    [834] = "int",
+    [2021] = "string",
+    [3018] = "int",
+}
+
+-- useless because we only receive result from tonumber() from sanitizeAttributes() sv_loadout.lua 38
+local function DecodeByType(id, value)
+    local t = ATTR_TYPES[id]
+
+	if t == "vector" then
+		local x, y, z = value:match("([%-%d%.]+) ([%-%d%.]+) ([%-%d%.]+)")
+		return Vector(x, y, z)
+	elseif t == "string" then
+		return tostring(value)
+	elseif t == "bool" then
+		return tobool(value)
+	elseif t == "int" then -- raw values, do not decode
+		return value
+	end
+
+    return tf_util.DecodeFloat32(value)
+end
+
 function ITEM:SetExtraAttributes(att)
 	if not istable(att) then return end
 	if self._ApplyingExtraAttributes then return end
@@ -663,21 +723,22 @@ function ITEM:SetExtraAttributes(att)
 
 	self._ApplyingExtraAttributes = true
 	self.ExtraAttributes = {}
+	self.EncodedExtraAttributes = {}
 	
-	for _,v in ipairs(att) do
+	for _, v in ipairs(att) do
 		local a = tf_items.AttributesByID[v[1]]
 		
 		if a then
-			table.insert(self.ExtraAttributes, {
-				id = v[1],
-				name = a.name,
-				attribute_class = a.attribute_class,
-				value = v[2],
-			})
+			self.ExtraAttributes[a.name] = {id = v[1], attribute_class = a.attribute_class, value = DecodeByType(v[1], v[2])}
+
+			if SERVER then
+				-- keep attributes decoded for sending
+				self.EncodedExtraAttributes[v[1]] = v[2]
+			end
 		end
 	end
-	
-	if #self.ExtraAttributes == 0 then
+
+	if table.Count(self.ExtraAttributes) == 0 then
 		self._ApplyingExtraAttributes = nil
 		return
 	end
@@ -687,7 +748,7 @@ function ITEM:SetExtraAttributes(att)
 	self:SendExtraAttributes()
 	
 	if self.Attributes then
-		table.Add(self.Attributes, self.ExtraAttributes)
+		table.Merge(self.Attributes, self.ExtraAttributes, true)
 		--self.ExtraAttributes = nil
 		ApplyAttributes(self.ExtraAttributes, "equip", self, self.Owner)
 	end
@@ -728,7 +789,7 @@ function ITEM:SetExtraAttributes(att)
 			end
 		end
 	end
-	
+
 	if CLIENT then
 		self.FormattedAttributes = nil
 		if (IsValid(self.Owner:GetActiveWeapon())) then 
@@ -754,11 +815,11 @@ function ITEM:InitAttributes(owner, attributes)
 	end
 	
 	if self.ExtraAttributes then
-		table.Add(self.Attributes, self.ExtraAttributes)
+		table.Merge(self.Attributes, self.ExtraAttributes, true)
 	end
-	
+
 	ApplyAttributes(self.Attributes, "equip", self, owner)
-	
+
 	if CLIENT then
 		HudInspectPanel:Update()
 		self.FormattedAttributes = nil
@@ -1340,7 +1401,7 @@ local CRIT_WEAPON_PARTICLES = {
 }
 
 local function StopCritParticles(ent)
-	if not IsValid(ent) or not ent.StopParticlesNamed then return end
+	if not IsValid(ent) then return end
 	for _, name in ipairs(CRIT_WEAPON_PARTICLES) do
 		ent:StopParticlesNamed(name)
 	end
@@ -1348,30 +1409,41 @@ end
 
 function ITEM:ClearParticles()
 	self._DebugActiveParticles = {}
-	self:StopParticles()
+	--self:StopParticleEmission() -- unusual logic moved to tf_werable_item for now (works only for cosmetics) — 02.05.2026
+	--self:StopAndDestroyParticles() -- unusual logic moved to tf_werable_item for now (works only for cosmetics) — 02.05.2026
 	StopCritParticles(self)
-	if IsValid(self.RootLocator) then self.RootLocator:StopParticles() end
+	if IsValid(self.RootLocator) then self.RootLocator:StopParticleEmission() end
+	if IsValid(self.RootLocator) then self.RootLocator:StopAndDestroyParticles() end
 	if IsValid(self.RootLocator) then StopCritParticles(self.RootLocator) end
-	
+
 	if self:IsWeapon() then
+		self:StopParticleEmission()
+		self:StopAndDestroyParticles()
+
 		if IsValid(self.Owner) and IsValid(self.Owner:GetViewModel()) then
-			self.Owner:GetViewModel():StopParticles()
+			self.Owner:GetViewModel():StopParticleEmission()
+			self.Owner:GetViewModel():StopAndDestroyParticles()
 			StopCritParticles(self.Owner:GetViewModel())
-			if IsValid(self.Owner:GetViewModel().RootLocator) then self.Owner:GetViewModel().RootLocator:StopParticles() end
+			if IsValid(self.Owner:GetViewModel().RootLocator) then self.Owner:GetViewModel().RootLocator:StopParticleEmission() end
+			if IsValid(self.Owner:GetViewModel().RootLocator) then self.Owner:GetViewModel().RootLocator:StopAndDestroyParticles() end
 			if IsValid(self.Owner:GetViewModel().RootLocator) then StopCritParticles(self.Owner:GetViewModel().RootLocator) end
 		end
-		
+
 		if IsValid(self.WModel2) then
-			self.WModel2:StopParticles()
+			self.WModel2:StopParticleEmission()
+			self.WModel2:StopAndDestroyParticles()
 			StopCritParticles(self.WModel2)
-			if IsValid(self.WModel2.RootLocator) then self.WModel2.RootLocator:StopParticles() end
+			if IsValid(self.WModel2.RootLocator) then self.WModel2.RootLocator:StopParticleEmission() end
+			if IsValid(self.WModel2.RootLocator) then self.WModel2.RootLocator:StopAndDestroyParticles() end
 			if IsValid(self.WModel2.RootLocator) then StopCritParticles(self.WModel2.RootLocator) end
 		end
-		
+
 		if IsValid(self.CModel) then
-			self.CModel:StopParticles()
+			self.CModel:StopParticleEmission()
+			self.CModel:StopAndDestroyParticles()
 			StopCritParticles(self.CModel)
-			if IsValid(self.CModel.RootLocator) then self.CModel.RootLocator:StopParticles() end
+			if IsValid(self.CModel.RootLocator) then self.CModel.RootLocator:StopParticleEmission() end
+			if IsValid(self.CModel.RootLocator) then self.CModel.RootLocator:StopAndDestroyParticles() end
 			if IsValid(self.CModel.RootLocator) then StopCritParticles(self.CModel.RootLocator) end
 		end
 	end
@@ -1403,25 +1475,27 @@ end
 
 function ITEM:ResetParticles(state_override)
 	--MsgFN("ResetParticles %s %s",tostring(self),state_override or -1)
-	
 	self:ClearParticles()
-	
+
 	if not self:IsWeapon() and (self.Owner == LocalPlayer() and not LocalPlayer():ShouldDrawLocalPlayer()) then
 		return
 	end
 	
 	local ent
-	if not self:IsWeapon() then
-		ent = self
-	elseif self.Owner==LocalPlayer() and not LocalPlayer():ShouldDrawLocalPlayer() then
-		ent = self:GetViewModelEntity()
+
+	if self:IsWeapon() then
+		if self:GetOwner() == LocalPlayer() and not LocalPlayer():ShouldDrawLocalPlayer() then
+			ent = self:GetViewModelEntity()
+		else
+			ent = self:GetWorldModelEntity()
+		end
 	else
-		ent = self:GetWorldModelEntity()
+		return
 	end
 
 	local weaponCritActive = self:IsWeapon()
 		and (self.Owner:HasPlayerState(PLAYERSTATE_CRITBOOST, state_override) || self.Owner:HasPlayerState(PLAYERSTATE_MINICRIT, state_override))
-	
+	--[[ unusual logic moved to tf_werable_item for now (works only for cosmetics) — 02.05.2026
 	-- Attached particles
 	for _,p in ipairs(self:GetVisuals().attached_particlesystems or {}) do
 		local att
@@ -1435,7 +1509,7 @@ function ITEM:ResetParticles(state_override)
 			ParticleEffectAttachToRoot(p.system, ent, self, "visual.attached.root")
 		end
 	end
-	
+
 	-- Attribute-controlled attached particles
 	if self.AttachedParticle then
 		--MsgFN("Attaching particle effect '%s' to %s",self.AttachedParticle.system, tostring(ent))
@@ -1455,7 +1529,7 @@ function ITEM:ResetParticles(state_override)
 			end
 		end
 	end
-	
+	]]
 	-- Valve parity: single crit effect on active weapon model only.
 	if self:IsWeapon() and IsValid(self.Owner) then
 		local owner = self.Owner
@@ -1639,34 +1713,38 @@ function ITEM:GetFormattedAttributes()
 	return fa
 end
 
-usermessage.Hook("TF_SetExtraAttributes", function(msg)
-	local entid, wep, num, att, id, value
-	
-	--wep = msg:ReadEntity()
-	entid = msg:ReadLong()
-	wep = Entity(entid)
-	num = msg:ReadChar()
-	
-	--MsgFN("Received %d extra attribute(s) for %s (%d)", num, tostring(wep), entid)
-	
-	--MsgFN("%d attributes to read", num)
+net.Receive("TF_NET_SetExtraAttributes", function()
+	local itemID = net.ReadUInt(16)
+	local num = net.ReadUInt(5)
 	if num <= 0 then return end
-	
-	att = {}
-	for i=1,num do
-		id = msg:ReadShort()
-		value = msg:ReadFloat()
-		--MsgFN("\"%d\" = %f", id, value)
-		table.insert(att, {id,value})
+
+	local att = {}
+	local id, value
+
+	for i = 1, num do
+		id = net.ReadUInt(12)
+		value = net.ReadUInt(32)
+		table.insert(att, {id, value})
 	end
-	
-	if not IsValid(wep) or not wep.SetExtraAttributes then
-		ExtraAttributesPending[entid] = att
-		----MsgN("Weapon not initialized, adding to pending list")
-		return
+
+	local item = Entity(itemID)
+
+	if item.SetExtraAttributes and (IsValid(item) and !item:IsDormant()) and (IsValid(item:GetParent()) and !item:GetParent():IsDormant()) then
+		item:SetExtraAttributes(att)
+	else
+		ExtraAttributesPending[itemID] = att
+		----MsgN("ITEM not initialized or Dormant, adding to pending list")
 	end
-	
-	wep:SetExtraAttributes(att)
+end)
+
+hook.Add("Think", "TFCheckUpdateItems", function()
+	for itemID, att in pairs(ExtraAttributesPending) do
+		local item = Entity(itemID)
+
+		if item.CheckUpdateItem and (IsValid(item) and !item:IsDormant()) and (IsValid(item:GetParent()) and !item:GetParent():IsDormant()) then
+			item:CheckUpdateItem()
+		end
+	end
 end)
 --[[
 hook.Add("Think", "TFCheckUpdateItems", function()
@@ -1688,10 +1766,26 @@ hook.Add("EntityRemoved", "RemoveRootLocatorParticleEffectEnt", function(ent, fu
 
 	if IsValid(ent.RootLocator) then
 		ent.RootLocator:StopParticleEmission()
+		ent.RootLocator:StopAndDestroyParticles()
 		StopCritParticles(ent.RootLocator)
 		ent.RootLocator:Remove()
 	end
 end)
+
+hook.Add("Think", "finishedLoading", function()
+	hook.Remove("Think", "finishedLoading")
+
+	for _, v in ipairs(player.GetAll()) do
+		local itemList = v.PlayerItemList
+
+		if itemList then
+			for _, v in ipairs(itemList) do
+				v:CheckUpdateItem()
+			end
+		end
+	end
+end)
+
 
 end
 
