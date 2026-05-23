@@ -436,8 +436,8 @@ function ParseGameItems(data, silent)
 	
 	local data_particles = string.sub(data, smin, smax)
 	local parsedParticles = util.KeyValuesToTable(data_particles)
-	if istable(parsedParticles) and istable(parsedParticles.attribute_controlled_attached_particles) then
-		parsedParticles = parsedParticles.attribute_controlled_attached_particles
+	if istable(parsedParticles) and istable(parsedParticles.cosmetic_unusual_effects) then
+		parsedParticles = parsedParticles.cosmetic_unusual_effects
 	end
 	numreg = 0
 	

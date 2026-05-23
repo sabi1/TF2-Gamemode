@@ -515,9 +515,9 @@ local ATTRIBUTES = {
 },
 
 ["set_attached_particle"] = {
-	equip = function(v,weapon,owner)
+	equip = function(v,item,owner)
 		if CLIENT then
-			weapon.AttachedParticle = tf_items.Particles[v]
+			item.AttachedParticle = tf_items.Particles[v]
 		end
 	end,
 },
