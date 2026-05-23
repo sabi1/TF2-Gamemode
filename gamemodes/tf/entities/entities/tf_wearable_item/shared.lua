@@ -259,6 +259,17 @@ function ENT:SetupPlayerRagdoll(rag)
 		end
 end
 
+hook.Add("NotifyShouldTransmit", "UpdateCosmeticsTransmitState", function(ent, shouldTransmit)
+	if ent:GetClass() ~= "tf_wearable_item" then return end
+
+	if not shouldTransmit then
+		ent:DestroyShadow()
+		ent:StopParticleEmission()
+		ent:StopAndDestroyParticles()
+		ent.ShadowCreated = false
+	end
+end)
+
 end
 
 function ENT:Think()
@@ -268,15 +279,33 @@ function ENT:Think()
 	if CLIENT then
 		local ply = LocalPlayer()
 
-		if getOwner ~= ply or ply:ShouldDrawLocalPlayer() then
+		if (getOwner ~= ply or ply:ShouldDrawLocalPlayer()) and not self:IsDormant() then
 			if not self.ShadowCreated then
 				self.ShadowCreated = true
 				self:CreateShadow()
+
+				timer.Simple(0, function()
+					if IsValid(self) then
+						local attachment
+
+						for _, p in ipairs(self:GetVisuals().attached_particlesystems or {}) do
+							attachment = ent:LookupAttachment(p.attachment) or 0
+							ParticleEffectAttach(p.system, PATTACH_POINT_FOLLOW, self, attachment)
+						end
+
+						if self.AttachedParticle then
+							attachment = self:LookupAttachment("unusual") or 0
+							ParticleEffectAttach(self.AttachedParticle.system, PATTACH_POINT_FOLLOW, self, attachment)
+						end
+					end
+				end)
 			end
 		else
 			if self.ShadowCreated then
 				self.ShadowCreated = false
 				self:DestroyShadow()
+				self:StopParticleEmission()
+				self:StopAndDestroyParticles()
 			end
 		end
 
@@ -410,6 +439,11 @@ end
 
 function ENT:OnRemove()
 	self:RemoveFromPlayerItems()
+	self:StopParticles()
+
+	if CLIENT then
+		self:StopAndDestroyParticles()
+	end
 end
 
 function ENT:OnOwnerDeath()

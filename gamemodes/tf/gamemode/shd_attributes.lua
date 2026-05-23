@@ -546,8 +546,9 @@ local ATTRIBUTES = {
 },
 
 ["set_item_tint_rgb"] = {
-	equip = function(v,weapon,owner)
+	equip = function(v,item,owner)
 		if SERVER then
+			--print("set_item_tint_rgb, TEAM_RED:", owner:Team() == TEAM_RED, v, DecodePackedFloat32Integer(v))
 			if tonumber(v) and tonumber(v) > 0xFFFFFF then
 				local n = bit.band(math.floor(tonumber(v)), 0xFFFFFFFF)
 				local sign = bit.band(bit.rshift(n, 31), 0x1)
@@ -578,15 +579,24 @@ local ATTRIBUTES = {
 				end
 			end
 
-			if weapon.SetItemTint then
-				weapon:SetItemTint(v)
+			if item.SetItemTint then
+				item:SetItemTint(v)
 			else
 				local b = (v % 256)
 				v = math.floor(v / 256)
 				local g = (v % 256)
 				v = math.floor(v / 256)
-				weapon:SetColor(v, g, b, 255)
+				item:SetColor(v, g, b, 255)
 			end
+		end
+	end,
+},
+
+["set_item_tint_rgb_2"] = {
+	equip = function(v,item,owner)
+		if SERVER then
+			--print("set_item_tint_rgb_2, TEAM_BLU:", owner:Team() == TEAM_BLU, v, DecodePackedFloat32Integer(v))
+			--SetCosmeticTintColor
 		end
 	end,
 },
